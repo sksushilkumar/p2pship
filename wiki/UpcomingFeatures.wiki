@@ -1,0 +1,19 @@
+#summary An overview of planned features
+
+= Introduction =
+
+This page serves as an overview of features that may be implemented in the future.
+
+Currently, we are officially planning:
+
+  * Extended HTTP support (7/10)
+  * Multiparty conferencing (12/10)
+  * Advanced SPAM prevention (12/10)
+  * Distributed Voicemail (6/11)
+  * Integration with Virtual Worlds (12/11)
+
+Wild takes:
+
+  * Scripting support for plugins
+  * WebApp support, runtime environment
+  * Mail system integration
