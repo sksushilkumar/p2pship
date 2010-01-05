@@ -1,0 +1,11 @@
+Project		: p2pship - P2PSIP over HIP
+
+
+Compilation:
+------------
+
+./autogen.sh
+./configure
+make
+make install
+
