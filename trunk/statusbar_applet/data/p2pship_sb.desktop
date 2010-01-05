@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=P2PSHIP
+Icon=qgn_list_cp_isetup
+Category=permanent
+X-Path=libp2pship.so
+Type=default
