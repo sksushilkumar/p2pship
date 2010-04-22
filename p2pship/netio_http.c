@@ -67,7 +67,7 @@ netio_http_packet_orderer_close(char *tracking_id)
 	if (l = ship_ht_remove_string(orderer, tracking_id)) {
 		/* free up the stuff */
 		ship_ht_remove_string(l, "next");
-		ship_ht_empty_free_with(l, ship_lenbuf_free);
+		ship_ht_empty_free_with(l, (void (*) (void *))ship_lenbuf_free);
 		ship_ht_free(l);
 	}
 	ship_unlock(orderer);
@@ -795,6 +795,12 @@ netio_http_set_header(netio_http_conn_t* conn, char *key, char *data)
 	return -1;
 }
 
+ship_list_t *
+netio_http_conn_get_header_keys(netio_http_conn_t *conn)
+{
+	return ship_ht_keys(conn->headers);
+}
+
 char *
 netio_http_conn_get_param(netio_http_conn_t *conn, char *name)
 {
@@ -820,6 +826,12 @@ netio_http_conn_set_param(netio_http_conn_t *conn, char *name, int namelen, char
 	ret = 0;
  err:
 	return ret;
+}
+
+ship_list_t *
+netio_http_conn_get_param_keys(netio_http_conn_t *conn)
+{
+	return ship_ht_keys(conn->params);
 }
 
 void
@@ -869,6 +881,28 @@ netio_http_respond_multipart(netio_http_conn_t *conn,
 	freez(msg);
 }
 
+int
+netio_http_create_response(int code, char *code_str, 
+			   char *content_type,
+			   char *data, int data_len,
+			   char **ret, int *retlen)
+{
+	const char *templ = "HTTP/1.1 %d %s\r\nServer: P2PSHIP proxy\r\nContent-Length: %d\r\nConnection: close\r\nContent-Type: %s\r\n\r\n";
+	char *msg = mallocz(strlen(templ) + strlen(code_str) + data_len + strlen(content_type) + 128);
+	int len = 0;
+	if (!msg) {
+		LOG_WARN("Could not create http response!\n");
+		return -1;
+	}
+	sprintf(msg, templ, code, code_str, data_len, content_type);
+	len = strlen(msg);
+	memcpy(msg+len, data, data_len);
+	len += data_len;
+
+	*ret = msg;
+	*retlen = len;
+	return 0;
+}
 
 void
 netio_http_respond(netio_http_conn_t *conn, 
@@ -876,18 +910,13 @@ netio_http_respond(netio_http_conn_t *conn,
 		   char *content_type,
 		   char *data, int data_len)
 {
-	const char *templ = "HTTP/1.1 %d %s\r\nServer: P2PSHIP proxy\r\nContent-Length: %d\r\nConnection: close\r\nContent-Type: %s\r\n\r\n";
-	char *msg = mallocz(strlen(templ) + strlen(code_str) + data_len + strlen(content_type) + 128);
+	char *msg = 0;
 	int len = 0;
-	if (!msg)
-		return;
-	sprintf(msg, templ, code, code_str, data_len, content_type);
-	len = strlen(msg);
-	memcpy(msg+len, data, data_len);
-	len += data_len;
-
-	netio_send(conn->socket, msg, len);
-	freez(msg);
+	if (!netio_http_create_response(code, code_str, content_type, data, data_len,
+				       &msg, &len)) {
+		netio_send(conn->socket, msg, len);
+		freez(msg);
+	}
 }
 
 void
@@ -896,7 +925,7 @@ netio_http_respond_auth(netio_http_conn_t *conn,
 			char *content_type,
 			char *data)
 {
-	const char *templ = "HTTP/1.1 401 Authorization Required\r\nServer: P2PSHIP proxy\r\nWWW-Authenticate: Basic realm=\"%s\"\r\nContent-Length: %d\r\nConnection: close\r\nContent-Type: %s\r\n\r\n";
+	const char *templ = "HTTP/1.1 407 Proxy Authorization Required\r\nServer: P2PSHIP proxy\r\nProxy-Authenticate: Basic realm=\"%s\"\r\nContent-Length: %d\r\nConnection: close\r\nContent-Type: %s\r\n\r\n";
 	char *msg = mallocz(strlen(templ) + strlen(realm) + strlen(data) + strlen(content_type) + 128);
 	if (!msg)
 		return;
@@ -1029,6 +1058,10 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 	/* process.. */
 	if (!ret) {
 		ret = __netio_http_process_req(conn);
+
+		/* forts; todo: this is pretty dangerous if some
+		   handler decides to close the http conn before
+		   returning */
 
 		/* we strip the data from the conn now as there might
 		   come another request on the same connection, which

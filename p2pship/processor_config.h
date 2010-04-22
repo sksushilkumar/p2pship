@@ -53,6 +53,16 @@
 
 #define P2PSHIP_CONF_CONN_KEEPALIVE "keepalive_interval"
 
+#ifdef CONFIG_PYTHON_ENABLED
+#define P2PSHIP_CONF_START_SHELL "start_shell"
+#define P2PSHIP_CONF_RUN_SCRIPT "run_script"
+
+#define P2PSHIP_CONF_PYTHON_LIB_DIR "py_lib"
+#define P2PSHIP_CONF_PYTHON_SCRIPTS_DIR "py_scripts"
+#define P2PSHIP_CONF_PYTHON_INSTANCES_DIR "py_instances"
+#define P2PSHIP_CONF_PYTHON_PACKAGES_DIR "py_packages"
+#endif
+
 /* hm, should these be in ? */
 #ifdef CONFIG_SIP_ENABLED
 #define P2PSHIP_CONF_SIPP_PROXY_IFACES "proxy_ifaces"
@@ -143,6 +153,8 @@ processor_config_t *processor_config_new();
 /* getters / setters */
 int processor_config_set_int(processor_config_t *config, char *key, int value);
 int processor_config_set_string(processor_config_t *config, char *key, char *value);
+#define processor_config_set_true(config, key) processor_config_set_string(config, key, "yes")
+#define processor_config_set_false(config, key) processor_config_set_string(config, key, "no")
 
 /* ownership NOT given */
 int processor_config_get_int(processor_config_t *config, char *key, int *value);

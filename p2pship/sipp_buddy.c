@@ -135,7 +135,13 @@ __sipp_buddy_handle_subscribe(ident_t *from, char *to, int expire, char *callid)
 	ASSERT_TRUE(buddy = ident_buddy_find_or_create(from, to), err);
 	time(&now);
 	buddy->created = now;
-	buddy->expire = expire;	
+	buddy->expire = expire;
+
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+	/* mark this as our friend now as we've chosen to subscribe to
+	   its status */
+	buddy->is_friend = 1;
+#endif
 	return 0;
  err:
 	return -1;

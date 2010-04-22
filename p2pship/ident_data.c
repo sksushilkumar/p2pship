@@ -64,26 +64,27 @@ static void
 ident_buddy_free(buddy_t *buddy) 
 {
     if (buddy) {
-    	freez(buddy->name);
-    	freez(buddy->sip_aor);
-    	freez(buddy->shared_secret);
-    	freez(buddy->callid);
-    	freez(buddy->my_suggestion);
-    	if (buddy->cert) X509_free(buddy->cert);
-    	buddy->cert = NULL;
-    	free(buddy);
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+	    int i = 0;
+	    while (i < BLOOMBUDDY_MAX_LEVEL)
+		    ship_bloom_free(buddy->friends[i++]);
+#endif
+	    freez(buddy->name);
+	    freez(buddy->sip_aor);
+	    freez(buddy->shared_secret);
+	    freez(buddy->callid);
+	    freez(buddy->my_suggestion);
+	    if (buddy->cert) X509_free(buddy->cert);
+	    buddy->cert = NULL;
+	    free(buddy);
     }
 }
 
 static void
 ident_buddy_list_free(ship_list_t *buddy_list) 
 {
-    if (buddy_list) {
-    	ship_list_t *list = buddy_list;
-    	while (ship_list_first(list))
-    		ident_buddy_free((buddy_t *)ship_list_pop(list));
+	ship_list_empty_with(buddy_list, ident_buddy_free);
     	ship_list_free(buddy_list);
-    }
 }
 
 buddy_t *
@@ -127,7 +128,7 @@ ident_buddy_find(ident_t *ident, char *sip_aor)
 
 
 static int
-ident_buddy_xml_struct(buddy_t **__buddy, xmlNodePtr cur)
+ident_buddy_xml_to_struct(buddy_t **__buddy, xmlNodePtr cur)
 {
 	xmlChar *name = NULL, *sip_aor = NULL, *shared_secret = NULL, *certificate = NULL;
    	BIO *bio_cert = NULL;
@@ -149,6 +150,18 @@ ident_buddy_xml_struct(buddy_t **__buddy, xmlNodePtr cur)
 		ASSERT_TRUE(BIO_puts(bio_cert, certificate) > 0, err);
 		ASSERT_TRUE(buddy->cert = PEM_read_bio_X509(bio_cert, NULL, NULL, NULL), err);
    	}
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+	if (name) xmlFree(name);
+   	if (name = ship_xml_get_child_field(cur, "bloombuddies")) {
+		ident_data_bb_load_ascii(name, buddy->friends);
+	}
+	if (name) xmlFree(name);
+   	if (name = ship_xml_get_child_field(cur, "friend")) {
+		trim(name);
+		if (ship_is_true(name))
+			buddy->is_friend = 1;
+	}
+#endif
    	(*__buddy) = buddy;
    	buddy = NULL;
    	ret = 0;
@@ -440,7 +453,7 @@ ident_reg_struct_to_xml(reg_package_t *reg, char **text)
  err:
 	if (xmlbuf) xmlFree(xmlbuf);
 	if (doc) xmlFreeDoc(doc);
-	xmlCleanupParser();
+	//xmlCleanupParser();
 	return ret;
 }
 
@@ -514,7 +527,7 @@ ident_create_reg_xml(reg_package_t *reg, ident_t *ident, char **text)
 	if (bio) BIO_free(bio);
 	if (xmlbuf) xmlFree(xmlbuf);
 	if (doc) xmlFreeDoc(doc);
-	xmlCleanupParser();
+	//xmlCleanupParser();
 	
 	return ret;
 }
@@ -528,7 +541,7 @@ ident_cb_openssl_pass(char *buf, int size, int rwflag, void *u)
 	/* todo: why doesn't openssl call this callback? it should. */
    
         USER_ERROR("Pass phrase required for \"%s\": ", u);
-	len = getline(&buf, size, stdin);
+	//len = getline(&buf, size, stdin);
         return len;
 }
 
@@ -550,8 +563,12 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	xmlNodePtr cur = NULL;
 	reg_package_t *reg = NULL;
 	xmlDocPtr datadoc = NULL;
-	
+
 	(*__reg) = NULL;
+	ASSERT_TRUE(data, err);
+	ASSERT_TRUE(strlen(data), err);
+	ASSERT_TRUE(data[0] == '<', err); // try to avoid libxml2 bugs.. :(
+	
 	ASSERT_TRUE(reg = ident_reg_new(NULL), err);
 	ASSERT_TRUE(doc = xmlParseMemory(data, strlen(data)), err);
 	ASSERT_TRUE(cur = xmlDocGetRootElement(doc), err);
@@ -641,7 +658,7 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	if (result) xmlFree(result);
 	if (reg) ident_reg_free(reg);
 	
-	xmlCleanupParser();
+	//xmlCleanupParser();
 	return ret;
 }
 
@@ -753,7 +770,7 @@ ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur)
 	if (buddies = ship_xml_get_child(cur, "buddies")) {
 		for (b = buddies->children; b; b = b->next) {
 			if (!strcmp(b->name, "buddy")) {
-				ASSERT_ZERO(ident_buddy_xml_struct(&buddy, b), err);
+				ASSERT_ZERO(ident_buddy_xml_to_struct(&buddy, b), err);
 				ship_list_add(ident->buddy_list, buddy);
 			}
 		}		
@@ -922,6 +939,14 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 					BIO_free(bio);
 					bio = NULL;
 				}
+
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+				if (!ident_data_bb_dump_ascii(buddy->friends, &tmp)) {
+					ASSERT_TRUE(xmlNewTextChild(buddychildnode, NULL, "bloombuddies", tmp), err);
+					freez(tmp);
+				}
+				ASSERT_TRUE(xmlNewTextChild(buddychildnode, NULL, "friend", (buddy->is_friend? "true":"false")), err);
+#endif
 			}
 		}
 		ship_unlock(ident);
@@ -954,7 +979,7 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 	if (bio) BIO_free(bio);
 	if (xmlbuf) xmlFree(xmlbuf);
 	if (doc) xmlFreeDoc(doc);
-	xmlCleanupParser();
+	//xmlCleanupParser();
 		
 	return ret;
 }
@@ -1263,3 +1288,216 @@ ident_data_dump_cas_json(ship_list_t *cas, char **msg)
 	freez(buf);
 	freez(tmp);
 }
+
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+
+/* encodes a given level of the bloombuddies for a given user. 0 is
+   the buddies in the buddy list (friends). 1 their first blooms. 2
+   their second and so on. The level number is prepended. 
+
+   return 0 on alles ok. -1 on error or if the filter was to be empty!
+*/
+int
+ident_data_bb_encode(ship_list_t *buddy_list, buddy_t *buddy, char **buf, int *buflen, int level)
+{
+	int ret = -1;
+	ship_bloom_t *bloom = NULL;
+	void *ptr = 0;
+	buddy_t *bud = 0;
+	char *tmp = 0;
+	
+	/* what is the optimal size for these bloom filters? 
+
+	- assume 100 or less friends
+	- 2 hash functions
+	- > 1% false
+	
+	=> m/n should be around 18-19
+	= 1800-1900 bits
+
+	We use 2048, which is 256 bytes, 32 words, 16 dwords.
+	Sending 5 of these is 1280 of data, under a MTU.
+	
+	+ whatever encoding is needed..
+	*/
+
+	ASSERT_TRUE(level < BLOOMBUDDY_MAX_LEVEL, err);
+	ASSERT_TRUE(bloom = ship_bloom_new(BLOOMBUDDIES_BLOOM_SIZE), err);
+	if (level == 0) {
+		while (bud = ship_list_next(buddy_list, &ptr)) {
+			if (!bud->is_friend || (buddy && !strcmp(bud->sip_aor, buddy->sip_aor)))
+				continue;
+			ident_data_bb_add_buddy_to_bloom(bloom, bud);
+		}
+	} else {
+		while (bud = ship_list_next(buddy_list, &ptr)) {
+			if (!bud->is_friend || (buddy && !strcmp(bud->sip_aor, buddy->sip_aor)))
+				continue;
+
+			if (bud->friends[level]) {
+				ship_bloom_combine_bloom(bloom, bud->friends[level]);
+			}
+		}
+	}
+	
+	*buflen = ship_bloom_dump_size(bloom) + 1;
+	ASSERT_TRUE(tmp = mallocz(*buflen), err);
+	ship_inroll(level, tmp, 1);
+	ship_bloom_dump(bloom, &(tmp[1]));
+	
+	*buf = tmp;
+	tmp = 0;
+	ret = 0;
+ err:
+	freez(tmp);
+	ship_bloom_free(bloom);
+	return ret;
+}
+
+/* decodes one bloomfilter, returning the level at which it is. */
+int
+ident_data_bb_decode(char *data, int data_len, ship_bloom_t **bloom, int *level)
+{
+	int ret = -1;
+	ship_bloom_t *b = NULL;
+	
+	ASSERT_TRUE(data_len > 0, err);
+	ship_unroll(*level, data, 1);
+	ASSERT_TRUE(b = ship_bloom_load(&(data[1]), data_len-1), err);
+	*bloom = b;
+	ret = 0;
+ err:
+	return ret;
+}
+
+/* adds a buddy to a bloom filter */
+void
+ident_data_bb_add_buddy_to_bloom(ship_bloom_t *bloom, buddy_t *buddy)
+{
+	/* eh, we should use the key, not the aor, right? .. */
+	/*
+	if (buddy->cert) {
+		EVP_PKEY *pkey = NULL;
+		RSA *pu_key = NULL;
+		ASSERT_TRUE(pkey = X509_get_pubkey(receiver->cert), err);
+		ASSERT_TRUE(pu_key = EVP_PKEY_get1_RSA(pkey), err);
+	}
+	*/
+	/* or .. both? */
+	ship_bloom_add(bloom, buddy->sip_aor);
+}
+
+
+/* return the first level in any of the buddy list where the give aor
+   might exist. 0 friend-of-friend. 1 - friend-of-friend-of-friend. */
+int
+ident_data_bb_get_first_level(ship_list_t *buddy_list, char *to_aor)
+{
+	int ret = -1;
+	buddy_t *buddy;
+	void *ptr = 0;
+
+	/* todo: we should check the key also (or only!): get the reg
+	   package from foreign_regs, extract the key, check. */
+
+	while ((buddy = (buddy_t*)ship_list_next(buddy_list, &ptr)) &&
+	       (ret != 0)) {
+		int i;
+
+		if (!buddy->is_friend)
+			continue;
+		
+		for (i=0; i < BLOOMBUDDY_MAX_LEVEL && (ret < 0 || i < ret); i++) {
+			if (ship_bloom_check(buddy->friends[i], to_aor))
+				ret = i;
+		}
+	}
+ err:
+	return ret;
+}
+
+/* checks the buddylists buddies' bloom filters for a level. the
+   buddies with matching filters are returned. */
+int
+ident_data_bb_find_connections_on_level(ship_list_t *buddy_list, char *remote_aor, int level, ship_list_t *list)
+{
+	int ret = -1;
+	buddy_t *buddy;
+	void *ptr = 0;
+
+	/* todo: we should check the key also (or only!): get the reg
+	   package from foreign_regs, extract the key, check. */
+	
+	ASSERT_TRUE(level < BLOOMBUDDY_MAX_LEVEL, err);
+	while (buddy = (buddy_t*)ship_list_next(buddy_list, &ptr)) {
+		if (buddy->is_friend && ship_bloom_check(buddy->friends[level], remote_aor))
+			ship_list_add(list, buddy);
+	}
+	ret = 0;
+ err:
+	return ret;
+}
+
+/* dumps all bloomfilters ascii-compatibly encoded (base64 actually)
+   which can be used in xmls or other text-based outputs */
+int
+ident_data_bb_dump_ascii(ship_bloom_t *friends[], char **buf) 
+{
+	int ret = -1;
+	char *tmp = 0;
+	int len = 0, i, p = 0;
+	
+	/* format:
+	(level byte, len word, data)*
+	*/
+	
+	for (i = 0; i < BLOOMBUDDY_MAX_LEVEL; i++)
+		len += ship_bloom_dump_size(friends[i]);
+	len += (BLOOMBUDDY_MAX_LEVEL*3) + 16;
+
+	ASSERT_TRUE(tmp = mallocz(len), err);
+	for (i = 0; i < BLOOMBUDDY_MAX_LEVEL; i++) {
+		int s = ship_bloom_dump_size(friends[i]);
+		ship_inroll(i, &(tmp[p]), 1);
+		ship_inroll(s, &(tmp[p+1]), 2);
+		ship_bloom_dump(friends[i], &(tmp[p+3]));
+		p += 3 + s;
+	}
+
+	if ((*buf) = ship_encode_base64(tmp, len))
+		ret = 0;
+ err:
+	freez(tmp);
+	return ret;
+}
+
+/* loads bloomfilters from a dump */
+int
+ident_data_bb_load_ascii(char *buf, ship_bloom_t *friends[])
+{
+	int ret = -1;
+	char *tmp = 0;
+	int len = 0, i, p = 0;
+	
+	ASSERT_TRUE(tmp = ship_decode_base64(buf, strlen(buf), &len), err);
+	while (p+3 < len) {
+		int level, size;
+		ship_unroll(level, &(buf[p]), 1);
+		ship_unroll(size, &(buf[p+1]), 2);
+
+		len -= 3;
+		if (level >= BLOOMBUDDY_MAX_LEVEL || size > len) {
+			ASSERT_TRUE(0, err);
+		} else {
+			ship_bloom_free(friends[level]);
+			ASSERT_TRUE(friends[level] = ship_bloom_load(&(buf[p+3]), size), err);
+			len -= size;
+		}
+	}
+	ret = 0;
+ err:
+	freez(tmp);
+	return ret;
+}
+
+#endif

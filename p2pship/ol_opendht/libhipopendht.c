@@ -57,9 +57,7 @@ static void
 opendht_task_free(opendht_task_t *task)
 {
         if (task) {
-		ship_list_sync(opendht_tasks, {
-			ship_list_remove(opendht_tasks, task);
-		});
+		ship_list_remove(opendht_tasks, task);
 
 		/* check all sub-tasks, got through on-by-one, close
 		   each (=call each's callback) */
@@ -189,7 +187,7 @@ opendht_task_init(int type, void (*callback) (char *, char *, void * , int ), vo
 				      key, value, value_len, secret, timeout, parent)))
                 return -4;
 	
-	ship_list_sync(opendht_tasks, {
+	ship_lock(opendht_tasks);
 		task->socket = netio_connto(gw_sa, gw_len, opendht_socket_opened);
 		if (task->socket != -1) {
 			ship_list_add(opendht_tasks, task);
@@ -198,7 +196,7 @@ opendht_task_init(int type, void (*callback) (char *, char *, void * , int ), vo
 			opendht_task_free(task);
 			task = NULL;
 		}
-	});
+	ship_unlock(opendht_tasks);
 	
 	if (task)
 		return 0;
@@ -260,12 +258,12 @@ opendht_find_by_socket(int s)
 {
         opendht_task_t *task = NULL;
 	void *ptr = NULL;
-	ship_list_sync(opendht_tasks, {
+	ship_lock(opendht_tasks);
 		while (!task && (task = ship_list_next(opendht_tasks, &ptr))) {
 			if (task->socket != s)
 				task = NULL;
 		}
-	});
+	ship_unlock(opendht_tasks);
 
 	if (!task) {
 		LOG_WARN("No opendht task found for socket %d\n", s);
@@ -422,6 +420,7 @@ opendht_socket_read(int s, char *data, ssize_t datalen)
 			LOG_DEBUG("Requested %d entries for key '%s'\n", val_count, task->key);
 		} else {
 			LOG_WARN("Error getting value for key '%s'\n", task->key);
+			task->status = -1;
 		}		       		
 		break;
 	}

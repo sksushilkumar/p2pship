@@ -98,6 +98,8 @@ typedef struct netio_http_server_s {
 
 /* functions */
 
+ship_list_t *netio_http_conn_get_header_keys(netio_http_conn_t *conn);
+ship_list_t *netio_http_conn_get_param_keys(netio_http_conn_t *conn);
 char *netio_http_conn_get_param(netio_http_conn_t *conn, char *name);
 void netio_http_respond(netio_http_conn_t *conn, 
 			int code, char *code_str, 

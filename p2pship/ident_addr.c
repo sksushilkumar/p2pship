@@ -401,8 +401,20 @@ ident_addr_addr_to_sa(addr_t *addr, struct sockaddr **sa, socklen_t *sa_len)
 }
 
 int 
+ident_addr_socket_to_addr(int s, addr_t *addr)
+{
+	struct sockaddr_in6 sa; // use the biggest we'll ever encounter..
+	socklen_t salen = sizeof(sa);
+	
+	if (!getpeername(s, &sa, &salen))
+		return ident_addr_sa_to_addr(&sa, &salen, addr);
+	return -1;
+}
+
+int 
 ident_addr_sa_to_addr(struct sockaddr *sa, socklen_t sa_len, addr_t *addr)
 {
+	bzero(addr, sizeof(*addr));
 	switch (sa->sa_family) {
 	case AF_INET: {
 		struct sockaddr_in *sin = (struct sockaddr_in *)sa;

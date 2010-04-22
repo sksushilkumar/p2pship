@@ -71,6 +71,20 @@ static struct service_s privacy_pairing_service =
 	.service_handler_id = "privacy_pairing_service"
 };
 
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+
+static int ident_handle_bloombuddy_message(char *data, int data_len, 
+					   ident_t *target, char *source, 
+					   service_type_t service_type);
+
+static struct service_s bloombuddy_service =
+{
+ 	.data_received = ident_handle_bloombuddy_message,
+	.service_closed = 0,
+	.service_handler_id = "bloombuddy_service"
+};
+#endif
+
 static int
 ident_cb_config_update(processor_config_t *config, char *k, char *v)
 {
@@ -194,6 +208,57 @@ ident_pp_start_negotiation(ident_t *ident, buddy_t *peer)
 	}
 }
 
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+static void
+ident_bb_send_buddies(ident_t *ident, buddy_t *buddy)
+{
+	int i;
+	LOG_DEBUG("sending bloom buddies from %s to %s..\n", ident->sip_aor, buddy->sip_aor);
+	
+	for (i=0; i < BLOOMBUDDY_MAX_LEVEL; i++) {
+		char *buf = NULL;
+		int blen = 0;
+		
+		/* encode, IF we have any knowledge of that level.. */
+		if (!ident_data_bb_encode(ident->buddy_list, buddy, &buf, &blen, i))
+			conn_queue_to_peer(buddy->sip_aor, ident->sip_aor,
+					   SERVICE_TYPE_BLOOMBUDDIES,
+					   buf, blen, NULL, NULL);
+		freez(buf);
+	}
+
+	//ident_handle_bloombuddy_message(0, 1, 0, 0, 0);
+}
+
+static int
+ident_handle_bloombuddy_message(char *data, int data_len, 
+				ident_t *target, char *source, 
+				service_type_t service_type)
+{
+	buddy_t *peer = NULL;
+	ship_bloom_t *bloom = NULL;
+	int level = 0;
+	
+	LOG_DEBUG("got bloom buddies from %s to %s..\n", target->sip_aor, source);
+	ASSERT_TRUE(peer = ident_buddy_find(target, source), err);
+	
+	/* store only if we are friends? No, store all, decide later
+	   how to handle each one */
+
+	ASSERT_ZERO(ident_data_bb_decode(data, data_len, &bloom, &level), err);
+	if (level < BLOOMBUDDY_MAX_LEVEL) {
+		ship_bloom_free(peer->friends[level]);
+		peer->friends[level] = bloom;
+		bloom = NULL;
+	}
+
+	/* save these to disk */
+	processor_run_async((void (*)(void))ident_save_identities);
+ err:
+	ship_bloom_free(bloom);
+}
+#endif
+
 static void
 ident_cb_conn_events(char *event, void *data, void *eventdata)
 {
@@ -215,6 +280,11 @@ ident_cb_conn_events(char *event, void *data, void *eventdata)
 			/* no secret, start negotiation for a new one */
 			ident_pp_start_negotiation(ident, peer);
 		}
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+		/* send only to friends */
+		if (peer->is_friend)
+			ident_bb_send_buddies(ident, peer);
+#endif
 	err:
 		ship_unlock(conn);
 		ship_obj_unlockref(ident);
@@ -290,8 +360,8 @@ ident_handle_privacy_pairing_message(char *data, int data_len,
 		/* save */
 		LOG_DEBUG("using new secret for %s -> %s: %s, saving (async)\n",
 			  target->sip_aor, source, peer->shared_secret);
-		processor_run_async(ident_save_identities);
-		processor_run_async(ident_reregister_all);
+		processor_run_async((void (*)(void))ident_save_identities);
+		processor_run_async((void (*)(void))ident_reregister_all);
 		ret = 0;
 		break;
 	default:
@@ -506,7 +576,7 @@ ident_save_identities()
 	FILE *f = NULL;
 	ca_t *ca;
 	ident_t *ident;
-	void *ptr = 0, *last = 0;
+	void *ptr = 0, *last = 0, *tmp_file = 0;
 	
 	LOG_INFO("Saving identites & ca's\n");
 
@@ -541,19 +611,25 @@ ident_save_identities()
 	}
 
 	ASSERT_ZERO(ident_create_ident_xml(identities, cas, &data), err);
-	len = strlen(data);
+	ASSERT_TRUE(len = strlen(data), err); // > 0
 
-	if (!(f = fopen(idents_file, "w"))) {
-		LOG_ERROR("Could not open identity file %s\n", idents_file);
+	// lets double check this ..
+	ASSERT_TRUE(tmp_file = combine_str(idents_file, ".tmp"), err);
+	if (!(f = fopen(tmp_file, "w"))) {
+		LOG_ERROR("Could not open identity file %s\n", tmp_file);
 		goto err;
 	}
 	ASSERT_TRUE(len == fwrite_all(data, len, f), err);
+	ASSERT_ZERO(fclose(f), err);
+	f = NULL;
+
+	ASSERT_TRUE(rename(tmp_file, idents_file) != -1, err);
 	ret = 0;
  err:
 	if (f)
 		fclose(f);
 	freez(data);
-
+	freez(tmp_file);
 	ship_unlock(cas);
 	ship_unlock(identities);
 	return ret;
@@ -716,6 +792,24 @@ ident_get_status(char *aor)
 	return status;
 }
 
+int
+ident_has_ident(const char* aor, const char *password)
+{
+        ident_t *ret = NULL;
+	void *ptr = 0;
+	
+	ship_lock(identities);
+	while (aor && !ret && (ret = (ident_t*)ship_list_next(identities, &ptr))) {
+		if (strcmp(ret->sip_aor, aor))
+			ret = NULL;
+	}
+	ship_unlock(identities);
+        if (ret)
+		return 1;
+	else 
+		return 0;
+}
+
 /* returns the current to-be-used 'default' aor - that is, one that is
    preferably registered, or then just the first one. this is somewhat
    uneccesarily used for the http forward */
@@ -793,7 +887,7 @@ ident_register_new_empty_ident(char *sip_aor)
 		/* ..and flag it so that it doesn't get saved! */
 		/* actually, we may want to save this after all! */
 		//ret->do_not_save = 1;
-		processor_run_async(ident_save_identities);
+		processor_run_async((void (*)(void))ident_save_identities);
 	}
 	goto end;
  err:
@@ -1002,7 +1096,11 @@ ident_registration_timeleft(ident_t *ident)
 	return timeleft;
 }
 
-/* registers a service handler */
+/* registers a service handler. The point with calling this is that
+   when saving / loading the state, only the ID of the service_handler
+   gets restored. We need to find the actual object in that case. For
+   normal operation, we don't need this, as the handler is (or could
+   be) given when registering the handler for an ident. */
 int
 ident_service_register(service_t *service)
 {
@@ -1019,6 +1117,8 @@ ident_get_default_service(service_type_t service_type)
 int
 ident_register_default_service(service_type_t service_type, service_t *s)
 {
+	LOG_DEBUG("registering default handler '%s' for type %d\n",
+		  s->service_handler_id, service_type);
 	ship_ht_put_int(default_services, service_type, s);
 	return 0;
 }

@@ -26,7 +26,8 @@
 #include "ship_utils.h"
 
 extern int p2pship_log_level;
-
+extern char *p2pship_log_labels[];
+	
 enum {
         LOG_ERROR = 0,
         LOG_WARN,
@@ -51,6 +52,9 @@ enum {
 #define LOG_HL(fmt, args...) \
     TUSER_PRINT("[HL] %s: " fmt, __FUNCTION__, ##args)
 
+#define LOG_CUSTOM(level, fmt, args...) \
+    if (p2pship_log_level >= level) LOG_OUT("%s " fmt, p2pship_log_labels[level], ##args)
+
 #define LOG_WARN(fmt, args...) \
     if (p2pship_log_level >= LOG_WARN) LOG_OUT("[WARN] %s: " fmt, __FUNCTION__, ##args)
 
@@ -70,7 +74,7 @@ enum {
     if (p2pship_log_level >= LOG_ERROR) LOG_OUT("[ERROR] %s: " fmt, __FUNCTION__, ##args)
 
 #define LOG_ASSERT(fmt, args...) \
-    if (p2pship_log_level >= LOG_DEBUG) LOG_OUT("[ASSERT] %s: " fmt, __FUNCTION__, ##args)
+    if (p2pship_log_level >= LOG_ERROR) LOG_OUT("[ASSERT] %s: " fmt, __FUNCTION__, ##args)
 
 #else
 

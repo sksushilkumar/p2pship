@@ -19,8 +19,11 @@
 #include <string.h>
 #include "ship_debug.h"
 #include "ship_utils.h"
+#include "processor.h"
 #include "processor_config.h"
+#include "processor.h"
 #include "trustman.h"
+#include "ident.h"
 
 #define trustman_pf_get_template "http://%s/pathlength/from/%s/to/%s/"
 
@@ -364,20 +367,38 @@ trustman_get_valid_trustparams(char *from_aor, char *to_aor)
 	/* here, we should probably check our address book as well to
 	   see whether we have that person there .. */
 	if (!has_valid) {
-	    if (addrbook_has_contact(to_aor, from_aor)) {
-		    if (!params && (params = trustman_trustparams_new(from_aor, to_aor))) {
-			    ship_lock(params->queued_packets);
-			    ship_list_add(params_ht, params);
-		    }
-		    
-		    if (params) {
-			    params->pathfinder_len = 1;
-			    params->expires = now + 30;
-		    }
-	    } else if (params) {
-		    ship_unlock(params->queued_packets);
-		    params = 0;
-	    }
+		int new_len = 0;
+		
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+		/* go through the ident's buddies, check whether we
+		   have any info on this guy */
+		ident_t *ident = NULL;
+		if (ident = ident_find_by_aor(from_aor)) {
+			new_len = ident_data_bb_get_first_level(ident->buddy_list, to_aor);
+			if (new_len > -1)
+				new_len += 2;
+			ship_obj_unlockref(ident);
+		}
+#endif
+		/* actually, as we're checking ident's buddies in
+		   bloombuddies, this might not be necessary: */
+		if (addrbook_has_contact(to_aor, from_aor))
+			new_len = 1;
+
+		if (new_len > -1) {
+			if (!params && (params = trustman_trustparams_new(from_aor, to_aor))) {
+				ship_lock(params->queued_packets);
+				ship_list_add(params_ht, params);
+			}
+			
+			if (params) {
+				params->pathfinder_len = new_len;
+				params->expires = now + 30;
+			}
+		} else if (params) {
+			ship_unlock(params->queued_packets);
+			params = 0;
+		}
 	}
 	ship_unlock(params_ht);
 	return params;
