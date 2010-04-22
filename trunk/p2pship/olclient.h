@@ -37,6 +37,8 @@ typedef RSA olclient_verifier_t;
 #define VERIFY_SIGNER 1
 #define VERIFY_INTERNAL_SIGNER 2
 
+struct olclient_module;
+
 typedef struct olclient_extra_s
 { 
 	char *cipher_secret;
@@ -65,13 +67,25 @@ typedef struct olclient_lookup_s
 	char *signer_aor;
 
 	ship_list_t *results;
-	ship_list_t *modules;
+	ship_obj_list_t *tasks;
 
 } olclient_lookup_t;
 
 SHIP_INCLUDE_TYPE(olclient_lookup);
 
-/*  */
+typedef struct olclient_get_task_s olclient_get_task_t;
+struct olclient_get_task_s {
+	ship_obj_t parent;
+
+	void (*callback) (char *val, int status, olclient_get_task_t *task); //olclient_lookup_t *lookup, struct olclient_module* mod);
+	olclient_lookup_t *lookup;
+	struct olclient_module* mod;
+	char *id;
+};
+
+SHIP_INCLUDE_TYPE(olclient_get_task);
+
+/* local cache  */
 typedef struct olclient_storage_entry_s 
 {
 	char *key;
@@ -92,20 +106,17 @@ struct olclient_module {
 	   < 0 some error
 	   1 ok, here's one result. more [maybe] to come
 	*/
-	int (*put) (char *key, char *data, int timeout, char *secret, int cached);
-	int (*get) (char *key, void *param, 
-		    void (*callback) (char *val, int status, olclient_lookup_t *lookup, struct olclient_module* mod), 
-		    olclient_lookup_t *lookup);
-	int (*remove) (char *key, char* secret);
-	int (*put_signed) (char *key, char *data, ident_t *signer, int timeout, char *secret, int cached);
-	int (*get_signed) (char *key, olclient_signer_t *signer, void *param, 
-			   void (*callback) (char *val, int status, olclient_lookup_t *lookup, struct olclient_module* mod), 
-			   olclient_lookup_t *lookup);
-	
-	void (*close) (void);
+	int (*put) (char *key, char *data, int timeout, char *secret, int cached, struct olclient_module* mod);
+	int (*get) (char *key, olclient_get_task_t *task);
+	int (*remove) (char *key, char* secret, struct olclient_module* mod);
+	int (*put_signed) (char *key, char *data, ident_t *signer, int timeout, char *secret, int cached, struct olclient_module* mod);
+	int (*get_signed) (char *key, olclient_signer_t *signer, olclient_get_task_t *task);
+	void (*close) (struct olclient_module* mod);
 
-	/* returns the name for the module */
-	const char* (*name) ();
+	/* the name for the module */
+	char* name;
+	/* extra data used by the lookupmodule itself */
+	void *module_data;
 };
 
 
@@ -114,6 +125,14 @@ int olclient_init(processor_config_t *config);
 
 /* shuts down */
 void olclient_close();
+
+/* adding new modules to the overlay management. the ownership of the modules are kept by the caller! */
+int olclient_register_module(struct olclient_module* mod /*, const char *name, void *module_data*/);
+void olclient_unregister_module(struct olclient_module* mod);
+
+/* for creating module instances from a template */
+struct olclient_module* olclient_module_new(const struct olclient_module mod, const char *name, void *module_data);
+void olclient_module_free(struct olclient_module* mod);
 
 /* overlay funcs */
 int olclient_remove(char *key, char* secret);
@@ -138,11 +157,15 @@ int olclient_put_for_someone(char *key, char *data, buddy_t *receiver, int timeo
 int olclient_put_signed_for_someone(char *key, char *data, ident_t *signer, buddy_t *receiver, 
 				    char *shared_secret, int timeout, char *secret);
 /* sign, encrypt & use secret to scramble key */
-int olclient_anonymous_put_signed_for_someone(char *key, char *data, ident_t *signer, buddy_t *receiver, 
+int olclient_put_anonymous_signed_for_someone(char *key, char *data, ident_t *signer, buddy_t *receiver, 
 					      char *shared_secret, int timeout, char *secret);
 
+/*
+ * The gets
+ */
+
 int olclient_get(char *key, void *param, void (*callback) (char *key, char *data, char *signer, void *param, int status));
-int olclient_get_signed(char *key, buddy_t *signer, void *param, 
+int olclient_get_signed(char *key, buddy_t *signer, void *param,
 			void (*callback) (char *key, char *data, char *signer, void *param, int status));	
 /* this is gets for signed_cert-type packages */
 int olclient_get_signed_trusted(char *key, void *param, 
@@ -153,14 +176,12 @@ int olclient_get_for_someone(char *key, ident_t *receiver, void *param,
 			     void (*callback) (char *key, char *data, char *signer, void *param, int status));
 int olclient_get_signed_for_someone(char *key, buddy_t *signer, ident_t *receiver, char *shared_secret, void *param, 
 				    void (*callback) (char *key, char *data, char *signer, void *param, int status));
-int olclient_anonymous_get_signed_for_someone(char *key, buddy_t *signer, ident_t *receiver, char *shared_secret, void *param, 
+int olclient_get_anonymous_signed_for_someone(char *key, buddy_t *signer, ident_t *receiver, char *shared_secret, void *param, 
 					      void (*callback) (char *key, char *data, char *signer, void *param, int status));
 
-/* adding new modules to the overlay management */
-int olclient_register_module(struct olclient_module* mod);
-void olclient_unregister_module(struct olclient_module* mod);
-
-/* the storage funcs */
+/* 
+ * the storage funcs 
+ */
 void olclient_storage_entry_free(olclient_storage_entry_t* e);
 int olclient_storage_remove(char *key, char* secret);
 int olclient_storage_find_entries(char *key, ship_list_t *list);

@@ -23,6 +23,15 @@ int p2pship_log_level = LOG_INFO;
 char* p2pship_log_file = 0;
 time_t p2pship_start = 0;
 
+char *p2pship_log_labels[] = {
+	"[ERROR]",
+	"[WARN]",
+	"[INFO]",
+	"[DEBUG]",
+	"[VDEBUG]",
+	0
+};
+
 #define DIE_ON_LOCK_WARNINGS 1
 
 #ifdef LOCK_DEBUG

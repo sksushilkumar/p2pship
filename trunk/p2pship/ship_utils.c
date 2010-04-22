@@ -26,6 +26,8 @@
 #include "processor_config.h"
 #include <pwd.h>
 #include <sys/stat.h>
+#include <glob.h>
+#include <regex.h>
 
 extern char *p2pship_log_file;
 extern ship_list_t *getaddrinfolock;
@@ -305,6 +307,8 @@ void
 _ship_list_add(int _l, ship_list_t *list, void *data)
 {
 	ship_list_entry_t **e = 0;
+	if (!data)
+		return;
 	if (_l) ship_lock(list);
 
 	e = &(list->entries);
@@ -325,6 +329,8 @@ void
 _ship_list_push(int _l, ship_list_t *list, void *data)
 {
 	ship_list_entry_t *e = 0;
+	if (!data)
+		return;
 	if (_l) ship_lock(list);
 
 	if (e = mallocz(sizeof(ship_list_entry_t))) {
@@ -372,7 +378,6 @@ _ship_list_next(int _l, ship_list_t *list, void **ptr)
 {
 	ship_list_entry_t *eptr = 0;
 	void *ret = 0;
-
 	if (_l) ship_lock(list);
 	if (*ptr) {
 		eptr = (*((ship_list_entry_t**)ptr))->next;
@@ -617,6 +622,15 @@ ship_untokenize(char **tokens, int toklen, const char *token, const char *prefix
 	return ret;
 }
 
+char *
+strdupz(const char *str) 
+{
+	if (!str)
+		return NULL;
+	else 
+		return strdup(str);
+}
+
 /* dups & trims a string */
 char *
 strdup_trim(char *str)
@@ -646,6 +660,19 @@ strdup_trim(char *str)
 	return ret;
 }
 
+/* checks whether the string is something that could be seen as
+   'true' */
+int
+ship_is_true(const char* tmp)
+{
+	if ((strlen(tmp) > 0) &&
+	    (*tmp == '1' || 
+	     tolower(*tmp) == 'y' ||
+	     tolower(*tmp) == 't'))
+		return 1;
+	return 0;
+}
+		
 /* trims a string */
 char *
 trim(char *str)
@@ -679,7 +706,7 @@ trim(char *str)
 }
 
 int 
-str_startswith(char *str, char *token)
+str_startswith(const char *str, const char *token)
 {
 	if (!str || !token)
 		return 0;
@@ -756,6 +783,17 @@ append_str(const char *str, char *buf, int *buflen, int *datalen)
 		return buf;
 	else
 		return append_mem(str, strlen(str), buf, buflen, datalen);
+}
+
+char *
+combine_str(const char *str1, const char *str2)
+{
+	char *ret = 0;
+	if (ret = mallocz(strlen(str1) + strlen(str2) + 1)) {
+		strcat(ret, str1);
+		strcat(ret, str2);
+	}
+	return ret;
 }
 
 /********** The HT stuff **************/
@@ -867,7 +905,7 @@ ship_ht2_keys(ship_ht2_t *ht, char *key)
 
 
 static ship_ht_entry_t *
-ship_ht_get_entry(ship_ht_t *ht, char *key)
+ship_ht_get_entry(ship_ht_t *ht, const char *key)
 {
 	ship_ht_entry_t *e = NULL;
 	void *ptr = 0;
@@ -895,6 +933,14 @@ ship_ht_free(ship_ht_t *ht)
 }
 
 void *
+ship_ht_put_ptr(ship_ht_t *ht, void *key, void *val)
+{
+	char buf[64];
+	sprintf(buf, "ptr:%x", key);
+	return ship_ht_put_string(ht, buf, val);
+}
+
+void *
 ship_ht_put_int(ship_ht_t *ht, int key, void *val)
 {
 	char buf[64];
@@ -903,7 +949,7 @@ ship_ht_put_int(ship_ht_t *ht, int key, void *val)
 }
 
 void *
-ship_ht_put_string(ship_ht_t *ht, char *key, void *val)
+ship_ht_put_string(ship_ht_t *ht, const char *key, void *val)
 {
 	ship_ht_entry_t *e;
 	void *ptr = 0;
@@ -932,7 +978,15 @@ ship_ht_put_string(ship_ht_t *ht, char *key, void *val)
 }
 
 void * 
-ship_ht_get_int(ship_ht_t *ht, int key)
+ship_ht_get_ptr(ship_ht_t *ht, const void *key)
+{
+	char buf[64];
+	sprintf(buf, "ptr:%x", key);
+	return ship_ht_get_string(ht, buf);
+}
+
+void * 
+ship_ht_get_int(ship_ht_t *ht, const int key)
 {
 	char buf[64];
 	sprintf(buf, "int:%d", key);
@@ -940,7 +994,7 @@ ship_ht_get_int(ship_ht_t *ht, int key)
 }
 
 void * 
-ship_ht_get_string(ship_ht_t *ht, char *key)
+ship_ht_get_string(ship_ht_t *ht, const char *key)
 {
 	ship_ht_entry_t *e;
 	void *ptr = 0;
@@ -970,6 +1024,14 @@ ship_ht_pop(ship_ht_t *ht)
 }
 
 void * 
+ship_ht_remove_ptr(ship_ht_t *ht, void *key)
+{
+	char buf[64];
+	sprintf(buf, "ptr:%x", key);
+	return ship_ht_remove_string(ht, buf);
+}
+
+void * 
 ship_ht_remove_int(ship_ht_t *ht, int key)
 {
 	char buf[64];
@@ -996,7 +1058,7 @@ ship_ht_remove(ship_ht_t *ht, void *value)
 }
 
 void * 
-ship_ht_remove_string(ship_ht_t *ht, char *key)
+ship_ht_remove_string(ship_ht_t *ht, const char *key)
 {
 	ship_ht_entry_t *e;
 	void *ptr = 0;
@@ -1070,37 +1132,46 @@ ship_ht_empty_free_with(ship_ht_t *ht, void (*func) (void *))
 	ship_unlock(ht);
 }
 
-ship_list_t * 
-ship_ht_values(ship_ht_t *ht)
+void
+ship_ht_values_add(ship_ht_t *ht, ship_list_t *ret)
 {
 	ship_ht_entry_t *e = NULL;
 	void *ptr = 0;
-	ship_list_t *ret = ship_list_new();
-	if (!ret)
-		return ret;
-	
-	ship_lock(ht);
 	while (e = ship_list_next(ht, &ptr)) {
 		ship_list_add(ret, e->value);
 	}
 	ship_unlock(ht);
-	return ret;
 }
 
 ship_list_t * 
-ship_ht_keys(ship_ht_t *ht)
+ship_ht_values(ship_ht_t *ht)
 {
-	ship_ht_entry_t *e = NULL;
-	void *ptr = 0;
 	ship_list_t *ret = ship_list_new();
 	if (!ret)
 		return ret;
-	
+	ship_ht_values_add(ht, ret);
+	return ret;
+}
+
+void
+ship_ht_keys_add(ship_ht_t *ht, ship_list_t *ret)
+{
+	ship_ht_entry_t *e = NULL;
+	void *ptr = 0;
 	ship_lock(ht);
 	while (e = ship_list_next(ht, &ptr)) {
 		ship_list_add(ret, strdup(e->key));
 	}
 	ship_unlock(ht);
+}
+
+ship_list_t * 
+ship_ht_keys(ship_ht_t *ht)
+{
+	ship_list_t *ret = ship_list_new();
+	if (!ret)
+		return ret;
+	ship_ht_keys_add(ht, ret);
 	return ret;
 }
 
@@ -1503,6 +1574,53 @@ ship_read_mem(char *buf, int buflen, void *data,
 	}
 }
 
+/* lists the content of some directory */
+ship_list_t*
+ship_list_dir(const char *dir, const char *pattern, const int fullpath)
+{
+	glob_t gl;
+	ship_list_t *ret = 0;
+	char *p = NULL;
+
+	ASSERT_TRUE(ret = ship_list_new(), err);
+	ASSERT_TRUE(p = mallocz(strlen(dir) + 5 + strlen(pattern)), err);
+	strcpy(p, dir);
+	if (p[strlen(p)-1] != '/')
+		strcat(p, "/");
+	strcat(p, pattern);
+	if (!glob(p, 0, NULL, &gl)) {
+		int l;
+		for (l = 0; l < gl.gl_pathc; l++) {
+			//regex_t exp;
+			char *shortn = strrchr(gl.gl_pathv[l], '/');
+
+			if (shortn && !fullpath) 
+				shortn++;
+			else 
+				shortn = gl.gl_pathv[l];
+
+			/*
+			printf("will do %s\n", shortn);
+			if (pattern && !regcomp(&exp, pattern, REG_ICASE)) {
+				if (regexec(&exp, shortn, 0, NULL, 0))
+					shortn = NULL;
+				regfree(&exp);
+			}
+			printf("will do ----- %s\n", shortn);
+			*/
+			
+			if (shortn)
+				ship_list_add(ret, strdup(shortn));
+
+			free(gl.gl_pathv[l]);
+		}
+		free(gl.gl_pathv);
+	}
+ err:
+	freez(p);
+	return ret;
+}
+
 /* returns the given filename in the current process owner's home
    directory */
 int
@@ -1559,6 +1677,31 @@ ship_ensure_file(char *filename, char *initial_data)
  err:
 	if (f)
 		fclose(f);	
+	return ret;
+}
+
+int
+ship_ensure_dir(char *filename)
+{
+	struct stat sdata;
+	int ret = 0;
+	if (stat(filename, &sdata)) {
+		/* create the directory recursively */
+		char *p = strchr(filename, '/');
+		while (p) {
+			p[0] = 0;
+			if (p != filename && stat(filename, &sdata))
+				ret = mkdir(filename, S_IRWXU);
+			p[0] = '/';
+			p = strchr(p+1, '/');
+			
+			ASSERT_ZERO(ret, err);
+		}
+		
+		if (stat(filename, &sdata))
+			ret = mkdir(filename, S_IRWXU);
+	}
+ err:
 	return ret;
 }
 
@@ -1758,7 +1901,7 @@ ship_load_xml_mem(const char *data, int datalen, int (*func) (xmlNodePtr, void *
 	result = func(cur, ptr);
  err:
 	if (doc) xmlFreeDoc(doc);
-	xmlCleanupParser();
+	//xmlCleanupParser();
 	return result;
 }
 
@@ -1819,6 +1962,9 @@ _ship_obj_unref(void *param)
 		if (ship_locked(obj)) {
 			PANIC("unreffing an '%s' obj [%08x] while locked!", obj->_ship_obj_type.obj_name, obj, obj->_ship_obj_type.obj_size);
 		}
+
+#elif defined REF_DEBUG2
+		ship_debug_delref(obj);
 #endif
 		ship_obj_free(obj);
 	} else {
@@ -1878,3 +2024,249 @@ ship_lenbuf_create_ref(char *data, int len)
 	}
 	return ret;
 }
+
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+
+#include<limits.h>
+#include<stdarg.h>
+
+#define SETBIT(a, n) (a[n/CHAR_BIT] |= (1<<(n%CHAR_BIT)))
+#define GETBIT(a, n) (a[n/CHAR_BIT] & (1<<(n%CHAR_BIT)))
+
+static unsigned int sax_hash(const char *key)
+{
+	unsigned int h=0;
+
+	while(*key) h^=(h<<5)+(h>>2)+(unsigned char)*key++;
+
+	return h;
+}
+
+static unsigned int sdbm_hash(const char *key)
+{
+	unsigned int h=0;
+	while(*key) h=(unsigned char)*key++ + (h<<6) + (h<<16) - h;
+	return h;
+}
+
+static ship_bloom_t *ship_bloom_create(size_t size, size_t nfuncs, ...)
+{
+	ship_bloom_t *bloom;
+	va_list l;
+	int n;
+	
+	if(!(bloom=malloc(sizeof(ship_bloom_t)))) return NULL;
+	bloom->size_in_bytes = (size+CHAR_BIT-1)/CHAR_BIT;
+	if(!(bloom->a=calloc(bloom->size_in_bytes, sizeof(char)))) {
+		free(bloom);
+		return NULL;
+	}
+	if(!(bloom->funcs=(hashfunc_t*)malloc(nfuncs*sizeof(hashfunc_t)))) {
+		free(bloom->a);
+		free(bloom);
+		return NULL;
+	}
+
+	va_start(l, nfuncs);
+	for(n=0; n<nfuncs; ++n) {
+		bloom->funcs[n]=va_arg(l, hashfunc_t);
+	}
+	va_end(l);
+
+	bloom->nfuncs=nfuncs;
+	bloom->asize=size;
+
+	return bloom;
+}
+
+ship_bloom_t *ship_bloom_new(size_t size)
+{
+	return ship_bloom_create(size, BLOOM_FUNCS, sax_hash, sdbm_hash);
+}
+
+void
+ship_bloom_free(ship_bloom_t *bloom)
+{
+	if (!bloom)
+		return;
+	free(bloom->a);
+	free(bloom->funcs);
+	free(bloom);
+}
+
+int ship_bloom_add(ship_bloom_t *bloom, const char *s)
+{
+	size_t n;
+
+	for(n=0; n<bloom->nfuncs; ++n) {
+		SETBIT(bloom->a, bloom->funcs[n](s)%bloom->asize);
+	}
+
+	return 0;
+}
+
+int ship_bloom_check(ship_bloom_t *bloom, const char *s)
+{
+	size_t n;
+	if (!bloom)
+		return 0;
+	for(n=0; n<bloom->nfuncs; ++n) {
+		if(!(GETBIT(bloom->a, bloom->funcs[n](s)%bloom->asize))) return 0;
+	}
+
+	return 1;
+}
+
+int
+ship_bloom_combine_bloom(ship_bloom_t *target, ship_bloom_t *source)
+{
+	int i;
+	if (!target || !source ||
+	    (target->asize != source->asize))
+		return -1;
+	
+	for (i=0; i < target->size_in_bytes; i++)
+		target->a[i] |= source->a[i];
+	return 0;
+}
+
+int 
+ship_bloom_dump_size(ship_bloom_t *bloom)
+{
+	if (!bloom)
+		return 0;
+	int ret = bloom->size_in_bytes * sizeof(char);
+	ret += 4; // size in bits
+	ret += 2; // number of hashfunctions
+	return ret;
+}
+
+void
+ship_bloom_dump(ship_bloom_t *bloom, char *buf)
+{
+	if (!bloom)
+		return;
+	ship_inroll(bloom->asize, buf, 4);
+	ship_inroll(bloom->nfuncs, &(buf[4]), 2);
+	memcpy(&(buf[6]), bloom->a, bloom->size_in_bytes);
+}
+
+ship_bloom_t *
+ship_bloom_load(char *buf, int buflen)
+{
+	ship_bloom_t *ret = 0;
+	int size, funcs;
+	ASSERT_TRUE(buf, err);
+	ASSERT_TRUE(buflen >= 6, err);
+	
+	ship_unroll(size, buf, 4);
+	ship_unroll(funcs, &(buf[4]), 2);
+	ASSERT_TRUE(funcs == BLOOM_FUNCS, err);
+	ASSERT_TRUE(ret = ship_bloom_new(size), err);
+	ASSERT_TRUE(buflen >= (ret->size_in_bytes + 6), err);
+	memcpy(ret->a, &(buf[6]), ret->size_in_bytes);
+	return ret;
+ err:
+	ship_bloom_free(ret);
+	return NULL;
+}
+
+#endif
+
+
+#ifdef REF_DEBUG2
+
+static ship_ht_t *debug_refs = NULL;
+
+void ship_debug_initref()
+{
+	debug_refs = ship_ht_new();
+}
+
+void ship_debug_delref(void *obj)
+{
+	ship_list_t *refs = NULL;
+	if (!obj) return;
+	ship_lock(debug_refs);
+	if (refs = ship_ht_remove_ptr(debug_refs, obj)) {
+		ship_list_empty_free(refs);
+		ship_list_free(refs);
+	}
+	ship_unlock(debug_refs);
+}
+
+void ship_debug_incref(void *obj, const char *file, const int line)
+{
+	ship_list_t *refs = NULL;
+	char *str = NULL;
+	ship_obj_t *o = (ship_obj_t *)obj;
+	if (!obj) return;
+	ship_lock(debug_refs);
+	if (!(refs = ship_ht_get_ptr(debug_refs, obj))) {
+		refs = ship_list_new();
+		ship_ht_put_ptr(debug_refs, obj, refs);
+	}
+	
+	str = mallocz(strlen(file) + 64);
+	sprintf(str, "REF    %s:%d (%d)", file, line, o->_ship_obj_ref);
+	ship_list_add(refs, str);
+	ship_unlock(debug_refs);
+}
+
+void ship_debug_decref(void *obj, const char *file, const int line)
+{
+	ship_list_t *refs = NULL;
+	char *str = NULL;
+	ship_obj_t *o = (ship_obj_t *)obj;
+	if (!obj) return;
+	ship_lock(debug_refs);
+	if (!(refs = ship_ht_get_ptr(debug_refs, obj))) {
+		USER_ERROR("***** unreffing something that doesn't exist at %s:%d\n", file, line);
+		refs = ship_list_new();
+		ship_ht_put_ptr(debug_refs, obj, refs);
+	}
+	
+	str = mallocz(strlen(file) + 64);
+	sprintf(str, "UNREF  %s:%d (%d)", file, line, o->_ship_obj_ref);
+	ship_list_add(refs, str);
+	ship_unlock(debug_refs);
+}
+
+void ship_debug_reportref()
+{
+	ship_list_t *refs = NULL, *keys = NULL;
+	char *key, *pos;
+
+	ship_lock(debug_refs);
+	USER_ERROR("****** refs *******\n");
+
+	keys = ship_ht_keys(debug_refs);
+	while (key = ship_list_pop(keys)) {
+		void *ptr = 0;
+		USER_ERROR("++ object %s:\n", key);
+		refs = ship_ht_get_string(debug_refs, key);
+		while (pos = ship_list_next(refs, &ptr)) {
+			USER_ERROR("\t%s\n", pos);
+		}
+		USER_ERROR("-- object %s:\n", key);
+	}
+	ship_list_free(keys);
+	USER_ERROR("****** /refs *******\n");
+	ship_unlock(debug_refs);
+}
+
+void ship_debug_closeref()
+{
+	ship_list_t *refs = NULL;
+	USER_ERROR("****** refs at closing: *******\n");
+	ship_lock(debug_refs);
+	ship_debug_reportref();
+
+	while (refs = ship_ht_pop(debug_refs)) {
+		ship_list_empty_free(refs);
+		ship_list_free(refs);
+	}
+	ship_ht_free(debug_refs);
+}
+
+#endif

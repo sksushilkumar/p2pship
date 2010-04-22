@@ -43,15 +43,41 @@ static ship_list_t *entries = NULL;
 
 static void olclient_lookup_free(olclient_lookup_t *obj);
 static int olclient_lookup_init(olclient_lookup_t *ret, char *key);
-
 SHIP_DEFINE_TYPE(olclient_lookup);
 
+static void olclient_get_task_free(olclient_get_task_t *obj);
+static int olclient_get_task_init(olclient_get_task_t *ret, olclient_lookup_t *lookup);
+SHIP_DEFINE_TYPE(olclient_get_task);
+
+
+static void 
+olclient_get_task_free(olclient_get_task_t *obj)
+{
+	if (obj->callback) {
+		obj->callback(NULL, -1, obj);
+	}
+	ship_obj_unref(obj->lookup);
+	freez(obj->id);
+}
+
+static int 
+olclient_get_task_init(olclient_get_task_t *ret, olclient_lookup_t *lookup)
+{
+ 	ASSERT_TRUE(ret->id = mallocz(64), err);
+	sprintf(ret->id, "%08x.%d", ret, rand());
+
+	ship_obj_ref(lookup);
+	ret->lookup = lookup;
+	return 0;
+ err:
+	return -1;
+}
 
 void
 olclient_cb_state_change(struct olclient_module* module, int status, char *info)
 {
 	/* note: this isn't actually called from anywhere .. :( */
-	LOG_INFO("changed state of storage module %s to %d: %s\n", module->name(), status, info);
+	LOG_INFO("changed state of storage module %s to %d: %s\n", module->name, status, info);
 	processor_event_generate("ol_state_update", NULL, NULL);
 }
 
@@ -75,7 +101,7 @@ olclient_lookup_free(olclient_lookup_t *l)
 	}
 	ship_list_empty_free(l->results);
 	ship_list_free(l->results);
-	ship_list_free(l->modules);
+	ship_obj_list_free(l->tasks);
 	olclient_extra_free(l->extra);
 	freez(l->key);
 	freez(l->signer_aor);
@@ -106,7 +132,7 @@ static int
 olclient_lookup_init(olclient_lookup_t *ret, char *key)
 {
         ASSERT_TRUE(ret->key = strdup(key), err);
-        ASSERT_TRUE(ret->modules = ship_list_new(), err);
+        ASSERT_TRUE(ret->tasks = ship_obj_list_new(), err);
         ASSERT_TRUE(ret->results = ship_list_new(), err);
 	ret->status = -1;
         return 0;
@@ -116,17 +142,69 @@ olclient_lookup_init(olclient_lookup_t *ret, char *key)
 
 /* registers a new module */
 int
-olclient_register_module(struct olclient_module* mod)
+olclient_register_module(struct olclient_module* mod /*, const char *name, void *module_data */)
 {
+	ship_list_remove(olclient_modules, mod);
 	ship_list_add(olclient_modules, mod);
 	return 0;
+
+	/*
+	int ret = -1;
+	struct olclient_module *copy = mallocz(sizeof(*copy));
+	memcpy(copy, mod, sizeof(*copy));
+	ASSERT_TRUE(copy->name = strdup(name), err);
+	copy->module_data = module_data;
+	ship_list_add(olclient_modules, copy);
+	copy = 0;
+	ret = 0;
+ err:
+	freez(copy);
+	return ret;
+	*/
 }
 
 /* de-registers a new module */
 void
-olclient_unregister_module(struct olclient_module* mod)
+olclient_unregister_module(struct olclient_module* mod /*const char *name, void *module_data*/)
 {
 	ship_list_remove(olclient_modules, mod);
+
+	/* todo: go through the unfinished calls, remove this from those also! */
+
+	/*
+	void *ptr = 0;
+	struct olclient_module *m = 0;
+	ship_lock(olclient_modules);
+	while (m = ship_list_next(olclient_modules, &ptr)) {
+		if (!strcmp(name, m->name) && (m->module_data == module_data)) {
+			ship_list_remove(olclient_modules, m);
+			break;
+		}
+	}
+	ship_unlock(olclient_modules);
+	*/
+}
+
+struct olclient_module* 
+olclient_module_new(const struct olclient_module mod, const char *name, void *module_data)
+{
+	struct olclient_module* ret = (struct olclient_module*)mallocz(sizeof(*ret));
+	memcpy(ret, &mod, sizeof(mod));
+	if (ret->name = strdup(name)) {
+		ret->module_data = module_data;
+		return ret;
+	}
+	olclient_module_free(ret);
+	return NULL;
+}
+
+void 
+olclient_module_free(struct olclient_module* mod)
+{
+	if (mod) {
+		freez(mod->name);
+		freez(mod);
+	}
 }
 
 /* inits the system */
@@ -169,11 +247,13 @@ olclient_close()
 		struct olclient_module *mod;
 		ship_lock(olclient_modules);
 		while (mod = (struct olclient_module *)ship_list_pop(olclient_modules)) {
-			mod->close();
+			mod->close(mod);
+			/* freez(mod->name); */
+			/* freez(mod); */
 		}
-		ship_unlock(olclient_modules);
+		ship_list_free(olclient_modules);
+		olclient_modules = NULL;
 	}
-	ship_list_free(olclient_modules);
 
 	/* close the storage */
 	if (entries) {
@@ -220,10 +300,10 @@ olclient_notify_complete(void *data, processor_task_t **wait, int wait_for_code)
 			}
 		} while (res);
 	}
-		
+
 	/* are we done? ..we might have had more results put here,
 	   thefore check the results list also! */
-	if (!ship_list_first(l->modules)) {
+	if (!ship_list_first(l->tasks)) {
 		ship_obj_list_remove(olclient_lookups, l);
 		if (callback)
 			callback(l->key, NULL, NULL, l->param, l->status);
@@ -245,20 +325,14 @@ olclient_notify_complete(void *data, processor_task_t **wait, int wait_for_code)
  */
 
 static void
-olclient_cb_get(char *value, int status, 
-		olclient_lookup_t *l, struct olclient_module *mod)
+olclient_cb_get(char *value, int status,
+		olclient_get_task_t *task)
 {
-	
-	int flag = 0;		
+	olclient_lookup_t *l = task->lookup;
 
 	/* check that we still have that lookup in the list! */
 	ship_lock(l);
-	LOG_VDEBUG("got from module %s for '%s'\n", mod->name(), l->key);
-	if (status != 1)
-		mod = ship_list_remove(l->modules, mod);
-	else
-		mod = ship_list_find(l->modules, mod);
-			
+	LOG_VDEBUG("got from module %s for '%s', status %d\n", task->mod->name, l->key, status);
 	if (value) {
 		char *res_value = NULL;
 	
@@ -323,13 +397,15 @@ olclient_cb_get(char *value, int status,
 		}
 	}
  err:
+	ship_obj_ref(l);
+	if (status != 1)
+		ship_obj_list_remove(l->tasks, task);
+
 	ship_unlock(l);
 	freez(value);
 	
 	/* we separate the callback processing into a separate task so
 	   we dont hog up the module thread (if any..)! */
-	if (status == 1)
-		ship_obj_ref(l);
 
 	processor_tasks_add(olclient_notify_complete, l, olclient_notify_complete_done);
 }
@@ -337,12 +413,13 @@ olclient_cb_get(char *value, int status,
 /* This call back function is used only when the module doesn't support get_signed directly */
 static void
 olclient_cb_get_signed(char *value, int status,
-		       olclient_lookup_t *l, struct olclient_module *mod) 
+		       olclient_get_task_t *task)
 {
 	char *tmp = NULL;
+	olclient_lookup_t *l = task->lookup;
 	
 	/* check that we still have that lookup in the list! */
-	LOG_VDEBUG("got signed cb from module %s for '%s'\n", mod->name(), l->key);
+	LOG_VDEBUG("got signed cb from module %s for '%s'\n", task->mod->name, l->key);
 
 	ship_lock(l);
 	if (value && (l->extra->verify_flags & VERIFY_SIGNER)) {
@@ -356,21 +433,23 @@ olclient_cb_get_signed(char *value, int status,
 	/* if we didn't succeed in verifying signature, and more is on
 	   its way, don't pass this one to the callback */
 	if (status != 1 || tmp) 
-		olclient_cb_get(tmp, status, l, mod);
+		olclient_cb_get(tmp, status, task);
 }
 
 static int 
 olclient_get_to(void *data, processor_task_t **wait, int wait_for_code)
 {
+	olclient_get_task_t* task;
 	olclient_lookup_t *l = data;
-
+	void *ptr = 0;
 	/* timeout expired on the lookup, clear the queue, call for
 	   notification */
-	struct olclient_module *mod;
 	ship_lock(l);
-	while (mod = ship_list_pop(l->modules)) {
-		LOG_DEBUG("timeout for lookup on module %s..\n", mod->name());
+	while (task = ship_list_next(l->tasks, &ptr)) {
+		LOG_DEBUG("timeout for lookup on module %s..\n", task->mod->name);
 	}
+
+	ship_obj_list_clear(l->tasks);
 	ship_unlock(l);
 	processor_tasks_add(olclient_notify_complete, l, olclient_notify_complete_done);
 }
@@ -449,34 +528,44 @@ olclient_get_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 	l->extra = extra;
 	l->callback = callback;
 	while (mod = (struct olclient_module*)ship_list_next(olclient_modules, &ptr)) {    	    			    
+		olclient_get_task_t *task = (olclient_get_task_t *)ship_obj_new(TYPE_olclient_get_task, l);
+		if (!task)
+			continue;
+
+		task->callback = olclient_cb_get;
+		task->mod = mod;
+		ship_obj_list_add(l->tasks, task);
+		
+		// todo: ! this needs to be refd in get_task's constructor
+		//ship_obj_ref(l);
+		
 		/* for functions .. get_signed, get_signed_for_someone */ 
 		if (l->extra->verify_flags & VERIFY_SIGNER) {
-			if (l->extra->signer &&
+			if (l->extra->signer && // if no signer, then just verify that it is someone trusted!
 			    mod->get_signed && 
-			    !mod->get_signed(key, l->extra->signer, param, olclient_cb_get, l)){
-				ship_obj_ref(l);
-				ship_list_add(l->modules, mod);
+			    !mod->get_signed(key, l->extra->signer, task /*olclient_cb_get, l, mod*/))
 				ret = 0;
-			}
-			/* module doesn't support get_signed, we call mod->get and 
+			/* module doesn't support get_signed, we call mod->get and
 			 * ask cb_get_signed to verify the data signature instead */
-			else if (!mod->get(key, param, olclient_cb_get_signed, l)){
-				ship_obj_ref(l);
-				ship_list_add(l->modules, mod);
-				ret = 0;
-			}
-		} else {
-			if (!mod->get(key, param, olclient_cb_get, l)) {
-				ship_obj_ref(l);
-				ship_list_add(l->modules, mod);
-				ret = 0;
-			}
-		}
+			else {
+				task->callback = olclient_cb_get_signed;
+				if (!mod->get(key, task /*olclient_cb_get_signed, l, mod*/))
+					ret = 0;
+			} 
+		} else if (!mod->get(key, task /*olclient_cb_get, l, mod */))
+			ret = 0;
+		
+		if (ret)
+			ship_obj_list_remove(l->tasks, task);
+		ship_obj_unref(task);
 	}
+
+	/* todo: should we actually just store the tasks and put timeouts on those instead? */
 
 	if (!ret) {
 		ship_obj_list_add(olclient_lookups, l);
 		/* add a global timeout for all the lookup modules */
+
 		ship_obj_ref(l);
 		processor_tasks_add_timed(olclient_get_to, l, NULL, 5000);
 	}
@@ -627,33 +716,83 @@ err:
 
 /***************** here begins the kingdom of Put *********************/
 
+struct olclient_put_entry_s {
+	char *key; 
+	char *data; 
+	ident_t *signer;
+	int add_cert;
+	int timeout;
+	char *secret;
+	int cached;
+};
+
 static int
-olclient_put_entry(char *key, char *data, ident_t *signer, int add_cert, int timeout, char *secret, int cached)
+olclient_put_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 {
 	struct olclient_module *mod;
 	void *ptr = 0;
+	struct olclient_put_entry_s *e = (struct olclient_put_entry_s*)data;
 	int ret = -1;
-	
-	LOG_DEBUG("putting %d bytes: for key '%s'\n", strlen(data), key);
-	LOG_VDEBUG("putting %d bytes: '%s'->'%s'\n", strlen(data), key, data);
+
+	LOG_DEBUG("putting %d bytes: for key '%s'\n", strlen(e->data), e->key);
+	LOG_VDEBUG("putting %d bytes: '%s'->'%s'\n", strlen(e->data), e->key, e->data);
 	ship_lock(olclient_modules);
 	while (mod = ship_list_next(olclient_modules, &ptr)) {
-		if (signer) {
-			if (add_cert || !mod->put_signed ||
-			    (ret = mod->put_signed(key, data, signer, timeout, secret, cached))) {
+		if (e->signer) {
+			if (e->add_cert || !mod->put_signed ||
+			    (ret = mod->put_signed(e->key, e->data, e->signer, 
+						   e->timeout, e->secret, e->cached, mod))) {
 				char *wrap_data = NULL;
-				if (wrap_data = olclient_create_signed_wrap(key, data, signer, add_cert, timeout)) {
-					ret = mod->put(key, wrap_data, timeout, secret, cached);
+				if (wrap_data = olclient_create_signed_wrap(e->key, e->data, 
+									    e->signer, e->add_cert, e->timeout)) {
+					ret = mod->put(e->key, wrap_data, e->timeout, e->secret, e->cached, mod);
 					free(wrap_data);
 				}
 			}
 		} else {
-			ret = mod->put(key, data, timeout, secret, cached);
+			ret = mod->put(e->key, e->data, e->timeout, e->secret, e->cached, mod);
 		}
 	}
 	ship_unlock(olclient_modules);
 	
 	return ret;
+}
+
+static void
+olclient_put_entry_done(void *data, int code)
+{
+	struct olclient_put_entry_s *e = (struct olclient_put_entry_s*)data;
+	if (e) {
+		freez(e->key);
+		freez(e->data);
+		freez(e->secret);
+		ship_obj_unref(e->signer);
+		freez(e);
+	}
+}
+
+static int
+olclient_put_entry(char *key, char *data, ident_t *signer, int add_cert, int timeout, char *secret, int cached)
+{
+	struct olclient_put_entry_s *e = 0;
+	ASSERT_TRUE(e = mallocz(sizeof(*e)), err);
+	ASSERT_TRUE(e->key = strdupz(key), err);
+	ASSERT_TRUE(e->data = strdupz(data), err);
+	if (secret)
+		ASSERT_TRUE(e->secret = strdupz(secret), err);
+	e->signer = signer;
+	ship_obj_ref(e->signer);
+	e->add_cert = add_cert;
+	e->timeout = timeout;
+	e->cached = cached;
+	
+	if (processor_tasks_add(olclient_put_entry_do, e, 
+				olclient_put_entry_done)) {
+		e = NULL;
+	}
+ err:
+	if (e)
+		olclient_put_entry_done(e, -1);
 }
 
 int
@@ -818,7 +957,7 @@ olclient_remove(char *key, char* secret)
 	LOG_VDEBUG("removing from dht key %s\n", key);
 	ship_lock(olclient_modules);
 	while (mod = ship_list_next(olclient_modules, &ptr)) {
-		if (!mod->remove(key, secret)) {
+		if (!mod->remove(key, secret, mod)) {
 			ret = 0;
 		}
 	}
@@ -922,7 +1061,7 @@ err:
 	freez(data_sig);
 	if (buf) xmlFree(buf);
 	if (doc) xmlFreeDoc(doc);
-	xmlCleanupParser();
+	//xmlCleanupParser();
 		
 	return res_value;
 }
@@ -947,7 +1086,7 @@ olclient_parse_xml_record(char *data, char **res, char **key, time_t *expires)
  err:
 	if (doc) xmlFreeDoc(doc);
 	if (result) xmlFree(result);
-	xmlCleanupParser();
+	//xmlCleanupParser();
 	return ret;
 }
 
@@ -997,7 +1136,7 @@ olclient_parse_signed_xml_record(char *data, X509 **cert, char **signature, char
 	if (bio_cert) BIO_free(bio_cert);
 	if (doc) xmlFreeDoc(doc);
 	if (result) xmlFree(result);
-	xmlCleanupParser();
+	//xmlCleanupParser();
 	return ret;
 }
 
@@ -1140,7 +1279,7 @@ olclient_create_wrap_xml_record(char *key, char *data, int timeout)
 	xmlDocDumpFormatMemory(doc, &buf, &blen, 1);
  err:
 	if (doc) xmlFreeDoc(doc);
-	xmlCleanupParser();
+	//xmlCleanupParser();
 	
 	return buf;
 }
@@ -1200,7 +1339,7 @@ olclient_sign_xml_record(char *data, RSA *pr_key, X509 *xcert)
 	if (bio) BIO_free(bio);
 	if (xmlbuf) xmlFree(xmlbuf);
 	if (doc) xmlFreeDoc(doc);
-	xmlCleanupParser();
+	//xmlCleanupParser();
 	
 	return ret;
 }

@@ -24,6 +24,18 @@ AC_SUBST(hipl_common_include_paths, "-I ../opendht")
 # flags
 #
 
+# the python support
+AC_ARG_ENABLE(python,
+             AC_HELP_STRING([--disable-python],
+                            [Disable Python extensions support (default is NO)]),
+             [ac_cv_use_python=$enableval], [ac_cv_use_python=yes])
+AC_CACHE_CHECK([whether to enable python extensions],
+               [ac_cv_use_python], [ac_cv_use_python=yes])
+if test x"$ac_cv_use_python" = x"yes"; then
+        AC_DEFINE(CONFIG_PYTHON_ENABLED, [1], [Use Python extensions])
+fi
+AM_CONDITIONAL(PYTHON_ENABLED, test x"$ac_cv_use_python" = x"yes")
+
 # hip
 AC_ARG_ENABLE(hip,
              AC_HELP_STRING([--disable-hip],
@@ -33,6 +45,18 @@ AC_CACHE_CHECK([whether to use hip],
                [ac_cv_use_hip], [ac_cv_use_hip=yes])
 if test x"$ac_cv_use_hip" = x"yes"; then
         AC_DEFINE(CONFIG_HIP_ENABLED, [1], [Use HIP for connections])
+fi
+AM_CONDITIONAL(HIP_ENABLED, test x"$ac_cv_use_hip" = x"yes")
+
+# hip
+AC_ARG_ENABLE(bloombuddies,
+             AC_HELP_STRING([--disable-bloombuddies],
+                            [Disable bloombuddies support (default is NO)]),
+             [ac_cv_use_bloombuddies=$enableval], [ac_cv_use_bloombuddies=yes])
+AC_CACHE_CHECK([whether to use bloombuddies],
+               [ac_cv_use_bloombuddies], [ac_cv_use_bloombuddies=yes])
+if test x"$ac_cv_use_bloombuddies" = x"yes"; then
+        AC_DEFINE(CONFIG_BLOOMBUDDIES_ENABLED, [1], [Use HIP for connections])
 fi
 AM_CONDITIONAL(HIP_ENABLED, test x"$ac_cv_use_hip" = x"yes")
 
@@ -275,6 +299,26 @@ if test x"$ac_cv_use_maemoexts" = x"yes"; then
         AC_DEFINE(CONFIG_MAEMOEXTS_ENABLED, [1], [Enable maemoexts interface])
 fi
 
+# the gtk mainloop. activated by default in certain other ones..
+AC_ARG_ENABLE(gtk,
+             AC_HELP_STRING([--enable-gtk],
+                            [Enable GTK mainloop (default is NO)]),
+             [ac_cv_use_gtk=$enableval], [ac_cv_use_gtk=no])
+AC_CACHE_CHECK([whether to enable gtk mainloop],
+               [ac_cv_use_gtk], [ac_cv_use_gtk=yes])
+if test x"$ac_cv_use_gtk" = x"yes"; then
+        AC_DEFINE(CONFIG_START_GTK, [1], [Startup the GTK signal system])
+	PKG_CHECK_MODULES(GTK, gtk+-2.0 >= 2.10.0)
+
+	AC_SUBST(GTK_CFLAGS)
+	AC_SUBST(GTL_LIBS)
+	CFLAGS="$CFLAGS $GTK_CFLAGS"
+	LIBS="$LIBS $GTK_LIBS"
+fi
+AM_CONDITIONAL(GTK_ENABLED, test x"$ac_cv_use_gtk" = x"yes")
+
+
+
 # headers
 
 
@@ -298,8 +342,10 @@ if pkg-config --atleast-version=0.9.8 openssl; then
        AC_DEFINE([HAVE_OPENSSL_0_9_8], [1], [You seem to have OpenSSL >= 0.9.8])
 fi
 
-
-
+if test x"$ac_cv_use_python" = x"yes"; then
+	AC_CHECK_LIB([python2.5],[Py_Initialize],,AC_MSG_ERROR([This application needs the python2.5 library]),[-lpython2.5])
+	CFLAGS="$CFLAGS -I/usr/include/python2.5"
+fi
 
 
 # pkg-based checks

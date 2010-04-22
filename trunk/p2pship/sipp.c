@@ -467,6 +467,9 @@ sipp_cb_packetfilter_local(char *local_aor, char *remote_aor, void *msg, int ver
 	case AC_VERDICT_DROP:
                 respcode = 404;
 		break;
+	case AC_VERDICT_UNSUPP:
+                respcode = 420;
+		break;
 	case AC_VERDICT_IGNORE:
 	default:
 		/* silently ignore */
@@ -2320,10 +2323,52 @@ sipp_call_log_record(char *local_aor, char *remote_aor,
 				if (call_log_show_dropped)
 					ui_popup("%s from %s%s dropped!\n", type, name, (status? status : ""));
 			} else if (call_log_show_pathinfo) {
-				if (e->pathlen > 2) {
-					ui_popup("%s from %s%s, %d hops away\n", type, name, (status? status : ""), e->pathlen);
-				} else if (e->pathlen == 2) {
-					ui_popup("%s from %s%s (a friend's friend)\n", type, name, (status? status : ""));
+				if (e->pathlen > 1) {
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+					/* find the buddies with which
+					   this guy has a connection
+					   with */
+					ident_t *ident = NULL;
+					ship_list_t *list = NULL;
+					
+					if ((list = ship_list_new()) && 
+					    (ident = ident_find_by_aor(local_aor)) &&
+					    (!ident_data_bb_find_connections_on_level(ident->buddy_list, remote_aor, e->pathlen-2, list)) &&
+					    ship_list_first(list)) {
+						char *buf = 0;
+						int blen = 0, dlen = 0, c = 0;
+						void *ptr = 0;
+						buddy_t *buddy = 0;
+
+						/* create a 'john, mary, bob + 3 more' string */
+						while (c < 3 && (buddy = ship_list_next(list, &ptr))) {
+							if (dlen)
+								buf = append_str(", ", buf, &blen, &dlen);
+							buf = append_str(buddy->name, buf, &blen, &dlen);
+							c++;
+						}
+
+						if ((c = ship_list_length(list) - c) > 0)
+							buf = append_str("+ more", buf, &blen, &dlen);
+						
+						if (e->pathlen > 2) {
+							ui_popup("%s from %s%s, %d hops away (through %s)\n", type, name, (status? status : ""), e->pathlen, buf);
+						} else {
+							ui_popup("%s from %s%s (friend of %s)\n", type, name, (status? status : ""), buf);
+						}
+						freez(buf);
+					} else {
+#endif
+						if (e->pathlen > 2) {
+							ui_popup("%s from %s%s, %d hops away\n", type, name, (status? status : ""), e->pathlen);
+						} else {
+							ui_popup("%s from %s%s (a friend's friend)\n", type, name, (status? status : ""));
+						}
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+					}
+					ship_list_free(list);
+					ship_obj_unlockref(ident);
+#endif
 				} else if (e->pathlen == 1) {
 					ui_popup("%s from %s%s (your friend)\n", type, name, (status? status : ""));
 				} else {

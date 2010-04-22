@@ -28,6 +28,19 @@
 
 #include "processor_config.h"
 
+/* ..which are: */
+typedef struct processor_worker_s processor_worker_t;
+struct processor_worker_s {
+	THREAD *thread;
+	THREAD thread_data;
+	char name[100];
+
+	void (*start_func)(processor_worker_t*);
+	void *data;
+	void (*kill_func)(processor_worker_t*);
+	void *extra;
+};
+
 /* a module of the system */
 typedef struct processor_module_s
 {
@@ -70,7 +83,7 @@ typedef struct processor_event_receiver_s {
 	void *data;
 } processor_event_receiver_t;
 
-
+/* todo: make into ship_obj */
 typedef struct processor_to_thread_s {
 	
 	char *name;
@@ -125,9 +138,13 @@ processor_config_t *processor_get_config();
 /* the task interface */
 processor_task_t * processor_tasks_add(int (*func) (void *data, processor_task_t **wait, int wait_for_code), 
 				       void *data, void (*callback) (void *qt, int code));
+
 processor_task_t *processor_tasks_add_timed(int (*func) (void *data, processor_task_t **wait, int wait_for_code), 
 					    void *data, void (*callback) (void *qt, int code),
 					    int secs);
+
+/* processor_task_t *processor_tasks_add_timed(void (*callback) (void *qt, int code), */
+/* 					    void *data, int secs); */
 processor_task_t *processor_create_wait();
 void processor_signal_wait(processor_task_t *wait, int status);
 

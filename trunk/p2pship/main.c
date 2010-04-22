@@ -130,6 +130,10 @@ print_usage()
 	}
         USER_ERROR("\n");
 #endif
+#ifdef CONFIG_PYTHON_ENABLED
+	USER_ERROR("      --shell                Starts a new Python shell on stdin\n");
+	USER_ERROR("      --run [file]           Runs the given script in a Python environment\n");
+#endif
         USER_ERROR("Bug reports to %s\n", PACKAGE_BUGREPORT);
 
 	processor_config_free(config);
@@ -160,6 +164,14 @@ enum {
 #include <sys/resource.h>
 #include <errno.h>
 
+
+static
+void xml_error_func(void * ctx, const char * msg, ...)
+{
+	LOG_WARN("Error occured while parsing XML document\n");
+	LOG_WARN("Error message: '%s'\n", msg);
+}
+
 /* point-of-entry */
 int 
 main(int argc, char **argv)
@@ -172,7 +184,9 @@ main(int argc, char **argv)
 	int flag_quiet = 0;
 	int log_to_file = 0;
 
+	xmlInitParser();
 	xmlInitThreads();
+	initGenericErrorDefaultFunc(xml_error_func);
 
         /* the getopt values */
         static struct option long_options[] =
@@ -182,6 +196,10 @@ main(int argc, char **argv)
                         {"threads", required_argument, 0, 0},
                         {"help", no_argument, 0, 0},
                         {"version", no_argument, 0, 0},
+#ifdef CONFIG_PYTHON_ENABLED
+                        {"shell", no_argument, 0, 0},
+                        {"run", required_argument, 0, 0},
+#endif
 #ifdef CONFIG_SIP_ENABLED
                         {"proxy-iface", required_argument, 0, 0},
                         {"no-mp", no_argument, 0, 0},
@@ -218,6 +236,10 @@ main(int argc, char **argv)
 #ifdef LOCK_DEBUG
 	debug2_init();
 #endif
+#ifdef REF_DEBUG2
+	ship_debug_initref();
+#endif
+
 
 	if (!(config = processor_config_new()) || !(config2 = processor_config_new())) {
                 USER_ERROR("Error loading application\n");
@@ -244,6 +266,12 @@ main(int argc, char **argv)
                                 c = 'v';
                         } else if (!strcmp(long_options[index].name, "iface")) {
                                 c = 'i';
+#ifdef CONFIG_PYTHON_ENABLED
+                        } else if (!strcmp(long_options[index].name, "shell")) {
+				processor_config_set_true(config, P2PSHIP_CONF_START_SHELL);
+                        } else if (!strcmp(long_options[index].name, "run")) {
+				processor_config_set_string(config, P2PSHIP_CONF_RUN_SCRIPT, optarg);
+#endif
 #ifdef CONFIG_SIP_ENABLED
                         } else if (!strcmp(long_options[index].name, "proxy-iface")) {
 				processor_config_set_string(config, P2PSHIP_CONF_SIPP_PROXY_IFACES, optarg);
@@ -440,7 +468,9 @@ main(int argc, char **argv)
 	processor_init_module("ui_maemo", config);
 #endif
 	addrbook_register();
-	
+#ifdef CONFIG_PYTHON_ENABLED
+	pymod_register();	
+#endif
 	/* check what we actually should do */
 	switch (action) {
 	case ACTION_LIST_CA: { /* list ca */
@@ -509,6 +539,10 @@ main(int argc, char **argv)
 #endif
 	case ACTION_NONE:
 	default: {
+#ifdef CONFIG_PYTHON_ENABLED
+		if (processor_config_is_true(config, P2PSHIP_CONF_START_SHELL))
+			processor_config_set_false(config, P2PSHIP_CONF_DAEMON);
+#endif
 		/* go daemon (..whee!) */
 		if (processor_config_is_true(config, P2PSHIP_CONF_DAEMON)) {
 			if (fork())
@@ -523,6 +557,9 @@ main(int argc, char **argv)
 			ship_remote_debug_init(config);
 #endif
 			/* start the main loop, blocks */
+#ifdef REF_DEBUG2
+			//			processor_tasks_add_periodic(ship_debug_reportref, 10000);
+#endif
 			processor_run();
 		}
 	}
@@ -530,6 +567,9 @@ main(int argc, char **argv)
         
 	ret = 0;
  err:
+#ifdef REF_DEBUG2
+	ship_debug_reportref();
+#endif
 	processor_close();
 	freez(action_param);
 	processor_config_free(config);
@@ -538,6 +578,12 @@ main(int argc, char **argv)
 #ifdef LOCK_DEBUG
 	debug2_close();
 #endif
+#ifdef REF_DEBUG2
+	ship_debug_closeref();
+#endif
+
 	xmlCleanupThreads();
+        if (!ret && !flag_quiet)
+                USER_ERROR("ending ok\n");
         return ret;
 }

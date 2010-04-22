@@ -1651,7 +1651,15 @@ int conn_queue_to_peer_do(void *data, processor_task_t **wait,
 	int *data_len = arr[4];
 	ident_t *ident = 0;
 
-	ASSERT_TRUE(ident = (ident_t *)ident_find_by_aor(from), err);
+	//ASSERT_TRUE(ident = (ident_t *)ident_find_by_aor(from), err);
+	ship_wait("Waiting to get the default ident to use with send!\n");
+	if (!(ident = (ident_t *)ident_find_by_aor(from))) {
+		ASSERT_ZERO(strlen(from), err);
+		LOG_WARN("No identity given, using default!\n");
+		ASSERT_TRUE(ident = ident_get_default_ident(), err);
+	}
+	ship_complete();
+
 	ret = 0;
 	if (!conn_has_connection_to(to, ident)) {
 		/* try only once! */

@@ -35,23 +35,23 @@
 #include "netio.h"
 #include "processor.h"
 
-typedef struct ol_broadcast_get_s 
-{
-	void (*callback) (char *val, int status, 
-			  olclient_lookup_t *lookup, struct olclient_module* mod);
-	olclient_lookup_t *lookup;
-	char *key;
-	void *param;
+/* typedef struct ol_broadcast_get_s  */
+/* { */
+/* 	void (*callback) (char *val, int status,  */
+/* 			  olclient_lookup_t *lookup, struct olclient_module* mod); */
+/* 	olclient_lookup_t *lookup; */
+/* 	char *key; */
+/* 	struct olclient_module* mod; */
 
-	time_t req_time;
-} ol_broadcast_get_t;
+/* 	time_t req_time; */
+/* } ol_broadcast_get_t; */
 
 
 /* yet-another reference to the processor config */
-static processor_config_t *pconfig;
+/* static processor_config_t *pconfig; */
 
 /* the list of entries */
-static ship_list_t *requests = NULL;
+static ship_obj_list_t *requests = NULL;
 
 /* the target addr */
 static struct sockaddr_in mc_sin;
@@ -68,66 +68,65 @@ static ship_list_t *bc_sockets = 0;
 */
 
 /* the name of this module */
-static const char *ol_broadcast_name_str = "broadcast";
 static struct olclient_module ol_broadcast_module;
 
-const char* 
-ol_broadcast_name()
-{
-	return ol_broadcast_name_str;
-}
+/* static void */
+/* ol_broadcast_get_free(ol_broadcast_get_t* g) */
+/* {	 */
+/* 	if (g) { */
+/* 		freez(g->key); */
+/* 		freez(g); */
+/* 	} */
+/* } */
 
+/* static void */
+/* ol_broadcast_get_close(ol_broadcast_get_t* g, int code) */
+/* {	 */
+/* 	if (g) { */
+/* 		if (g->callback) { */
+/* 			g->callback(NULL, code, g->lookup, g->mod); */
+/* 			g->callback = NULL; */
+/* 		} */
+/* 		ol_broadcast_get_free(g); */
+/* 	} */
+/* } */
+
+/* static ol_broadcast_get_t* */
+/* ol_broadcast_get_new(char *key, struct olclient_module* mod, */
+/* 		     void (*callback) (char *val, int status, olclient_lookup_t *lookup,  */
+/* 				       struct olclient_module* mod), */
+/* 		     olclient_lookup_t *lookup) */
+/* {	 */
+/* 	ol_broadcast_get_t* ret = NULL; */
+/* 	ASSERT_TRUE(ret = mallocz(sizeof(ol_broadcast_get_t)), err); */
+/* 	ASSERT_TRUE(ret->key = strdup(key), err); */
+/* 	ret->callback = callback; */
+/* 	ret->lookup = lookup; */
+/* 	ret->mod = mod; */
+/* 	ret->req_time = time(0); */
+/* 	return ret; */
+/*  err: */
+/* 	ol_broadcast_get_free(ret); */
+/* 	return NULL; */
+/* }	 */
 
 static void
-ol_broadcast_get_free(ol_broadcast_get_t* g)
-{	
-	if (g) {
-		freez(g->key);
-		freez(g);
-	}
-}
-
-static void
-ol_broadcast_get_close(ol_broadcast_get_t* g, int code)
-{	
-	if (g) {
-		if (g->callback) {
-			g->callback(NULL, code, g->lookup, &ol_broadcast_module);
-			g->callback = NULL;
-		}
-		ol_broadcast_get_free(g);
-	}
-}
-
-static ol_broadcast_get_t*
-ol_broadcast_get_new(char *key, void *param, 
-		     void (*callback) (char *val, int status, olclient_lookup_t *lookup, 
-				       struct olclient_module* mod),
-		     olclient_lookup_t *lookup)
-{	
-	ol_broadcast_get_t* ret = NULL;
-	ASSERT_TRUE(ret = mallocz(sizeof(ol_broadcast_get_t)), err);
-	ASSERT_TRUE(ret->key = strdup(key), err);
-	ret->callback = callback;
-	ret->lookup = lookup;
-	ret->param = param;
-	ret->req_time = time(0);
-	return ret;
- err:
-	ol_broadcast_get_free(ret);
-	return NULL;
-}	
-
-int 
-ol_broadcast_get_to(void *data, processor_task_t **wait, int wait_for_code)
+ol_broadcast_get_to(void *data, int code)
 {
-	ol_broadcast_get_t* g = data;
+	/* ol_broadcast_get_t* g = data; */
+	olclient_get_task_t *task = data;
+	ship_lock(requests);
+	if (requests) {
+		ship_obj_ref(task);
+		ship_obj_list_remove(requests, task);
+		ship_unlock(requests);
 
-	g = ship_list_remove(requests, g);
-	if (g) {
-		ol_broadcast_get_close(g, 0);
-	}		
-	return 0; /* done */
+		if (task->callback) {
+			task->callback(NULL, 0, task);
+			task->callback = NULL;
+		}		
+		ship_obj_unref(task);
+	}
 }
 
 static int
@@ -145,37 +144,35 @@ ol_broadcast_send(char *req, struct sockaddr* sa, socklen_t salen)
 }
 	    
 /* async function for returning the data currently present in the cache */
-static int
-ol_broadcast_return_cache(void* data, processor_task_t **wait, int wait_for_code)
-{
-	ol_broadcast_get_t *g = (ol_broadcast_get_t *)data;
-	ship_list_t *resps = 0;
-	if (resps = ship_list_new()) {
-		olclient_storage_entry_t* e = NULL;
+/* static int */
+/* ol_broadcast_return_cache(void* data, processor_task_t **wait, int wait_for_code) */
+/* { */
+/* 	ol_broadcast_get_t *g = (ol_broadcast_get_t *)data; */
+/* 	ship_list_t *resps = 0; */
+/* 	if (resps = ship_list_new()) { */
+/* 		olclient_storage_entry_t* e = NULL; */
 		
-		/* find the resource(s), submit */
-		LOG_DEBUG("returning async for '%s'\n", g->key);
-		olclient_storage_find_entries(g->key, resps);
-		while (e = ship_list_pop(resps)) {
-			g->callback(e->data, 1, g->lookup, &ol_broadcast_module);
-			e->data = 0;
-			olclient_storage_entry_free(e);
-		}
-		ship_list_free(resps);
-	}
-	return 0;
-}
+/* 		/\* find the resource(s), submit *\/ */
+/* 		LOG_DEBUG("returning async for '%s'\n", g->key); */
+/* 		olclient_storage_find_entries(g->key, resps); */
+/* 		while (e = ship_list_pop(resps)) { */
+/* 			g->callback(e->data, 1, g->lookup, g->mod); */
+/* 			e->data = 0; */
+/* 			olclient_storage_entry_free(e); */
+/* 		} */
+/* 		ship_list_free(resps); */
+/* 	} */
+/* 	return 0; */
+/* } */
 
 static int 
-ol_broadcast_get(char *key, void *param, 
-		 void (*callback) (char *val, int status, olclient_lookup_t *lookup, 
-				   struct olclient_module* mod),
-		 olclient_lookup_t *lookup)
+ol_broadcast_get(char *key, olclient_get_task_t *task)
 {
 	char *req = NULL;
-	ol_broadcast_get_t* g = NULL;
+	//ol_broadcast_get_t* g = NULL;
 	int ret = -1;
 	char *k2 = 0;
+	ship_list_t *resps = 0;
 
 	ASSERT_TRUE(k2 = ship_hash_sha1_base64(key, strlen(key)), err);
 	
@@ -186,35 +183,52 @@ ol_broadcast_get(char *key, void *param,
 	strcat(req, "\n");
 	
 	/* create some lookup object, set a timeout.. */
-	ASSERT_TRUE(g = ol_broadcast_get_new(k2, param, callback, lookup), err);
-	ship_list_add(requests, g);
+	/* ASSERT_TRUE(g = ol_broadcast_get_new(k2, mod, callback, lookup), err); */
+
+	if (resps = ship_list_new()) {
+		olclient_storage_entry_t* e = NULL;
+
+		olclient_storage_find_entries(k2, resps);
+		while (e = ship_list_pop(resps)) {
+			task->callback(e->data, 1, task /*->lookup, g->mod*/);
+			e->data = 0;
+			olclient_storage_entry_free(e);
+		}
+		ship_list_free(resps);
+	}
 
 	LOG_DEBUG("Sending request '%s'\n", req);
-	if (ol_broadcast_send(req, (struct sockaddr*)&mc_sin, sizeof(mc_sin)) > -1)
+	if (ol_broadcast_send(req, (struct sockaddr*)&mc_sin, sizeof(mc_sin)) > -1) {
 		ret = 0;
+		ship_obj_list_add(requests, task);
+		processor_tasks_add_timed(NULL, task, ol_broadcast_get_to, OLBROADCAST_TO);
+	}
 	
-	processor_tasks_add_timed(ol_broadcast_get_to, g, NULL, OLBROADCAST_TO);
-	processor_tasks_add(ol_broadcast_return_cache, g, NULL);
-	g = NULL;
+	//processor_tasks_add(ol_broadcast_return_cache, task, NULL);
  err:
 	freez(k2);
 	freez(req);
-	ol_broadcast_get_free(g);	
+	/* ol_broadcast_get_free(g);	 */
 	return ret;
 }
 
 static int
-ol_broadcast_find_gets(char *key, ship_list_t *list)
+ol_broadcast_find_gets(char *key, ship_obj_list_t *list)
 {
-	ol_broadcast_get_t* e = NULL;
+	/* ol_broadcast_get_t* e = NULL; */
+	olclient_get_task_t *task = NULL;
 	void *ptr = 0;
 	int ret = 0;
+	char *k2 = 0;
 
 	ship_lock(requests);
-	while (e = ship_list_next(requests, &ptr)) {
-		if (!strcmp(e->key, key)) {
-			ship_list_add(list, e);
-			ret++;
+	while (task = ship_list_next(requests, &ptr)) {
+		if (k2 = ship_hash_sha1_base64(task->lookup->key, strlen(task->lookup->key))) {
+			if (!strcmp(k2, key)) {
+				ship_obj_list_add(list, task);
+				ret++;
+			}
+			freez(k2);
 		}
 	}
 	ship_unlock(requests);
@@ -223,7 +237,7 @@ ol_broadcast_find_gets(char *key, ship_list_t *list)
 }
 
 static int 
-ol_broadcast_remove(char *key, char* secret)
+ol_broadcast_remove(char *key, char* secret, struct olclient_module* mod)
 {
 	char *k2 = 0;
 	int ret = -1;
@@ -236,7 +250,7 @@ ol_broadcast_remove(char *key, char* secret)
 }
 
 static int 
-ol_broadcast_put(char *key, char *data, int timeout, char *secret, int cached)
+ol_broadcast_put(char *key, char *data, int timeout, char *secret, int cached, struct olclient_module* mod)
 {
 	char *k2 = 0;
 	int ret = -1;
@@ -308,20 +322,21 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 		/* find the right request, call on callback */
 		resps = ship_list_new();
 		if (resps) {
-			ol_broadcast_get_t* e = NULL;
+			olclient_get_task_t *task;
 			
 			/* find the resource(s), submit */
 			LOG_DEBUG("got response for %s\n", key);
 			ship_lock(requests);
 			ol_broadcast_find_gets(key, resps);
 			ptr = 0;
-			while (e = ship_list_next(resps, &ptr)) {
+			while (task = ship_list_next(resps, &ptr)) {
 				/* call callback! */
 				char *data = strdup(pkgdata);
 				if (data) 
-					e->callback(data, 1, e->lookup, &ol_broadcast_module);
+					task->callback(data, 1, task); //e->lookup, e->mod);
 			}
 			ship_unlock(requests);
+			ship_obj_list_clear(resps);
 		}
 	}
  err:
@@ -417,7 +432,7 @@ ol_broadcast_events(char *event, void *data, void *eventdata)
 	/* whatna, re-init the sockets completely */
 	LOG_DEBUG("got event %s\n", event);
 	ol_broadcast_close_sockets();
-	ol_broadcast_init_sockets(pconfig);
+	ol_broadcast_init_sockets(processor_get_config());
 }
 
 
@@ -427,12 +442,11 @@ ol_broadcast_init(processor_config_t *config)
 #ifdef CONFIG_BROADCAST_ENABLED
 	int ret = -1;
 	
-	pconfig = config;
-	ASSERT_TRUE(requests = ship_list_new(), err);
+	ASSERT_TRUE(requests = ship_obj_list_new(), err);
 	ASSERT_TRUE(bc_sockets = ship_list_new(), err);
-	ASSERT_ZERO(ret = ol_broadcast_init_sockets(pconfig), err);
+	ASSERT_ZERO(ret = ol_broadcast_init_sockets(config), err);
 	ASSERT_ZERO(processor_event_receive("net_*", 0, ol_broadcast_events), err);
-	ret = olclient_register_module(&ol_broadcast_module);
+	ret = olclient_register_module(&ol_broadcast_module /*, ol_broadcast_name_str, NULL */);
  err:
 	if (ret) {
 		LOG_WARN("ol broadcast module init failed\n");
@@ -443,23 +457,25 @@ ol_broadcast_init(processor_config_t *config)
 
 
 static void 
-ol_broadcast_close(void)
+ol_broadcast_close(struct olclient_module* mod)
 {
-	olclient_unregister_module(&ol_broadcast_module);
+	olclient_unregister_module(&ol_broadcast_module /*ol_broadcast_name_str, NULL*/);
 
 	/* close all sockets! */
 	ol_broadcast_close_sockets();
 	ship_list_free(bc_sockets);
 	bc_sockets = 0;
 		
-	if (requests) {
-		ol_broadcast_get_t *e;
-		while (e = ship_list_pop(requests)) {
-			ol_broadcast_get_free(e);
-		}
-		ship_list_free(requests);
-		requests = NULL;
-	}
+	ship_obj_list_free(requests);
+	requests = NULL;
+	/* if (requests) { */
+	/* 	ol_broadcast_get_t *e; */
+	/* 	while (e = ship_list_pop(requests)) { */
+	/* 		ol_broadcast_get_free(e); */
+	/* 	} */
+	/* 	ship_list_free(requests); */
+	/* 	requests = NULL; */
+	/* } */
 }
 
 /* the struct, things needed for the interface */
@@ -470,5 +486,6 @@ static struct olclient_module ol_broadcast_module = {
 		.put_signed = 0,
 		.get_signed = 0,
 		.close = ol_broadcast_close,
-		.name = ol_broadcast_name,
+		.name = "broadcast",
+		.module_data = NULL,
 };

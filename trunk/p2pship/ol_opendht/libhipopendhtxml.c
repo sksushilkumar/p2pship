@@ -92,7 +92,7 @@ int build_packet_rm(unsigned char * key,
     */
     xmlFree(xml_buffer);
     xmlFreeDoc(xml_doc);
-    xmlCleanupParser();
+    //    xmlCleanupParser();
     free(key64);
     free(secret64);
     return(0);
@@ -191,7 +191,7 @@ int build_packet_put_rm(unsigned char * key,
     */
     xmlFree(xml_buffer);
     xmlFreeDoc(xml_doc);
-    xmlCleanupParser();
+    //xmlCleanupParser();
     free(key64);
     free(value64); 
     free(secret64); 
@@ -259,7 +259,7 @@ int build_packet_put(unsigned char * key,
   
     xmlFree(xml_buffer);
     xmlFreeDoc(xml_doc);
-    xmlCleanupParser();
+    //xmlCleanupParser();
     free(key64);
     free(value64); 
     return(0);
@@ -312,7 +312,7 @@ int build_packet_get(unsigned char * key,
 
     xmlFree(xml_buffer);
     xmlFreeDoc(xml_doc);  
-    xmlCleanupParser();
+    //xmlCleanupParser();
     free(key64);
     return(0);
 }

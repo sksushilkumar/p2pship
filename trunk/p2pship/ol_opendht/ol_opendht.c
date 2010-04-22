@@ -36,16 +36,16 @@
 #include "ident.h"
 
 /* the name of this module */
-static const char *ol_opendht_name_str = "opendht";
 static struct olclient_module ol_opendht_module;
 static char* ol_opendht_server_str = 0;
 static int ol_opendht_check_conn();
-
+/*
 typedef struct ol_opendht_get_s {
 	void (*callback) (char *val, int status, olclient_lookup_t *lookup, struct olclient_module* mod);
 	olclient_lookup_t *lookup;
+	struct olclient_module* mod;
 } ol_opendht_get_t;
-
+*/
 
 /* entries */
 typedef struct ol_opendht_entry_s {
@@ -57,49 +57,34 @@ typedef struct ol_opendht_entry_s {
 
 static ship_list_t *ol_opendht_entries = 0;
 
-
-const char* 
-ol_opendht_name()
-{
-	return ol_opendht_name_str;
-}
-
 static void 
 ol_opendht_get_cb(char *key, char *value, void *param, int status)
 {
-	ol_opendht_get_t *g = param;
-	g->callback(value, status, g->lookup, &ol_opendht_module);
+	olclient_get_task_t *task = param;
+	task->callback(value, status, task); //->lookup, task->mod);
 	if (status != 1)
-		free(g);
+		ship_obj_unref(task);
 }
 
 static int 
-ol_opendht_get(char *key, void *param, 
-	       void (*callback) (char *val, int status, olclient_lookup_t *lookup, struct olclient_module* mod),
-	       olclient_lookup_t *lookup)
+ol_opendht_get(char *key, olclient_get_task_t *task)
 {
-	ol_opendht_get_t *g = NULL;
+	//ol_opendht_get_t *g = NULL;
 	if (!ol_opendht_check_conn())
 		return -1;
 
+	/*
 	if (g = (ol_opendht_get_t *)mallocz(sizeof(ol_opendht_get_t))) {
 		g->callback = callback;
 		g->lookup = lookup;
-		return opendht_get(key, ol_opendht_get_cb, g);
-	} else
+		g->mod = mod;
+	*/
+	ship_obj_ref(task);
+	if (opendht_get(key, ol_opendht_get_cb, task)) {
+		ship_obj_unref(task);
 		return -1;
-}
-
-static int 
-ol_opendht_get_signed(char *key, buddy_t *signer, void *param, 
-		void (*callback) (char *val, int status, olclient_lookup_t *lookup, struct olclient_module* mod),
-		olclient_lookup_t *lookup)
-{	
-	/* TODO: when ol_opendht supports get_signed interface 
-	 * return -1 for error 
-	 * return -2 for interface not supported*/
-	LOG_WARN("ol_opendht doesn't support get_signed\n");
-	return -2;
+	}
+	return 0;
 }
 
 static void
@@ -127,7 +112,7 @@ ol_opendht_entry_new(char *key, char *secret)
 }
 
 static int 
-ol_opendht_remove(char *key, char* secret)
+ol_opendht_remove(char *key, char* secret, struct olclient_module* mod)
 {	
 	ol_opendht_entry_t *e;
 	void *ptr = 0, *last = 0;
@@ -139,18 +124,18 @@ ol_opendht_remove(char *key, char* secret)
 		secret = "";
 
 	/* fetch the hash from somewhere, use it! */
-	ship_list_sync(ol_opendht_entries, {
-		while (e = ship_list_next(ol_opendht_entries, &ptr)) {
-			if (!strcmp(e->key, key) && !strcmp(secret, e->secret)) {
-				opendht_rm(key, e->hash, secret);
-				ship_list_remove(ol_opendht_entries, e);
-				ol_opendht_entry_free(e);
+	ship_lock(ol_opendht_entries);
+	while (e = ship_list_next(ol_opendht_entries, &ptr)) {
+		if (!strcmp(e->key, key) && !strcmp(secret, e->secret)) {
+			opendht_rm(key, e->hash, secret);
+			ship_list_remove(ol_opendht_entries, e);
+			ol_opendht_entry_free(e);
 				ptr = last;
-			} else {
-				last = ptr;
-			}
+		} else {
+			last = ptr;
 		}
-	});
+	}
+	ship_unlock(ol_opendht_entries);
 	return 0;
 }
 
@@ -168,24 +153,24 @@ ol_opendht_put_part_cb(char *key, char *value, void *param, int status)
 	void *ptr = 0;
 	
 	/* find an entry with the same key-secret & store the hash there (of value) */
-	ship_list_sync(ol_opendht_entries, {
-		while (e = ship_list_next(ol_opendht_entries, &ptr)) {
-			if (!strcmp(e->key, key) && param == e->secret) {
-				freez(e->hash);
-				memset(value_hash, '\0', sizeof(value_hash));
-				if (!SHA1(value, strlen(value), value_hash)) {
-					LOG_ERROR("SHA1 error when creating hash of the value for rm msg\n");
-				} else {
-					e->hash = (char *)base64_encode((unsigned char *)value_hash, 20);
-					LOG_DEBUG("Storing hash %s for key %s / %s\n", e->hash, e->key, e->secret);
-				}
+	ship_lock(ol_opendht_entries);
+	while (e = ship_list_next(ol_opendht_entries, &ptr)) {
+		if (!strcmp(e->key, key) && param == e->secret) {
+			freez(e->hash);
+			memset(value_hash, '\0', sizeof(value_hash));
+			if (!SHA1(value, strlen(value), value_hash)) {
+				LOG_ERROR("SHA1 error when creating hash of the value for rm msg\n");
+			} else {
+				e->hash = (char *)base64_encode((unsigned char *)value_hash, 20);
+				LOG_DEBUG("Storing hash %s for key %s / %s\n", e->hash, e->key, e->secret);
 			}
 		}
-	});
+	}
+	ship_unlock(ol_opendht_entries);
 }
 
 static int 
-ol_opendht_put(char *key, char *data, int timeout, char *secret, int cached)
+ol_opendht_put(char *key, char *data, int timeout, char *secret, int cached, struct olclient_module* mod)
 {
 	int ret = -1;
 	ol_opendht_entry_t *e;
@@ -203,27 +188,17 @@ ol_opendht_put(char *key, char *data, int timeout, char *secret, int cached)
 	e = ol_opendht_entry_new(key, secret);
 	if (!e) return -1;
 	
-	ship_list_sync(ol_opendht_entries, {
-		/* remove any other entries with the same
-		   key-secret */
-		ol_opendht_remove(key, secret);
+	ship_lock(ol_opendht_entries);
+	/* remove any other entries with the same
+	   key-secret */
+	ol_opendht_remove(key, secret, mod);
 	
-		/* store the key-secret somewhere, use that secret as
-		   the secret here.. */
-		ship_list_add(ol_opendht_entries, e);
-		ret = opendht_put(key, data, secret, timeout, ol_opendht_put_cb, e->secret, ol_opendht_put_part_cb);
-	});
+	/* store the key-secret somewhere, use that secret as
+	   the secret here.. */
+	ship_list_add(ol_opendht_entries, e);
+	ship_unlock(ol_opendht_entries);
+	ret = opendht_put(key, data, secret, timeout, ol_opendht_put_cb, e->secret, ol_opendht_put_part_cb);
 	return ret;
-}
-
-static int 
-ol_opendht_put_signed(char *key, char *data, ident_t *signer, int timeout, char *secret, int cached)
-{
-	/* TODO: when ol_opendht supports put_signed interface 
-	 * return -1 for error 
-	 * return -2 for interface not supported*/
-	LOG_WARN("ol_opendht doesn't support put_signed\n");
-	return -2;
 }
 
 static void 
@@ -234,7 +209,7 @@ ol_opendht_statecb(char *gateway, int port, int status)
 	if (buf) {
 		sprintf(buf, "%s:%d", gateway, port);
 	}
-	olclient_cb_state_change(&ol_opendht_module, status, buf);
+	olclient_cb_state_change(NULL, status, buf);
 	free(buf);
 }
 
@@ -262,16 +237,16 @@ ol_opendht_init(processor_config_t *config)
 	ASSERT_ZERO(processor_config_get_string(config, P2PSHIP_CONF_OPENDHT_PROXY, &od), err);
 	ASSERT_TRUE(ol_opendht_server_str = strdup(od), err);
 	ol_opendht_check_conn();
-	return olclient_register_module(&ol_opendht_module);
+	return olclient_register_module(&ol_opendht_module /*, ol_opendht_name_str, NULL */);
  err:
 #endif
 	return -1;
 }
 
 void 
-static ol_opendht_close(void)
+static ol_opendht_close(struct olclient_module* mod)
 {
-	olclient_unregister_module(&ol_opendht_module);
+	olclient_unregister_module(&ol_opendht_module /*name_str, NULL*/);
 	opendht_close();
 	
 	if (ol_opendht_entries) {
@@ -289,8 +264,9 @@ static struct olclient_module ol_opendht_module = {
 		.put = ol_opendht_put,		
 		.get = ol_opendht_get,
 		.remove = ol_opendht_remove,
-		.put_signed = ol_opendht_put_signed,
-		.get_signed = ol_opendht_get_signed,
+		.put_signed = 0,
+		.get_signed = 0,
 		.close = ol_opendht_close,
-		.name = ol_opendht_name,
+		.name = "opendht",
+		.module_data = NULL,
 };

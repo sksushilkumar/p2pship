@@ -39,9 +39,9 @@ STATIC_COND_DECL(processor_tasks_cond);
 
 /* whether we should be alive still */
 static int processor_alive = 0;
-STATIC_THREAD_DECL(processor_workers);
-static char **processor_workers_names = 0;
-static int *processor_workers_count = 0;
+
+/* the worker threads */
+static ship_list_t *processor_workers = 0;
 
 /* the global wait */
 static unsigned long global_wakeup = 0;
@@ -178,14 +178,29 @@ processor_tasks_add_periodic(int (*func) (void), int period)
 	return ret;
 }
 
-
+/*
 processor_task_t *
-processor_tasks_add_timed(int (*func) (void *data, processor_task_t **wait, int wait_for_code), 
-			   void *data, void (*callback) (void *qt, int code),
-			   int msecs)
+processor_tasks_add_timed(void (*callback) (void *qt, int code),
+			  void *data,
+			  int msecs)
 {
         processor_task_t *qt;
-        if (qt = processor_tasks_new(func, data, NULL)) {
+        if (qt = processor_tasks_new(NULL, data, callback)) {
+		qt->timeout = msecs;
+                SYNCHRONIZE_SIGNAL(processor_tasks_lock, processor_tasks_cond, 
+                                   ship_list_add(queued_tasks, qt));
+		LOG_VDEBUG("added task %08x to queued\n", qt);
+        }
+        return qt;
+}
+*/
+
+processor_task_t *processor_tasks_add_timed(int (*func) (void *data, processor_task_t **wait, int wait_for_code), 
+					    void *data, void (*callback) (void *qt, int code),
+					    int msecs)
+{
+        processor_task_t *qt;
+        if (qt = processor_tasks_new(func, data, callback)) {
 		qt->timeout = msecs;
                 SYNCHRONIZE_SIGNAL(processor_tasks_lock, processor_tasks_cond, 
                                    ship_list_add(queued_tasks, qt));
@@ -347,7 +362,7 @@ processor_init_module(const char *name, processor_config_t *config)
 	processor_module_t *mod = 0;
 	ASSERT_TRUE(queue, err);
 
-	LOG_DEBUG("Trying to init %s..\n", name);
+	LOG_DEBUG("initing module %s\n", name);
 
 	/* go throught the queue-for-init, init all that  */
 	if (processor_get_module_from(name, active_modules)) {
@@ -367,7 +382,10 @@ processor_init_module(const char *name, processor_config_t *config)
 			if (strlen(tokens[i]) && !processor_get_module_from(tokens[i], active_modules)) {
 				dep = 1;
 				if (!processor_get_module_from(tokens[i], queue)) {
-					ASSERT_TRUE(mod2 = processor_get_module_from(tokens[i], modules), err);
+					if (!(mod2 = processor_get_module_from(tokens[i], modules))) {
+						LOG_ERROR("Could not find module '%s', needed by '%s'\n", tokens[i], mod->name);
+						ASSERT_TRUE(0, err);
+					}
 					ship_list_add(queue, mod2);
 				}
 			}
@@ -435,6 +453,11 @@ processor_init(processor_config_t *config)
         COND_INIT(processor_tasks_cond);
         ASSERT_TRUE(processor_tasks_cond, err);
 
+	ASSERT_TRUE(processor_workers = ship_list_new(), err);
+	
+	/* todo: init the dynamic configuraiton? */
+	ASSERT_ZERO(processor_config_init(), err);
+
         pconfig = config;
 
         /* if more than 1 thread, create those */
@@ -443,11 +466,10 @@ processor_init(processor_config_t *config)
 #ifdef CONFIG_START_GTK
 		/* if gtk should be started, reserve one thread for it */
 		worker_threads++;
+#elif CONFIG_PYTHON_ENABLED
+		if (processor_config_is_true(config, P2PSHIP_CONF_START_SHELL))
+			worker_threads++;
 #endif
-		if (worker_threads > 1) {
-			processor_workers = mallocz(sizeof(*processor_workers) * (worker_threads-1));
-			processor_workers_names = (char**)mallocz(sizeof(char*) * (worker_threads-1));
-		}
 	}
 	
         processor_alive = 1;
@@ -456,20 +478,68 @@ processor_init(processor_config_t *config)
         return -1;
 }
 
+static void
+processor_kill_worker(processor_worker_t *w)
+{
+	if (w && w->thread) {
+		if (w->kill_func) {
+			LOG_INFO("trying to kill [%s]\n", w->name);
+			w->kill_func(w);
+		}
+		if (w->thread) {
+			THREAD_JOIN(w->thread);
+		}
+	}
+	freez(w);
+}
+
+void
+processor_kill_workers(const char *type)
+{
+        /* wait for all threads to close */
+        if (processor_workers) {
+		processor_worker_t *w;
+		void *ptr = 0, *last = 0;
+		while (w = ship_list_next(processor_workers, &ptr)) {
+			if (str_startswith(w->name, type)) {
+				ship_list_remove(processor_workers, w);
+				processor_kill_worker(w);
+				ptr = last;
+			}
+			last = ptr;
+		}
+        }
+}
+
 void 
 processor_close()
 {
         int i;
         
         LOG_DEBUG("closing processor..\n");
+	if (processor_alive)
+		processor_shutdown();
         processor_alive = 0;
         
+	ship_list_empty_with(to_threads, processor_to_free);
+	ship_list_free(to_threads);
+	ship_list_empty_with(dead_threads, processor_to_cleanup_dead);
+	ship_list_free(dead_threads);
+
+        /* wait for all threads to close */
+        if (processor_workers) {
+		processor_kill_workers("");
+		ship_list_free(processor_workers);
+		processor_workers = NULL;
+        }
+
 	/* now, go through all the active modules and close them. in
 	   reverse order! */
 	if (active_modules) {
 		processor_module_t *mod = 0;
 		for (i = ship_list_length(active_modules)-1; i > -1; i--) {
 			mod = ship_list_get(active_modules, i);
+			LOG_DEBUG("closing module %s\n", mod->name);
 			mod->close();
 		}
 		ship_list_free(active_modules);
@@ -480,23 +550,6 @@ processor_close()
 		ship_list_free(modules);
 	}
 
-	ship_list_empty_with(to_threads, processor_to_free);
-	ship_list_free(to_threads);
-	ship_list_empty_with(dead_threads, processor_to_cleanup_dead);
-	ship_list_free(dead_threads);
-
-        /* wait for all threads to close */
-        if (processor_workers) {
-                for (i=0; i < worker_threads-1; i++) {
-			if (processor_workers[i]) {
-				THREAD_JOIN(&processor_workers[i]);
-			}
-			THREAD_FREE(processor_workers_names[i]);
-                }                                
-                freez(processor_workers);
-                freez(processor_workers_names);
-        }
-	
         SYNCHRONIZE(processor_tasks_lock, {
                 while (processor_tasks && ship_list_first(processor_tasks))
                         processor_tasks_free((processor_task_t*)ship_list_pop(processor_tasks));
@@ -527,16 +580,16 @@ processor_close()
 
         LOCK_FREE(processor_tasks_lock);
         COND_FREE(processor_tasks_cond);
-        
+
+	processor_config_close();
         LOG_DEBUG("closed\n");
 }
 
-static void *
-processor_thread_run(void *data)
+static void
+processor_thread_run(processor_worker_t* data)
 {
-        char *name  = (char*)data;
+        char *name  = data->name;
 
-        LOG_INFO("processor [%s] created\n", name);
         while (processor_alive) {
                 processor_task_t *qt = 0;
                 int i;
@@ -686,16 +739,50 @@ processor_thread_run(void *data)
 		if (qt)
 			ship_list_remove(being_processed_tasks, qt);
         }
-        
-        LOG_INFO("processor [%s] dies!\n", name);
-        return 0;
+}
+
+
+/* wrapper around the workers */
+static void*
+processor_worker_runner(void *data)
+{
+	processor_worker_t *w = data;
+	LOG_INFO("worker [%s] alive\n", w->name);
+	w->start_func(w);
+	LOG_INFO("worker [%s] died\n", w->name);
+	return NULL;
+}
+
+int
+processor_create_worker(const char *type, void (*func)(processor_worker_t*), void *data,
+			void (*kill_func)(processor_worker_t*))
+{
+	processor_worker_t *w = NULL;
+	int ret = -1;
+	
+	ASSERT_TRUE(w = mallocz(sizeof(*w)), err);
+	sprintf(w->name, "%s-%d", type, ship_list_length(processor_workers));
+	w->thread = &w->thread_data;
+	w->data = data;
+	w->kill_func = kill_func;
+	w->start_func = func;
+	
+	LOG_DEBUG("trying to create worker [%s]..\n", w->name);
+	ASSERT_ZERO(THREAD_RUN(w->thread, processor_worker_runner, (void*)w), err);
+	ship_list_add(processor_workers, w);
+	w = 0;
+	ret = 0;
+ err:
+	freez(w);
+	return ret;
 }
 
 int 
 processor_run()
 {
-        int i;
-	
+        int i, ret = -1;
+	struct processor_worker_s main = { .thread = 0, .name = "main-0" };
+
 	USER_ERROR("proxy initialized ok\n");
         
         /* set up signal blocking */
@@ -707,26 +794,31 @@ processor_run()
 	signal(SIGCHLD, processor_signal_handler);
 
         /* if more than 1 thread, create those */
-        if (worker_threads > 1) {
-                char buf[64];
-                
-                for (i=0; i < worker_threads-1; i++) {
-                        processor_workers_names[i] = (char*)mallocz(100);
-                        sprintf(processor_workers_names[i], "worker-%d", i);
-                        if (THREAD_RUN(&(processor_workers[i]), processor_thread_run, processor_workers_names[i]))
-                                return -1;
-                }
+        for (i=0; i < worker_threads-1; i++) {
+		ASSERT_ZERO(processor_create_worker("worker", processor_thread_run, NULL, NULL), err);
         }
+
+#ifdef CONFIG_PYTHON_ENABLED
+	ASSERT_ZERO(pymod_start_plugins(), err);
+#endif
         
 #ifdef CONFIG_START_GTK
         LOG_INFO("processor [%s] dedicated to gtk\n", "main-0");
 	gtk_main();
 	gdk_threads_leave();
+#elif CONFIG_PYTHON_ENABLED
+	if (processor_config_is_true(processor_get_config(), P2PSHIP_CONF_START_SHELL))
+		pymod_shell();
+	else
+		processor_thread_run(&main);
 #else
-	processor_thread_run("main-0");
+	processor_thread_run(&main);
 #endif
-
-        return 0;
+	ret = 0;
+ err:
+	if (processor_alive)
+		processor_shutdown();
+        return ret;
 }
 
 int 
@@ -861,8 +953,6 @@ processor_to_run(void *data)
 	int validity_missed = 0;
 	pthread_t *current_thread = t->thread;
 	
-	t->running = 1;
-	
 	LOG_INFO("starting unstuck-thread %s\n", t->name);
 	do {
 		processor_to_task_t *task = 0;
@@ -917,10 +1007,18 @@ processor_to_init(const char *name)
 	COND_INIT(ret->cond);
 	ASSERT_TRUE(ret->lock && ret->cond, err);
 	ASSERT_TRUE(ret->cond, err);
+
+	/* set it to be running now already */
+	ship_lock(to_threads);
+	ret->running = 1;
 	ASSERT_TRUE(THREAD_INIT(ret->thread) && !THREAD_RUN(ret->thread, processor_to_run, ret), err);
 	ship_list_add(to_threads, ret);
+	ship_unlock(to_threads);
 	return ret;
  err:
+	if (ret)
+		ret->running = 0;
+	ship_unlock(to_threads);
 	processor_to_free(ret);
 	return NULL;
 }

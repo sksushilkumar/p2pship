@@ -51,6 +51,10 @@ if WEBCACHE_ENABLED
 extra_sources += webcache.c
 endif
 
+if PYTHON_ENABLED
+extra_sources += pymod.c
+endif
+
 #bin_PROGRAMS = p2pship addrparsetest identdatatest hiptest oltest
 #bin_PROGRAMS = p2pship oltest
 bin_PROGRAMS = p2pship #httptest

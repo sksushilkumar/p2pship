@@ -47,6 +47,9 @@
 /* debug when objects are ref'd and unref'd */
 //#define REF_DEBUG
 
+/* debug for tracing when ship_objs are ref'd and unref'd */
+//#define REF_DEBUG2
+
 /* lock debugging - print info when deadlocks & -waits are detected */
 //#define LOCK_DEBUG
 //#define LOCK_TRACE
@@ -219,6 +222,8 @@ int ship_locked(void *lock);
 #define THREAD_ABORT(name) \
         pthread_kill(*(name), SIGCHLD)
 
+typedef pthread_t THREAD;
+
 #define THREAD_DECL(name) \
     pthread_t *name
 
@@ -229,7 +234,7 @@ int ship_locked(void *lock);
     (name = (pthread_t*)mallocz(sizeof(pthread_t)))
 
 #define THREAD_JOIN(name) \
-    pthread_join(*(name), NULL);
+    { void *tmp; pthread_join(*(name), &tmp); }
 
 #define THREAD_FREE(name) freez(name)
 
@@ -378,6 +383,21 @@ void _ship_obj_ref(void *param);
 #define ship_obj_lockref(obj) { printf(">> lockreffing at %s:%d\n", __FILE__, __LINE__); ship_lock(obj); _ship_obj_ref(obj); }
 #define ship_obj_ref(obj) { printf(">> reffing at %s:%d\n", __FILE__, __LINE__); _ship_obj_ref(obj); }
 #define ship_obj_unref(obj) { printf(">> unreffing at %s:%d\n", __FILE__, __LINE__); _ship_obj_unref(obj); }
+
+#elif defined REF_DEBUG2
+
+void ship_debug_initref();
+void ship_debug_delref(void *obj);
+void ship_debug_incref(void *obj, const char *file, const int line);
+void ship_debug_decref(void *obj, const char *file, const int line);
+void ship_debug_reportref();
+void ship_debug_closeref();
+
+#define ship_obj_ref(obj) { ship_debug_incref(obj, __FILE__, __LINE__); _ship_obj_ref(obj); }
+#define ship_obj_unref(obj) { ship_debug_decref(obj, __FILE__, __LINE__); _ship_obj_unref(obj); }
+#define ship_obj_unlockref(obj) { ship_unlock(obj); ship_debug_decref(obj, __FILE__, __LINE__); _ship_obj_unref(obj); }
+#define ship_obj_lockref(obj) { ship_lock(obj); ship_debug_incref(obj, __FILE__, __LINE__); _ship_obj_ref(obj); }
+
 #else
 
 #define ship_obj_unlockref(obj) { ship_unlock(obj); _ship_obj_unref(obj); }
@@ -390,8 +410,8 @@ typedef ship_list_t ship_obj_list_t;
 
 #define ship_obj_list_add(list, obj) { ship_obj_ref(obj); ship_list_add(list, obj); }
 #define ship_obj_list_new() ship_list_new()
-#define ship_obj_list_remove(list, obj) ship_obj_unref(ship_list_remove(list, obj))
-#define ship_obj_list_free(list) { ship_obj_t *_obj; while (_obj = ship_list_pop(list)) { ship_obj_unref(_obj); } ship_list_free(list); }
+#define ship_obj_list_remove(list, obj) { void *__o = ship_list_remove(list, obj); ship_obj_unref(__o); }
+#define ship_obj_list_free(list) { ship_obj_t *_obj; while (list && (_obj = ship_list_pop(list))) { ship_obj_unref(_obj); } ship_list_free(list); }
 #define ship_obj_list_clear(list) { ship_obj_t *_obj; while (_obj = ship_list_pop(list)) { ship_obj_unref(_obj); } }
 
 #if 0
@@ -451,7 +471,7 @@ test()
 #define ship_inroll(val, buf, len) {\
         int __itemp;\
         for (__itemp=0; __itemp < len; __itemp++) {\
-                buf[__itemp] = (((val) >> (8*(len-__itemp-1))) & 0xff);\
+                (buf)[__itemp] = (((val) >> (8*(len-__itemp-1))) & 0xff);\
         }\
 }
 
@@ -589,13 +609,13 @@ void __NON_INSTRUMENT_FUNCTION__ ship_ht_empty_free_with(ship_ht_t *ht, void (*f
 void __NON_INSTRUMENT_FUNCTION__ ship_ht_free(ship_ht_t *ht);
 void * __NON_INSTRUMENT_FUNCTION__ ship_ht_next(ship_ht_t *ht, void **ptr);
 void * __NON_INSTRUMENT_FUNCTION__ ship_ht_first(ship_ht_t *ht);
-void * __NON_INSTRUMENT_FUNCTION__ ship_ht_put_int(ship_ht_t *ht, int key, void *val);
-void * __NON_INSTRUMENT_FUNCTION__ ship_ht_put_string(ship_ht_t *ht, char *key, void *val);
-void * __NON_INSTRUMENT_FUNCTION__ ship_ht_get_int(ship_ht_t *ht, int key);
-void * __NON_INSTRUMENT_FUNCTION__ ship_ht_get_string(ship_ht_t *ht, char *key);
+void * __NON_INSTRUMENT_FUNCTION__ ship_ht_put_int(ship_ht_t *ht, const int key, void *val);
+void * __NON_INSTRUMENT_FUNCTION__ ship_ht_put_string(ship_ht_t *ht, const char *key, void *val);
+void * __NON_INSTRUMENT_FUNCTION__ ship_ht_get_int(ship_ht_t *ht, const int key);
+void * __NON_INSTRUMENT_FUNCTION__ ship_ht_get_string(ship_ht_t *ht, const char *key);
 void * __NON_INSTRUMENT_FUNCTION__ ship_ht_remove(ship_ht_t *ht, void *value);
-void * __NON_INSTRUMENT_FUNCTION__ ship_ht_remove_int(ship_ht_t *ht, int key);
-void * __NON_INSTRUMENT_FUNCTION__ ship_ht_remove_string(ship_ht_t *ht, char *key);
+void * __NON_INSTRUMENT_FUNCTION__ ship_ht_remove_int(ship_ht_t *ht, const int key);
+void * __NON_INSTRUMENT_FUNCTION__ ship_ht_remove_string(ship_ht_t *ht, const char *key);
 void * __NON_INSTRUMENT_FUNCTION__ ship_ht_pop(ship_ht_t *ht);
 void __NON_INSTRUMENT_FUNCTION__ ship_ht_clear(ship_ht_t *ht);
 void __NON_INSTRUMENT_FUNCTION__ ship_ht_empty_free(ship_ht_t *ht);
@@ -624,11 +644,14 @@ char *__NON_INSTRUMENT_FUNCTION__ ship_untokenize(char **tokens, int toklen, con
 char *__NON_INSTRUMENT_FUNCTION__ strdup_trim(char *str);
 char *__NON_INSTRUMENT_FUNCTION__ trim(char *str);
 
-int __NON_INSTRUMENT_FUNCTION__ str_startswith(char *str, char *token);
+int ship_is_true(const char* tmp);
+
+int __NON_INSTRUMENT_FUNCTION__ str_startswith(const char *str, const char *token);
 char *__NON_INSTRUMENT_FUNCTION__ strstr_after(char *str, char *token);
 char *__NON_INSTRUMENT_FUNCTION__ memmem_after(char *str, int len, char *token, int len2);
 char *__NON_INSTRUMENT_FUNCTION__ append_mem(const char *str, int strlen, char *buf, int *buflen, int *datalen);
 char *__NON_INSTRUMENT_FUNCTION__ append_str(const char *str, char *buf, int *buflen, int *datalen);
+char *combine_str(const char *str1, const char *str2);
 
 #define zstrcat(target, source) if (source && target) { strcat(target, source); }
 #define zstrlen(str) (str? strlen(str):0)
@@ -655,6 +678,7 @@ char *strndup(const char *s, size_t n);
  */
 int ship_get_homedir_file(char *filename, char **target);
 int ship_ensure_file(char *filename, char *initial_data);
+ship_list_t* ship_list_dir(const char *dir, const char *pattern, const int fullpath);
 
 /**
  * Cryto functions 
@@ -704,5 +728,34 @@ char* ship_xml_get_xpath_string_req(xmlDocPtr doc, char *key, int req);
 /* returns an xml field value using xpath */
 #define ship_xml_get_xpath_field(doc, key) ship_xml_get_string_req(doc, key, 0)
 #define ship_xml_get_xpath_single_string(doc, key) ship_xml_get_string_req(doc, key, 1)
+
+
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+
+#define BLOOM_FUNCS 2
+
+/**
+ * bloomfilters
+ */
+typedef unsigned int (*hashfunc_t)(const char *);
+
+typedef struct ship_bloom_s {
+	size_t asize;
+	size_t size_in_bytes;
+	unsigned char *a;
+	size_t nfuncs;
+	hashfunc_t *funcs;
+} ship_bloom_t;
+
+ship_bloom_t *ship_bloom_new(size_t size);
+void ship_bloom_free(ship_bloom_t *bloom);
+int ship_bloom_add(ship_bloom_t *bloom, const char *s);
+int ship_bloom_check(ship_bloom_t *bloom, const char *s);
+int ship_bloom_empty(ship_bloom_t *bloom);
+int ship_bloom_combine_bloom(ship_bloom_t *target, ship_bloom_t *source);
+int ship_bloom_dump_size(ship_bloom_t *bloom);
+void ship_bloom_dump(ship_bloom_t *bloom, char *buf);
+ship_bloom_t *ship_bloom_load(char *buf, int buflen);
+#endif
 
 #endif

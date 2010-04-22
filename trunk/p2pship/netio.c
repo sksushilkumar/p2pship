@@ -1018,6 +1018,7 @@ netio_loop(void *data)
 	freez(fd_ex);
 	ship_list_free(nl);
         LOG_INFO("the nio loop ends\n");
+	return NULL;
 }
 
 

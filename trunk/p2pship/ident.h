@@ -48,6 +48,14 @@
 #include <netinet/in.h>
 #include "ship_debug.h"
 
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+/* how many levels of bloombuddies do we store .. */
+#define BLOOMBUDDY_MAX_LEVEL 5
+
+/* defines the size of the bloom filters in use */
+#define BLOOMBUDDIES_BLOOM_SIZE 2048
+#endif
+
 /* how ca / idents may have been modified */
 #define MODIF_NONE 0
 #define MODIF_NEW 1
@@ -205,6 +213,15 @@ typedef struct buddy_s
 	int expire;
 
 	char *callid;
+
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+	/* the bloomfilters of this guy's friends */
+	ship_bloom_t *friends[BLOOMBUDDY_MAX_LEVEL];
+
+	/* is this is a buddy we trust (or we have initiated the
+	   contact) or some random person that has called us */
+	int is_friend;
+#endif
 }
 buddy_t;
 
@@ -259,6 +276,7 @@ typedef struct ident_service_s
 	   will only be the service handler id which should be mapped
 	   to a real handler */
 	char *service_handler_id;
+	
 	service_t *service;
 
 	/* to's: */

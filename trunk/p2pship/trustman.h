@@ -21,7 +21,7 @@
 
 #include "ship_utils.h"
 
-/* this probably needs to be re-defined at some point .. */
+/* This represents all we know about a relationship with another person */
 typedef struct trustparams_s {
 
 	ship_list_t *queued_packets;
@@ -44,7 +44,6 @@ typedef struct trustparams_s {
 
 	/* when these expire! */
 	time_t expires;
-
 } trustparams_t;
 
 static trustparams_t *trustman_get_trustparams(char *from_aor, char *to_aor);

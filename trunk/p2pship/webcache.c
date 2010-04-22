@@ -1030,7 +1030,10 @@ webcache_p2p_lookup_cb_do(void *data, processor_task_t **wait, int wait_for_code
 #define MAX_NUMBER_OF_SIMULTANEOUS_LOOKUPS 2
 	
 	// halt
-	if (!(ident = ident_get_default_ident()))
+	ship_wait("webcache lookup");
+	ident = ident_get_default_ident();
+	ship_complete();
+	if (!ident)
 		return -1;
 	ship_lock(e);
 	while (e->lookups < MAX_NUMBER_OF_SIMULTANEOUS_LOOKUPS && ship_list_first(e->lookup_queue)) {
@@ -1183,14 +1186,17 @@ webcache_p2p_update()
 	void *ptr = 0;
 	char *buf = 0;
 	ident_t *ident = 0;
-	
+	char *aor = NULL;
 	/* todo: this should actually be called also when we change networks */
 
 	/* go through list, remove all that have been removed or validity changed */
 	
 	LOG_DEBUG("updating webcache adverts..\n");
 
-	if (!(ident = ident_get_default_ident()))
+	ship_wait("webcache update");
+	ident = ident_get_default_ident();
+	ship_complete();
+	if (!ident)
 		return;
 	
 	ship_lock(webcache_cache);
@@ -1206,7 +1212,6 @@ webcache_p2p_update()
 			free(buf);
 		}
 	}
-	
 	/* this is logic that chould be changed according to some
 	   optimal algorithm / scheme */
 	ptr = 0;

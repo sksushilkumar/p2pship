@@ -559,7 +559,6 @@ ac_packetfilter_trust(ac_sip_t *asip)
 	ac_next_packetfilter(asip);
 }
 
-
 static void 
 ac_packetfilter_blacklist(ac_sip_t *asip)
 {

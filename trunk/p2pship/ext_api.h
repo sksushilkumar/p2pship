@@ -23,6 +23,7 @@
 
 typedef struct extapi_http_req_s {
 
+	char id[17]; // clumsy’ but ..
 	char *request;
 	int request_len;
 	char *tracking_id;
@@ -36,4 +37,8 @@ typedef struct extapi_http_req_s {
 	int data_len;
 } extapi_http_req_t;
 
+#ifdef CONFIG_HTTPPROXY_ENABLED
+int extapi_register_p2phttp_handler(char *aor, const int dport, addr_t *addr, const int expire, 
+				    int (*func) (netio_http_conn_t *conn, void *pkg, extapi_http_req_t* req), void *pkg);
+#endif
 #endif

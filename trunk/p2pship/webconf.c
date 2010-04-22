@@ -38,58 +38,66 @@ extern time_t p2pship_start;
 /* list of sockets that want un events */
 static ship_list_t *un_events = 0;
 
+
+char*
+webconf_get_json(const char *url)
+{
+	char *json = 0, *tmp = 0;
+	int size = 0, len = 0;
+	char *all = strstr(url, "/all");
+		
+	if (strstr(url, "/config") || all) {
+		LOG_DEBUG("Got config json request\n");
+		processor_config_dump_json(p_config, &tmp);
+		json = append_str(tmp, json, &size, &len);
+		freez(tmp);
+	}
+	if (strstr(url, "/idents") || all) {
+		LOG_DEBUG("Got idents json request\n");
+		ident_data_dump_identities_json(ident_get_identities(), &tmp);
+		json = append_str(tmp, json, &size, &len);
+		freez(tmp);
+	}
+	if (strstr(url, "/cas") || all) {
+		LOG_DEBUG("Got cas json request\n");
+		ident_data_dump_cas_json(ident_get_cas(), &tmp);
+		json = append_str(tmp, json, &size, &len);
+		freez(tmp);
+	}
+#ifdef CONFIG_SIP_ENABLED
+	if (strstr(url, "/mps") || all) {
+		LOG_DEBUG("Got mps json request\n");
+		sipp_mp_dump_json(&tmp);
+		json = append_str(tmp, json, &size, &len);
+		freez(tmp);
+	} 
+#endif
+	if (strstr(url, "/info") || all) {
+		LOG_DEBUG("Got info json request\n");
+		ship_debug_dump_json(&tmp);
+		json = append_str(tmp, json, &size, &len);
+		freez(tmp);
+	}
+
+#ifdef CONFIG_SIP_ENABLED
+#ifdef DO_STATS
+	if (strstr(url, "/stats") || all) {
+		LOG_DEBUG("Got stats json request\n");
+		stats_dump_json(&tmp);
+		json = append_str(tmp, json, &size, &len);
+		freez(tmp);
+	}
+#endif
+#endif
+	return json;
+}
+
 static int
 webconf_process_req(netio_http_conn_t *conn, void *pkg)
 {
 	LOG_DEBUG("got req for %s\n", conn->url);
 	if (str_startswith(conn->url, "/json/")) {
-		char *json = 0, *tmp = 0;
-		int size = 0, len = 0;
-		char *all = strstr(conn->url, "/all");
-		
-		if (strstr(conn->url, "/config") || all) {
-			LOG_DEBUG("Got config json request\n");
-			processor_config_dump_json(p_config, &tmp);
-			json = append_str(tmp, json, &size, &len);
-			freez(tmp);
-		}
-		if (strstr(conn->url, "/idents") || all) {
-			LOG_DEBUG("Got idents json request\n");
-			ident_data_dump_identities_json(ident_get_identities(), &tmp);
-			json = append_str(tmp, json, &size, &len);
-			freez(tmp);
-		}
-		if (strstr(conn->url, "/cas") || all) {
-			LOG_DEBUG("Got cas json request\n");
-			ident_data_dump_cas_json(ident_get_cas(), &tmp);
-			json = append_str(tmp, json, &size, &len);
-			freez(tmp);
-		}
-#ifdef CONFIG_SIP_ENABLED
-		if (strstr(conn->url, "/mps") || all) {
-			LOG_DEBUG("Got mps json request\n");
-			sipp_mp_dump_json(&tmp);
-			json = append_str(tmp, json, &size, &len);
-			freez(tmp);
-		} 
-#endif
-		if (strstr(conn->url, "/info") || all) {
-			LOG_DEBUG("Got info json request\n");
-			ship_debug_dump_json(&tmp);
-			json = append_str(tmp, json, &size, &len);
-			freez(tmp);
-		}
-
-#ifdef CONFIG_SIP_ENABLED
-#ifdef DO_STATS
-		if (strstr(conn->url, "/stats") || all) {
-			LOG_DEBUG("Got stats json request\n");
-			stats_dump_json(&tmp);
-			json = append_str(tmp, json, &size, &len);
-			freez(tmp);
-		}
-#endif
-#endif	
+		char *json = webconf_get_json(conn->url);
 		if (json) {
 			netio_http_respond_str(conn, 200, "OK", json);
 			freez(json);
