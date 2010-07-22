@@ -41,7 +41,7 @@ Transports:
 = Sections =
 
  * [Compiling Building and installing form source]
- * [Configuring Configuring the system]
+ * [Configuration Configuring the system]
  * [IdentityManagement Identity Management]
  * [WebConfig Setting up and using the web configuration interface]
  * [SIP Using SIP applications with the proxy]
