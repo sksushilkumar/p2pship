@@ -1,0 +1,50 @@
+#summary User manual for using the p2pship system.
+
+= Introduction =
+
+The p2pship system is an experimental application that provides peer-to-peer communication capaiblities for different applications.  It is designed to be used as a proxy for existing applications or (recently) as a run-time environment for new applications.
+
+The system was originally designed for SIP-based communication applications (a SIP proxy), allowing users to make peer-to-peer voice / video calls, without the help of a centralized SIP infrastructure. The Host Identity Protocol (HIP) was used as data transport, making the connections secure and enabling features such as mobility and multihoming.
+
+== Overview ==
+
+In a nutshell, the p2pship system provides applications identity-based communication. Instead of network addresses, applications use _identities_ as end points. The p2pship system resolves these identties into actual nodes where the data is delivered. Identities in the p2pship system are (due to its roots as a SIP proxy) email-like SIP address of records (AORs), for instance _jookos@example.com_.
+
+Compared to other identity protocols (such as HIP), the p2pship system differs as it:
+ 
+ * A global human-readable identity scheme (name lookup)
+ * Different application interfaces
+ * Support for multiple lookup / rendezvous systems
+ * Support for multiple data bearers
+
+In short, the system is not designed primarly to provide generic identity-based connectivity (as HIP), but as an application-specific abstraction for peer-to-peer communication. Although possible, it is not designed to be used to create, for instance, duplex data channels. Instead, it interprets application data and delivers it in the most suitable manner.
+
+== Features ==
+
+Currently the p2pship proxy supports the following applications
+
+ * SIP with media proxying (see [SIP])
+ * Peer-to-peer HTTP (see [P2PHTTP])
+ * Peer-to-peer web caching (see [WebCache])
+
+For lookup:
+
+ * LAN broadcast (see [Lookup#Broadcast])
+ * OpenDHT / OpenLookup 1 (see [Lookup#OpenDHT])
+ * P2PExt, a simple key-based web lookup (see [Lookup#P2PEXT])
+
+Transports:
+
+ * HIP
+ * TCP
+
+= Sections =
+
+ * [Compiling Building and installing form source]
+ * [Configuring Configuring the system]
+ * [IdentityManagement Identity Management]
+ * [WebConfig Setting up and using the web configuration interface]
+ * [SIP Using SIP applications with the proxy]
+ * [P2PHTTP Using the peer-to-peer HTTP interface]
+ * [WebCache Using the web cache]
+ * [PRE Configuring and using the Python run-time environment]
