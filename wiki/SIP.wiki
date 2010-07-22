@@ -2,4 +2,45 @@
 
 = Introduction =
 
-Todo
+The SIP interface provides SIP-based applications with peer-to-peer communication. Currently it supports
+ 
+ * Media sessions (INVITEs with media parameters)
+ * Instant messaging (MESSAGE)
+
+The proxy will act as a media proxy for media sessions if necessary (when the application itself does not support a good [HIP] transport protocol).
+
+It can also act as a router (gateway) for calls destined for outside the peer-to-peer system, for instance for SIP-to-POTS proxies.
+
+The SIP subsystem features also message filtering (SPAM/SPIT control).
+
+== Requirements ==
+
+The SIP interface (or subsystem) has to be enabled when compiling the source. This is the default, but can also be explicitly stated during configure with
+{{{ 
+./configure --enable-sip 
+}}}
+
+This requires the osip library to be installed with development files. Version 2 of osip has generally been used by the authors, although version 3 has been tried successfully in the past. On debian-based systems, this can be installed with
+{{{
+apt-get install libosip2-dev
+}}}
+
+= Configuring =
+
+The core SIP system requires few settings; the local port on which the SIP proxy will be running as well as the behaviour of the media proxy.
+
+See [Configuration#SIP SIP-related configuration values]
+
+= Use =
+
+_todo_
+
+= Access control =
+
+_todo_
+
+See [Configuration#AccessControl Access control- related configuration values]
+
+= SIP Gateway =
+
+See [Configuration#SIPGW Access control- related configuration values]
