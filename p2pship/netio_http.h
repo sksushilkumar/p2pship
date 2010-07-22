@@ -34,7 +34,8 @@ typedef struct netio_http_conn_s {
 
 	ship_lock_t lock;
 	int socket;
-	
+	int owns_socket;
+
 	/* the buf */
 	char *buf;
 	int data_len;
@@ -94,6 +95,7 @@ typedef struct netio_http_server_s {
 
 
 
+void netio_http_register();
 
 
 /* functions */
@@ -105,6 +107,10 @@ void netio_http_respond(netio_http_conn_t *conn,
 			int code, char *code_str, 
 			char *content_type,
 			char *data, int data_len);
+int netio_http_create_response(int code, char *code_str, 
+			       char *content_type,
+			       char *data, int data_len,
+			       char **ret, int *retlen);
 
 void netio_http_respond_str(netio_http_conn_t *conn, 
 			    int code, char *code_str, 
@@ -132,7 +138,31 @@ netio_http_conn_t *netio_http_parse_data(char *data, int datalen);
 netio_http_conn_t *netio_http_parse_header(char *data, int datalen);
 netio_http_conn_t *netio_http_get_conn_by_id(char *id);
 
+int netio_http_get(char *url,
+		   void (*func) (char *url, int respcode, char *data, int data_len, void *pkg),
+		   void *pkg);
+
 char *netio_http_get_header(netio_http_conn_t* conn, char *key);
 int netio_http_set_header(netio_http_conn_t* conn, char *key, char *data);
+
+int netio_http_post_host(char *host, char *path, char *urlstr, char *content_type, char *data, int data_len,
+			 void (*func) (char *url, int respcode, char *data, int data_len, void *pkg),
+			 void *pkg);
+int netio_http_conn_set_param(netio_http_conn_t *conn, char *name, int namelen, char *value, int len);
+void netio_http_respond_multipart(netio_http_conn_t *conn, 
+				  char *content_type, 
+				  char *data, int data_len);
+void netio_http_conn_close(netio_http_conn_t *conn);
+int netio_http_serialize(netio_http_conn_t* conn, char **ret, int *retlen);
+void netio_http_packet_orderer_put(char *tracking_id, int piece, char *content, int len);
+int netio_http_packet_orderer_pop_next(char *tracking_id, int *piece, char **content, int *len);
+void netio_http_respond_html(netio_http_conn_t *conn, 
+			     int code, char *code_str, 
+			     char *data);
+void netio_http_packet_orderer_create(char *tracking_id);
+void netio_http_respond_auth(netio_http_conn_t *conn, 
+			     char *realm,
+			     char *content_type,
+			     char *data);
 
 #endif

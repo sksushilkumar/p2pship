@@ -25,9 +25,16 @@
 #include "processor_config.h"
 #include "processor.h"
 #include "ship_utils.h"
+#include "ident.h"
+#include "ident_addr.h"
+
+/* from hipl, it is painful to include hipconf.h */
+int hip_do_hipconf(int argc, char *argv[], int send_only);
+void getaddrinfo_disable_hit_lookup();
 
 /* inits the hipapi */
 int hipapi_init(processor_config_t *config);
+void hipapi_register();
 
 /* closes */
 void hipapi_close();
@@ -47,6 +54,17 @@ void *hip_get_param_contents_direct(const void *tlv_common);
    other that those created by the proxy, or that are related to the
    proxy's hit!  */
 int hipapi_clear_sas();
-     
+
+int hipapi_list_hits();
+int hipapi_gethit(addr_t *addr);
+int hipapi_init_rvs(int on);
+int hipapi_update_rvs_registration();
+int hipapi_set_udp_encap(int mode);
+int hipapi_register_to_rvs(addr_t *rvshit, addr_t *rvsloc, int add);
+int hipapi_addr_is_hit(addr_t *addr);
+int hipapi_has_linkto(addr_t *remote_hit);
+int hipapi_establish(addr_t *remote_hit, ship_list_t *ips, ship_list_t *rvs);
+int hipapi_hip_running();
+int hipapi_getrvs(ship_list_t *list);
 
 #endif

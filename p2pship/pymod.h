@@ -16,34 +16,16 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
-#ifndef __EXT_API_H__
-#define __EXT_API_H__
+/*
+ * Module for managing the connections to peers. Sort of an adapter
+ * between the ident module and the hip api (and the sipp)
+ */
+#ifndef __PYMOD_H__
+#define __PYMOD_H__
 
-#include "ship_utils.h"
+void pymod_register();
+int pymod_start_plugins();
+void pymod_shell();
 
-typedef struct extapi_http_req_s {
-
-	char id[17]; // clumsy’ but ..
-	char *request;
-	int request_len;
-	char *tracking_id;
-	int piece_number;
-
-	char *from_aor;
-	char *to_aor;
-
-	char *buf;
-	int buf_len;
-	int data_len;
-} extapi_http_req_t;
-
-#ifdef CONFIG_HTTPPROXY_ENABLED
-int extapi_register_p2phttp_handler(char *aor, const int dport, addr_t *addr, const int expire, 
-				    int (*func) (netio_http_conn_t *conn, void *pkg, extapi_http_req_t* req), void *pkg);
-#endif
-
-void extapi_register();
-extapi_http_req_t *extapi_get_http_req(const char *id);
-void extapi_http_data_return(extapi_http_req_t *req, char *data, int odatalen);
 
 #endif

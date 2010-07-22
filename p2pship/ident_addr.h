@@ -41,4 +41,7 @@ typedef struct addr_s
 }
 addr_t;
 
+void ident_addr_register();
+int ident_addr_socket_to_addr(int s, addr_t *addr);
+
 #endif

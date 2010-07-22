@@ -98,6 +98,9 @@ void sipp_mp_close(sipp_media_proxy_t *mp);
 /* stops & releases all media proxy */
 void sipp_mp_close_all();
 
+int sipp_mp_init();
+void sipp_mp_close_sys();
+
 /* calls to route traffic */
 int sipp_mp_route(char *source_aor, char *target_aor,
                   char *source_addr, int source_port,
@@ -114,6 +117,8 @@ sipp_media_proxy_t *sipp_mp_find_by_source(char *addr, int port);
 sipp_media_proxy_t *sipp_mp_find_by_socket(int socket);
 
 sipp_media_proxy_t *sipp_mp_find_by_callid(char *callid);
+
+int sipp_mp_dump_json(char **msg);
 
 
 #endif

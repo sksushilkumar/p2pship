@@ -34,21 +34,7 @@
 #include "ident.h"
 #include "netio.h"
 #include "processor.h"
-
-/* typedef struct ol_broadcast_get_s  */
-/* { */
-/* 	void (*callback) (char *val, int status,  */
-/* 			  olclient_lookup_t *lookup, struct olclient_module* mod); */
-/* 	olclient_lookup_t *lookup; */
-/* 	char *key; */
-/* 	struct olclient_module* mod; */
-
-/* 	time_t req_time; */
-/* } ol_broadcast_get_t; */
-
-
-/* yet-another reference to the processor config */
-/* static processor_config_t *pconfig; */
+#include "conn.h"
 
 /* the list of entries */
 static ship_obj_list_t *requests = NULL;
@@ -69,46 +55,6 @@ static ship_list_t *bc_sockets = 0;
 
 /* the name of this module */
 static struct olclient_module ol_broadcast_module;
-
-/* static void */
-/* ol_broadcast_get_free(ol_broadcast_get_t* g) */
-/* {	 */
-/* 	if (g) { */
-/* 		freez(g->key); */
-/* 		freez(g); */
-/* 	} */
-/* } */
-
-/* static void */
-/* ol_broadcast_get_close(ol_broadcast_get_t* g, int code) */
-/* {	 */
-/* 	if (g) { */
-/* 		if (g->callback) { */
-/* 			g->callback(NULL, code, g->lookup, g->mod); */
-/* 			g->callback = NULL; */
-/* 		} */
-/* 		ol_broadcast_get_free(g); */
-/* 	} */
-/* } */
-
-/* static ol_broadcast_get_t* */
-/* ol_broadcast_get_new(char *key, struct olclient_module* mod, */
-/* 		     void (*callback) (char *val, int status, olclient_lookup_t *lookup,  */
-/* 				       struct olclient_module* mod), */
-/* 		     olclient_lookup_t *lookup) */
-/* {	 */
-/* 	ol_broadcast_get_t* ret = NULL; */
-/* 	ASSERT_TRUE(ret = mallocz(sizeof(ol_broadcast_get_t)), err); */
-/* 	ASSERT_TRUE(ret->key = strdup(key), err); */
-/* 	ret->callback = callback; */
-/* 	ret->lookup = lookup; */
-/* 	ret->mod = mod; */
-/* 	ret->req_time = time(0); */
-/* 	return ret; */
-/*  err: */
-/* 	ol_broadcast_get_free(ret); */
-/* 	return NULL; */
-/* }	 */
 
 static void
 ol_broadcast_get_to(void *data, int code)
@@ -136,7 +82,7 @@ ol_broadcast_send(char *req, struct sockaddr* sa, socklen_t salen)
 	if (bc_sockets) {
 		void *ptr = 0;
 		int *s = 0;
-		while (s = ship_list_next(bc_sockets, &ptr)) {
+		while ((s = ship_list_next(bc_sockets, &ptr))) {
 			netio_packet_send((*s), req, strlen(req), sa, salen);
 		}
 	}
@@ -169,7 +115,6 @@ static int
 ol_broadcast_get(char *key, olclient_get_task_t *task)
 {
 	char *req = NULL;
-	//ol_broadcast_get_t* g = NULL;
 	int ret = -1;
 	char *k2 = 0;
 	ship_list_t *resps = 0;
@@ -182,14 +127,11 @@ ol_broadcast_get(char *key, olclient_get_task_t *task)
 	strcat(req, k2);
 	strcat(req, "\n");
 	
-	/* create some lookup object, set a timeout.. */
-	/* ASSERT_TRUE(g = ol_broadcast_get_new(k2, mod, callback, lookup), err); */
-
-	if (resps = ship_list_new()) {
+	if ((resps = ship_list_new())) {
 		olclient_storage_entry_t* e = NULL;
 
 		olclient_storage_find_entries(k2, resps);
-		while (e = ship_list_pop(resps)) {
+		while ((e = ship_list_pop(resps))) {
 			task->callback(e->data, 1, task /*->lookup, g->mod*/);
 			e->data = 0;
 			olclient_storage_entry_free(e);
@@ -203,12 +145,9 @@ ol_broadcast_get(char *key, olclient_get_task_t *task)
 		ship_obj_list_add(requests, task);
 		processor_tasks_add_timed(NULL, task, ol_broadcast_get_to, OLBROADCAST_TO);
 	}
-	
-	//processor_tasks_add(ol_broadcast_return_cache, task, NULL);
  err:
 	freez(k2);
 	freez(req);
-	/* ol_broadcast_get_free(g);	 */
 	return ret;
 }
 
@@ -222,8 +161,8 @@ ol_broadcast_find_gets(char *key, ship_obj_list_t *list)
 	char *k2 = 0;
 
 	ship_lock(requests);
-	while (task = ship_list_next(requests, &ptr)) {
-		if (k2 = ship_hash_sha1_base64(task->lookup->key, strlen(task->lookup->key))) {
+	while ((task = ship_list_next(requests, &ptr))) {
+		if ((k2 = ship_hash_sha1_base64(task->lookup->key, strlen(task->lookup->key)))) {
 			if (!strcmp(k2, key)) {
 				ship_obj_list_add(list, task);
 				ret++;
@@ -301,7 +240,7 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 			/* find the resource(s), submit */
 			LOG_DEBUG("got request for '%s'\n", key);
 			olclient_storage_find_entries(key, resps);
-			while (e = ship_list_pop(resps)) {
+			while ((e = ship_list_pop(resps))) {
 				/* create response */
 				char *resp = mallocz(e->data_len + strlen(key) + 12);
 				if (resp) {
@@ -329,7 +268,7 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 			ship_lock(requests);
 			ol_broadcast_find_gets(key, resps);
 			ptr = 0;
-			while (task = ship_list_next(resps, &ptr)) {
+			while ((task = ship_list_next(resps, &ptr))) {
 				/* call callback! */
 				char *data = strdup(pkgdata);
 				if (data) 
@@ -347,9 +286,9 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 static int
 ol_broadcast_init_sockets(processor_config_t *config)
 {
-	char *host, *portstr, *tmp = 0;
-	int port, ret = -1;
-	char *bc_addr, *bc2;
+	char *host = 0, *portstr, *tmp = 0;
+	int port = 0, ret = -1;
+	char *bc_addr = 0, *bc2 = 0;
 	char **ifs = 0;
 	int ifs_c = 0;
 	ship_list_t *list = 0;
@@ -358,7 +297,7 @@ ol_broadcast_init_sockets(processor_config_t *config)
 	ASSERT_ZERO(processor_config_get_string(config, P2PSHIP_CONF_BC_ADDR, &bc2), err);
 	ASSERT_TRUE(bc_addr = strdup(bc2), err);
 	
-	if (portstr = strchr(bc_addr, ':'))
+	if ((portstr = strchr(bc_addr, ':')))
 		port = atoi(portstr+1);
 	
 	if (portstr != bc_addr) {
@@ -418,7 +357,7 @@ ol_broadcast_close_sockets()
 {
 	if (bc_sockets) {
 		int *s = 0;
-		while (s = ship_list_pop(bc_sockets)) {
+		while ((s = ship_list_pop(bc_sockets))) {
 			netio_close_socket(*s);
 			free(s);
 		}

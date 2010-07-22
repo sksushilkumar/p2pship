@@ -16,12 +16,11 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
-#ifndef __OL_OPENDHT_H__
-#define __OL_OPENDHT_H__
+#ifndef __OL_P2PEXT_H__
+#define __OL_P2PEXT_H__
 
 #include "olclient.h"
 #include "processor_config.h"
 
-int ol_opendht_init(processor_config_t *config);
-
+int ol_p2pext_init(processor_config_t *config);
 #endif

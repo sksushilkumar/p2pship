@@ -122,6 +122,7 @@ struct olclient_module {
 
 /* inits the system */
 int olclient_init(processor_config_t *config);
+void olclient_register();
 
 /* shuts down */
 void olclient_close();
@@ -159,6 +160,14 @@ int olclient_put_signed_for_someone(char *key, char *data, ident_t *signer, budd
 /* sign, encrypt & use secret to scramble key */
 int olclient_put_anonymous_signed_for_someone(char *key, char *data, ident_t *signer, buddy_t *receiver, 
 					      char *shared_secret, int timeout, char *secret);
+int olclient_put_anonymous_signed_for_someone_with_secret(char *key, char *data, ident_t *signer, buddy_t *receiver, 
+							  char *shared_secret, int timeout, char *secret);
+int olclient_get_anonymous_signed_for_someone_with_secret(char *key, buddy_t *signer, 
+							  ident_t *receiver, char *shared_secret,
+							  void *param, 
+							  void (*callback) (char *key, char *data, 
+									    char *signer, void *param, 
+									    int status));
 
 /*
  * The gets
@@ -178,6 +187,8 @@ int olclient_get_signed_for_someone(char *key, buddy_t *signer, ident_t *receive
 				    void (*callback) (char *key, char *data, char *signer, void *param, int status));
 int olclient_get_anonymous_signed_for_someone(char *key, buddy_t *signer, ident_t *receiver, char *shared_secret, void *param, 
 					      void (*callback) (char *key, char *data, char *signer, void *param, int status));
+
+void olclient_cb_state_change(struct olclient_module* module, int status, char *info);
 
 /* 
  * the storage funcs 

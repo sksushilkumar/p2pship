@@ -37,6 +37,12 @@
 #include "access_control.h"
 #include "services.h"
 #include "trustman.h"
+#include "netio.h"
+#include "addrbook.h"
+#ifdef CONFIG_HIP_ENABLED
+#include "hipapi.h"
+#endif
+#include "ui.h"
 
 /* this should be defined so that the tablets don't think things are
    getting looped up and start sending 482 responses (which kill the
@@ -146,6 +152,7 @@ sipp_get_addr_to_ua(ident_t *ident, addr_t *addr)
 	return ret;
 }
 
+#ifndef IGNORE_VIAS
 static osip_record_route_t *
 sipp_create_own_rr(ident_t *ident)
 {
@@ -200,6 +207,7 @@ sipp_create_own_via(ident_t *ident)
         
         return via;
 }
+#endif
 
 static int
 sipp_get_sip_aors(osip_message_t *sip, char **fullfromurl,  char **fulltourl, int remote)
@@ -296,7 +304,7 @@ sipp_get_gateway_ident(char *local_sip, char *remote_sip)
 	void *ptr = 0;
 	sipp_relay_t *relay = 0;
 	
-	while (relay = ship_list_next(relays, &ptr)) {
+	while ((relay = ship_list_next(relays, &ptr))) {
 		if (ship_str_matches(local_sip, relay->local_pattern) &&
 		    ship_str_matches(remote_sip, relay->remote_pattern)) {
 			LOG_INFO("Gateway identity found, using %s..\n", relay->ident_aor);
@@ -332,7 +340,7 @@ sipp_find_to_ident(char *local_sip, char *remote_sip)
 	void *ptr = 0;
 	sipp_gateway_t *gw = 0;
 	
-	while (gw = ship_list_next(gateways, &ptr)) {
+	while ((gw = ship_list_next(gateways, &ptr))) {
 		if (ship_str_matches(local_sip, gw->local_pattern) &&
 		    ship_str_matches(remote_sip, gw->remote_pattern)) {
 			LOG_INFO("Gateway for packet found, routing via %s..\n", 
@@ -430,22 +438,6 @@ sipp_request_init(sipp_request_t *ret, sipp_request_t *param)
         return 0;
 }
 
-/* creates a request */
-static sipp_request_t *
-sipp_req_remote_new(osip_event_t *evt, char *local_aor, char *remote_aor)
-{
-        sipp_request_t *ret = NULL;
-        if (ret = (sipp_request_t *)mallocz(sizeof(sipp_request_t))) {
-                ret->evt = evt;
-		if (!(ret->local_aor = strdup(local_aor)) ||
-		    !(ret->remote_aor = strdup(remote_aor))) {
-			sipp_req_free(ret);
-			ret = NULL;
-		}
-        }
-        return ret;
-}
-
 static void
 sipp_cb_packetfilter_local(char *local_aor, char *remote_aor, void *msg, int verdict)
 {
@@ -494,7 +486,6 @@ sipp_handle_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr)
 {
         osip_event_t *evt = 0;
         sipp_request_t *req = 0;
-	char buf[1024];
 	sipp_request_t param;
 
 	LOG_DEBUG("got %d bytes of data from %s:%d\n", len, addr->addr, addr->port);
@@ -579,7 +570,7 @@ sipp_sdp_replace_addr_create_proxies(char *bodystr, int bodystrlen, char **newms
         addr_t target_addr;
  	char *tmp = NULL;
 
-	int ret = -1, modified = 0;
+	int ret = -1;
 	
         /* todo: modifs required to support tcp or anything != udp */
 
@@ -861,7 +852,7 @@ sipp_call_terminated(osip_message_t* sip, int remotely_got)
 	char *callid;
 	
 	LOG_DEBUG("call termianted by %s, checking for mediaproxies..\n", (remotely_got? "remote":"local"));
-	if (callid = sipp_get_call_id(sip)) {
+	if ((callid = sipp_get_call_id(sip))) {
 		sipp_mp_clean_by_call(callid);
 		free(callid);
 	}
@@ -881,8 +872,6 @@ static int
 sipp_forward_remote_message(osip_message_t* sip, ident_t *ident, char *remote_aor)
 {      
         char *tmp = NULL;
-        osip_via_t *via = NULL;
-        size_t len;
 	
 	/* check Via - remove my own entry on responses, add on requests! */
         if (MSG_IS_RESPONSE(sip)) {
@@ -895,7 +884,6 @@ sipp_forward_remote_message(osip_message_t* sip, ident_t *ident, char *remote_ao
 #endif
 	} else {
 		addr_t *addr = 0;
-                osip_record_route_t *rr = NULL;
 		
                 /* perform the following on externally generated requests:
                    - rewrite request-uri (replace domain with contact-IP)
@@ -996,7 +984,6 @@ sipp_handle_remote_message(char *msg, int msglen, ident_t *ident, char *sip_aor,
 {
         int ret = -3;
         osip_event_t *evt = 0;
-	sipp_request_t *req = 0;
 	
         ASSERT_TRUE(evt = osip_parse(msg, msglen), err);
         ASSERT_TRUE(evt->sip, err);
@@ -1014,11 +1001,11 @@ sipp_handle_remote_message(char *msg, int msglen, ident_t *ident, char *sip_aor,
         return ret;
 }
 
-static void sipp_cb_data_got(int s, char *data, size_t len);
+static void sipp_cb_data_got(int s, char *data, ssize_t len);
 
 /* siptcp: callback function for new connections */
 static void
-sipp_cb_tcpconn_got(int s, struct sockaddr *sa, socklen_t addrlen)
+sipp_cb_tcpconn_got(int s, struct sockaddr *sa, socklen_t addrlen, int ss)
 {
 	sipp_listener_t *lis = 0;
 	addr_t addr;
@@ -1045,7 +1032,7 @@ sipp_get_listener_by_socket(int s)
                 goto end;
 
         ship_lock(sipp_all_listeners); {
-                while (lis = (sipp_listener_t *)ship_list_next(sipp_all_listeners, &ptr)) {
+                while ((lis = (sipp_listener_t *)ship_list_next(sipp_all_listeners, &ptr))) {
                         if (lis->socket == s)
                                 break;
                         lis = NULL;
@@ -1057,7 +1044,7 @@ sipp_get_listener_by_socket(int s)
         
 
 static void
-sipp_cb_data_got(int s, char *data, size_t len)
+sipp_cb_data_got(int s, char *data, ssize_t len)
 {
         sipp_listener_t *lis = sipp_get_listener_by_socket(s);
 
@@ -1088,7 +1075,7 @@ sipp_cb_datagram_got(int s, char *data, size_t len,
         }
 }
 
-static int
+static void
 sipp_cb_config_update(processor_config_t *config, char *k, char *v)
 {
 	/* the lazy approach: */
@@ -1109,9 +1096,9 @@ sipp_cb_config_update(processor_config_t *config, char *k, char *v)
 	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_CALL_LOG_SHOW_DROPPED,
 					      &call_log_show_dropped), err);
 
-	return 0;
+	return;
  err:
-	return -1;
+	PANIC();
 }
 
 /***
@@ -1159,19 +1146,19 @@ sipp_load_routing_xml(xmlNodePtr cur, void *ptr)
 	char *tmp = 0;
 	xmlNodePtr node = NULL;
 	
-	if (!xmlStrcmp(cur->name, "sip-routing")) {
+	if (!xmlStrcmp(cur->name, (xmlChar*)"sip-routing")) {
 		for (node = cur->children; node; node = node->next) {
-			if (ret = sipp_load_routing_xml(node, arr))
+			if ((ret = sipp_load_routing_xml(node, arr)))
 				return ret;
 		}
-	} else if (!xmlStrcmp(cur->name, "route")) {
+	} else if (!xmlStrcmp(cur->name, (xmlChar*)"route")) {
 		ASSERT_TRUE(gw = mallocz(sizeof(sipp_gateway_t)), err);
 		ASSERT_TRUE(gw->local_pattern = ship_xml_get_child_field(cur, "source"), err);
 		ASSERT_TRUE(gw->remote_pattern = ship_xml_get_child_field(cur, "target"), err);
 		ASSERT_TRUE(gw->gateway_ident_aor = ship_xml_get_child_field(cur, "via"), err);
 		ship_list_add(gws, gw);
 		gw = 0;
-	} else if (!xmlStrcmp(cur->name, "relay")) {
+	} else if (!xmlStrcmp(cur->name, (xmlChar*)"relay")) {
 		ASSERT_TRUE(relay = mallocz(sizeof(sipp_relay_t)), err);
 		ASSERT_TRUE(relay->ident_aor = ship_xml_get_child_field(cur, "ident"), err);
 		ASSERT_TRUE(relay->local_pattern = ship_xml_get_child_field(cur, "subject"), err);
@@ -1201,9 +1188,9 @@ sipp_update_relay_registrations()
 	sipp_relay_t *relay = 0;
 	
 	if (!relays)
-		return;
+		return 0;
 
-	while (relay = ship_list_next(relays, &ptr)) {
+	while ((relay = ship_list_next(relays, &ptr))) {
 		ident_process_register(relay->ident_aor, SERVICE_TYPE_SIP, &sipp_service,
 				       NULL, SIPP_RELAY_REGISTRATION_TIME, NULL);
 	}
@@ -1236,7 +1223,7 @@ sipp_init(processor_config_t *config)
 	ship_list_t *list = 0;
 	addr_t *addr = 0;
 	
-	ASSERT_ZERO(sipp_cb_config_update(config, NULL, NULL), err);
+	sipp_cb_config_update(config, NULL, NULL);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SIPP_PROXY_PORT, sipp_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SIPP_MEDIA_PROXY, sipp_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SIPP_MEDIA_PROXY_MOBILITY_SUPPORT, sipp_cb_config_update);
@@ -1269,7 +1256,7 @@ sipp_init(processor_config_t *config)
 	conn_getips(list, ifs, ifs_c, sip_proxy_port);
 	
 	/* loop ... */
-	while (addr = ship_list_pop(list)) {
+	while ((addr = ship_list_pop(list))) {
 		LOG_INFO("\tsip UDP proxy on %s\n", addr->addr);
 		addr->type = IPPROTO_UDP;
 		ASSERT_TRUE(lis = sipp_listener_new(addr), err);
@@ -1452,7 +1439,6 @@ sipp_handle_message_do(sipp_request_t *req)
         if (MSG_IS_REGISTER(sip)) {
 		//int retcode = 0;
 		osip_contact_t *c;
-		time_t now;
 		addr_t addr;
 		bzero(&addr, sizeof(addr));
 		
@@ -1486,8 +1472,9 @@ sipp_handle_message_do(sipp_request_t *req)
 		ret = ident_process_register(fulltourl, SERVICE_TYPE_SIP, &sipp_service,
 						 (&addr), expire, req->lis);
 		if (ret == 200) {
+#ifdef CONFIG_ABS_ENABLED
 			ship_list_t *list = 0;
-			
+#endif
 			if (expire == 0)
 				sipp_mp_clean_by_id(fulltourl);
 
@@ -1500,16 +1487,16 @@ sipp_handle_message_do(sipp_request_t *req)
 				
 				/* this will clear old subscribes, so be careful .. */
 				if (!addrbook_retrieve_contacts(list)) {
-					if (subs = (char**)mallocz((ship_list_length(list) + 1) * sizeof(char*))) {
+					if ((subs = (char**)mallocz((ship_list_length(list) + 1) * sizeof(char*)))) {
 						void *ptr = 0;
 						int p = 0;
-						while (buddy = ship_list_next(list, &ptr))
+						while ((buddy = ship_list_next(list, &ptr)))
 							subs[p++] = buddy->sip_aor;
 						
 						sipp_buddy_handle_subscribes(ident, subs, expire, "");
 						freez(subs);
 					}
-					while (buddy = ship_list_pop(list))
+					while ((buddy = ship_list_pop(list)))
 						ident_contact_free(buddy);
 				}
 				ship_list_free(list);
@@ -1552,7 +1539,7 @@ sipp_handle_message_do(sipp_request_t *req)
 		} else {
 			/* todo: get id & event & to-header 'tag' parameter */
 			char *callid;
-			if (callid = sipp_get_call_id(sip)) {
+			if ((callid = sipp_get_call_id(sip))) {
 				if (sipp_buddy_handle_subscribe(ident, fulltourl, expire, callid)) {
 					ret = 500;
 				} else {
@@ -1574,9 +1561,6 @@ sipp_handle_message_do(sipp_request_t *req)
 		LOG_DEBUG("detected keep-alive options\n");
 		ret = 200;
         } else {
-                osip_via_t *via = NULL;
-		osip_route_t *rt = 0;
-
 		/* ok, these are all messages that will be forwarded
 		   to the other peer */
 
@@ -1790,7 +1774,7 @@ sipp_create_sip_response(osip_message_t **dest, int status, osip_message_t *requ
 			if (!osip_message_get_contact(request, 0, &c) && 
 			    !osip_uri_to_str_canonical(c->url, &c_str)) {
 				osip_message_set_contact(response, c_str);
-			} else if (c_str = mallocz(1024)) {
+			} else if ((c_str = mallocz(1024))) {
 				snprintf(c_str, 1024, "sip:%s@localhost", request->req_uri->username);
 				osip_message_set_contact(response, c_str);
 			}
@@ -1848,7 +1832,7 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 		if (!ident_addr_addr_to_sa(to, &sa, &salen)) {
 			s = netio_connto(sa, salen, sipp_cb_tcpconn);
 			
-			if (lis = sipp_listener_new_queued(to, buf, len)) {
+			if ((lis = sipp_listener_new_queued(to, buf, len))) {
 				lis->socket = s;
 				ship_list_add(sipp_all_listeners, lis);
 			} else {
@@ -1868,7 +1852,7 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 		sipp_listener_t *lis = NULL;
 		void *ptr = NULL;
 		ship_lock(sipp_all_listeners); {
-			while (lis = (sipp_listener_t *)ship_list_next(sipp_all_listeners, &ptr)) {
+			while ((lis = (sipp_listener_t *)ship_list_next(sipp_all_listeners, &ptr))) {
 				if (lis->addr.type == to->type)
 					break;
 				lis = NULL;
@@ -1910,7 +1894,7 @@ sipp_send_sip_to_ident(osip_message_t *sip, ident_t *ident, addr_t *from)
 	int len, ret;
 
 	/* create the msg */
-	if (osip_message_to_str(sip, &buf, &len)) {
+	if (osip_message_to_str(sip, &buf, (unsigned int*)&len)) {
 		LOG_ERROR("Could not serialize sip message! Message dropped!\n");
 	} else {
 		LOG_VDEBUG("Sending message:\n>>>>>\n%s\n<<<<<\n", buf);
@@ -1955,7 +1939,6 @@ static int
 sipp_check_and_mark(osip_message_t *sip, char *prefix, int code)
 {
 	/* create the string */
-	char *cseqm = 0, *cseqn = 0, *totag = 0, *fromtag = 0;
 	char *callid = 0;
         osip_generic_param_t *tag = 0;
 	time_t *now = 0;
@@ -2001,7 +1984,7 @@ sipp_check_and_mark(osip_message_t *sip, char *prefix, int code)
 	}
 
 	/* callid */
-	if (callid = sipp_get_call_id(sip)) {
+	if ((callid = sipp_get_call_id(sip))) {
 		ASSERT_TRUE((tmp = append_str(",id:", str, &size, &len)) && (str = tmp), err);
 		ASSERT_TRUE((tmp = append_str(callid, str, &size, &len)) && (str = tmp), err);
 	}
@@ -2013,7 +1996,7 @@ sipp_check_and_mark(osip_message_t *sip, char *prefix, int code)
 	ship_lock(prox_resps);
 
 	/* remove all over 60 sec old ones */
-	while (e = ship_list_next(prox_resps, &ptr)) {
+	while ((e = ship_list_next(prox_resps, &ptr))) {
 		if ((*now) - (*((time_t*)e->value)) > 60) {
 			ship_list_remove(prox_resps, e);
 			freez(e->value);
@@ -2246,7 +2229,6 @@ sipp_call_log_record(char *local_aor, char *remote_aor,
 	int size = 0, len = 0;
 	call_log_entry_t *e = 0;
 	time_t now;
-	char *default_status = "-";
 
 	if (!evt || !(sip = evt->sip) || MSG_IS_RESPONSE(sip))
 		return;
@@ -2296,7 +2278,7 @@ sipp_call_log_record(char *local_aor, char *remote_aor,
 		char *status = 0;
 		
 		/* set the trustparams as they were when the verdict was made.. */
-		if (params = trustman_get_valid_trustparams(remote_aor, local_aor)) {
+		if ((params = trustman_get_valid_trustparams(remote_aor, local_aor))) {
 			e->pathlen = params->pathfinder_len;
 			ship_unlock(params->queued_packets);
 		} else

@@ -182,8 +182,11 @@ int ship_locked(void *lock);
 
 #define COND_WAITUNTIL_MS(cond, lock, timeout) \
     {\
+            struct timeval tv;\
             struct timespec ts;\
-            gettimeofday(&ts, 0);\
+            gettimeofday(&tv, 0);\
+            ts.tv_sec = tv.tv_sec;\
+            ts.tv_nsec = tv.tv_usec;\
             ts.tv_sec += ((timeout) / 1000);\
             ts.tv_nsec += (((timeout) % 1000) * 1000000);\
             if (ts.tv_nsec > 1000000000) {\
@@ -412,7 +415,7 @@ typedef ship_list_t ship_obj_list_t;
 #define ship_obj_list_new() ship_list_new()
 #define ship_obj_list_remove(list, obj) { void *__o = ship_list_remove(list, obj); ship_obj_unref(__o); }
 #define ship_obj_list_free(list) { ship_obj_t *_obj; while (list && (_obj = ship_list_pop(list))) { ship_obj_unref(_obj); } ship_list_free(list); }
-#define ship_obj_list_clear(list) { ship_obj_t *_obj; while (_obj = ship_list_pop(list)) { ship_obj_unref(_obj); } }
+#define ship_obj_list_clear(list) { ship_obj_t *_obj; while ((_obj = ship_list_pop(list))) { ship_obj_unref(_obj); } }
 
 #if 0
 /*
@@ -533,6 +536,8 @@ void debug2_check_restricts(int thread, const char *file, const char *func, int 
 
 #endif
 
+void ship_list_deinit(ship_list_t *list);
+int ship_list_init(ship_list_t *ret);
 void __NON_INSTRUMENT_FUNCTION__ ship_lock_free(ship_lock_t *lock);
 int __NON_INSTRUMENT_FUNCTION__ ship_lock_new(ship_lock_t *lock);
 
@@ -621,6 +626,9 @@ void __NON_INSTRUMENT_FUNCTION__ ship_ht_clear(ship_ht_t *ht);
 void __NON_INSTRUMENT_FUNCTION__ ship_ht_empty_free(ship_ht_t *ht);
 ship_list_t * __NON_INSTRUMENT_FUNCTION__ ship_ht_values(ship_ht_t *ht);
 ship_list_t * __NON_INSTRUMENT_FUNCTION__ ship_ht_keys(ship_ht_t *ht);
+void ship_ht_keys_add(ship_ht_t *ht, ship_list_t *ret);
+void *ship_ht_get_ptr(ship_ht_t *ht, const void *key);
+void *ship_ht_put_ptr(ship_ht_t *ht, void *key, void *val);
 
 /* these are 2-dim hashtables. really innefficiently implemented right
    now (hashtable with hashtable entries) */
@@ -636,6 +644,7 @@ void __NON_INSTRUMENT_FUNCTION__ ship_tokens_free(char **tokens, int len);
 int __NON_INSTRUMENT_FUNCTION__ ship_tokens_replace(char **tokens, char *str, int pos);
 int __NON_INSTRUMENT_FUNCTION__ ship_tokenize(const char *str, int len, char ***tokens, int *toklen, char token);
 int __NON_INSTRUMENT_FUNCTION__ ship_tokenize_trim(const char *str, int len, char ***tokens, int *toklen, char token);
+int ship_find_token(char *str, char *token, char limiter);
 
 /* flattens an array of strings */
 char *__NON_INSTRUMENT_FUNCTION__ ship_untokenize(char **tokens, int toklen, const char *token, const char *prefix);
@@ -652,6 +661,7 @@ char *__NON_INSTRUMENT_FUNCTION__ memmem_after(char *str, int len, char *token, 
 char *__NON_INSTRUMENT_FUNCTION__ append_mem(const char *str, int strlen, char *buf, int *buflen, int *datalen);
 char *__NON_INSTRUMENT_FUNCTION__ append_str(const char *str, char *buf, int *buflen, int *datalen);
 char *combine_str(const char *str1, const char *str2);
+char *replace_end(char *str, int *buflen, int *datalen, char *end, char *newend);
 
 #define zstrcat(target, source) if (source && target) { strcat(target, source); }
 #define zstrlen(str) (str? strlen(str):0)
@@ -671,7 +681,8 @@ time_t ship_parse_time(char *str);
 int ship_format_time(time_t time, char* buf, size_t len);
 int ship_format_time_human(time_t time, char* buf, size_t len);
 
-char *strndup(const char *s, size_t n);
+//char *strndup(const char *s, size_t n);
+char *strdupz(const char *str);
 
 /**
  * file / path handling functions
@@ -679,6 +690,15 @@ char *strndup(const char *s, size_t n);
 int ship_get_homedir_file(char *filename, char **target);
 int ship_ensure_file(char *filename, char *initial_data);
 ship_list_t* ship_list_dir(const char *dir, const char *pattern, const int fullpath);
+int ship_ensure_dir(char *filename);
+int ship_read_file(char *filename, void *data,
+		   void (*cb_content_line) (void *data, int lc, char *key, char *value, char *line),
+		   void (*cb_ignore_line) (void *data, int lc, char *content, char *line));
+int ship_read_mem(char *buf, int buflen, void *data,
+		  void (*cb_content_line) (void *data, int lc, char *key, char *value, char *line),
+		  void (*cb_ignore_line) (void *data, int lc, char *content, char *line));
+int ship_load_file(const char* file, char **rbuf, int *len);
+int ship_move(const char *from, const char *to);
 
 /**
  * Cryto functions 
@@ -702,6 +722,8 @@ RSA *ship_create_private_key();
 X509 *ship_sign(char *subject, int ttl, RSA* signer_key);
 
 int fwrite_all(const char *data, const int len, FILE *f);
+
+int ship_get_random(unsigned char *random, size_t len);
 
 /**
  * xml handling

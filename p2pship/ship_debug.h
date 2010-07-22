@@ -95,10 +95,12 @@ enum {
     exit(1);}
 
 #define ASSERT_TRUE(val, lab, arg...) \
-    { long __tmp = (long)(val); if (!(__tmp)) { LOG_ASSERT("Assert failed @ %s:%d, not TRUE (%d)\n", __FILE__, __LINE__, __tmp); goto lab; }}
+	{ long __tmp = (long)(val); if (!(__tmp)) { LOG_ASSERT("Assert failed @ %s:%d, not TRUE (%d)\n", __FILE__, __LINE__, __tmp); goto lab; }}
 
 #define ASSERT_ZERO(val, lab) \
-    { long __tmp = (long)(val); if (__tmp) { LOG_ASSERT("Assert failed @ %s:%d, not ZERO (%d)\n", __FILE__, __LINE__, __tmp); goto lab; }}
+	{ long __tmp = (long)(val); if ((__tmp)) { LOG_ASSERT("Assert failed @ %s:%d, not ZERO (%d)\n", __FILE__, __LINE__, __tmp); goto lab; }}
 
+
+int ship_debug_dump_json(char **msg);
     
 #endif

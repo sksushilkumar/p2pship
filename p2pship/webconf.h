@@ -22,5 +22,6 @@
 #include "ship_utils.h"
 
 char* webconf_get_json(const char *url);
+void webconf_register();
 
 #endif

@@ -20,6 +20,9 @@
 #include "olclient.h"
 #include "netio_http.h"
 #include "ext_api.h"
+#include "conn.h"
+#include "netio.h"
+#include "netio_http.h"
 
 static ship_ht_t *pymod_config_updaters = 0;
 static ship_ht_t *pymod_http_servers = 0;
@@ -202,7 +205,7 @@ p2pship_set_name(PyObject *self, PyObject *args)
 	if (!PyArg_ParseTuple(args, "s", &str))
 		return NULL;
 	
-	if (state = pymod_get_current_state()) {
+	if ((state = pymod_get_current_state())) {
 		freez(state->name);
 		state->name = strdup(str);
 	}
@@ -217,7 +220,7 @@ p2pship_get_name(PyObject *self, PyObject *args)
 	pymod_state_t *state = NULL;
 	PyObject *ret = 0;
 	
-	if (state = pymod_get_current_state()) {
+	if ((state = pymod_get_current_state())) {
 		ret = Py_BuildValue("s", state->name);
 		return ret;
 	}
@@ -236,7 +239,7 @@ p2pship_log(PyObject *self, PyObject *args)
 	if (!PyArg_ParseTuple(args, "is", &level, &str))
 		return NULL;
 	
-	if (state = pymod_get_current_state())
+	if ((state = pymod_get_current_state()))
 		LOG_CUSTOM(level, "PythonApp(%s): %s", state->name, str);
 	Py_INCREF(Py_None);
 	return Py_None;
@@ -339,7 +342,7 @@ p2pship_call_ipc_handler(PyObject *self, PyObject *args)
 
 	error = "Error executing IPC";
 	oldstate = PyThreadState_Get();
-	sprintf(id, "0x%08x", oldstate);
+	sprintf(id, "0x%08x", (unsigned int)oldstate);
 	ASSERT_TRUE(arglist = Py_BuildValue("(ssO)", name, id, data), err);
 
 	PyThreadState_Swap(h->tstate);
@@ -375,7 +378,7 @@ static char*
 pymod_get_config_key(const char *key)
 {
   	char *k2 = NULL;
-	if (k2 = mallocz(strlen(key) + strlen(pymod_config_key_prefix) + 2)) {
+	if ((k2 = mallocz(strlen(key) + strlen(pymod_config_key_prefix) + 2))) {
 		sprintf(k2, pymod_config_key_prefix "%s", key);
 	} else {
 		PyErr_SetString(PyExc_MemoryError, "Memory depleted");
@@ -468,7 +471,7 @@ pymod_config_update(processor_config_t *c, char *k, char *v)
 	pymod_ipc_handler_t *h = 0;
 	PyObject *result = 0, *arglist = 0;
 
-	if (h = ship_ht_get_string(pymod_config_updaters, k)) {
+	if ((h = ship_ht_get_string(pymod_config_updaters, k))) {
 		// call the function..
 		ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
 		ASSERT_TRUE(arglist = Py_BuildValue("(ss)", pymod_strip_config_key(k), v), err);
@@ -487,8 +490,8 @@ p2pship_config_set_update(PyObject *self, PyObject *args)
 {
 	const char *key = 0;
  	char *k2 = NULL;
-	pymod_ipc_handler_t *h = 0, *oldh = 0;
-	PyObject *func = NULL, *oldfunc = NULL;
+	pymod_ipc_handler_t *h = 0;
+	PyObject *func = NULL;
 	
 	if (!PyArg_ParseTuple(args, "sO:config_set_update", &key, &func))
 		goto err;
@@ -539,6 +542,7 @@ pymod_service_data_received(char *data, int data_len,
 	Py_DECREF(result);
  err:
 	pymod_tstate_return();
+	return 0;
 }
 
 /* this notifies the service handler that the service is being closed */
@@ -599,7 +603,7 @@ p2pship_service_register_default(PyObject *self, PyObject *args)
 	ASSERT_TRUE(ipc = pymod_ipc_new(name, callback, callback2), err);
 
 	/* use the old one? ok.. */
-	if (s = ship_ht_get_int(pymod_default_services, t)) {
+	if ((s = ship_ht_get_int(pymod_default_services, t))) {
 		pymod_ipc_free(s->handler);
 		s->handler = ipc;
 		s->service.service_handler_id = ipc->name;
@@ -610,7 +614,7 @@ p2pship_service_register_default(PyObject *self, PyObject *args)
 	}
 
 	/* create an unique-enough name */
-	sprintf(s->handler->name, "py_service_%08x", s);
+	sprintf(s->handler->name, "py_service_%08x", (unsigned int)s);
 	
 	Py_INCREF(Py_None);
 	return Py_None;
@@ -751,9 +755,9 @@ p2pship_http_respond(PyObject *self, PyObject *args)
 	if (req) {
 		char *msg = 0;
 		int msglen = 0;
-		if (!netio_http_create_response(code, code_str, 
-						content_type,
-						body, body_len,
+		if (!netio_http_create_response(code, (char*)code_str, 
+						(char*)content_type,
+						(char*)body, body_len,
 						&msg, &msglen)) {
 			extapi_http_data_return(req, msg, msglen);
 		} else {
@@ -763,9 +767,9 @@ p2pship_http_respond(PyObject *self, PyObject *args)
 	} else {
 		ASSERT_TRUE(conn = netio_http_get_conn_by_socket(s), merr);
 		netio_http_respond(conn, 
-				   code, code_str, 
-				   content_type,
-				   body, body_len);
+				   code, (char*)code_str, 
+				   (char*)content_type,
+				   (char*)body, body_len);
 		ship_unlock(conn);
 	}
 	Py_INCREF(Py_None);
@@ -789,7 +793,6 @@ static int
 pymod_http_process_req2(netio_http_conn_t *conn, void *pkg, extapi_http_req_t *req)
 {
 	pymod_ipc_handler_t *h = (pymod_ipc_handler_t *)pkg;
-	PyObject *ret = 0;
 	int funcret = -1;
 	ship_list_t *l = 0;
 	char *k = 0, *v = 0;
@@ -817,8 +820,8 @@ pymod_http_process_req2(netio_http_conn_t *conn, void *pkg, extapi_http_req_t *r
 
 	ASSERT_TRUE(params = Py_BuildValue("{}"), err);
 	ASSERT_TRUE(l = netio_http_conn_get_param_keys(conn), err);
-	while (k = ship_list_pop(l)) {
-		if (v = netio_http_conn_get_param(conn, k)) {
+	while ((k = ship_list_pop(l))) {
+		if ((v = netio_http_conn_get_param(conn, k))) {
 			ASSERT_TRUE(key = Py_BuildValue("s", k), err);
 			ASSERT_TRUE(val = Py_BuildValue("s", v), err);
 			ASSERT_TRUE(PyObject_SetItem(params, key, val) != -1, err);
@@ -831,8 +834,8 @@ pymod_http_process_req2(netio_http_conn_t *conn, void *pkg, extapi_http_req_t *r
 
 	ASSERT_TRUE(headers = Py_BuildValue("{}"), err);
 	ASSERT_TRUE(l = netio_http_conn_get_header_keys(conn), err);
-	while (k = ship_list_pop(l)) {
-		if (v = netio_http_get_header(conn, k)) {
+	while ((k = ship_list_pop(l))) {
+		if ((v = netio_http_get_header(conn, k))) {
 			ASSERT_TRUE(key = Py_BuildValue("s", k), err);
 			ASSERT_TRUE(val = Py_BuildValue("s", v), err);
 			ASSERT_TRUE(PyObject_SetItem(headers, key, val) != -1, err);
@@ -891,7 +894,7 @@ p2pship_http_register(PyObject *self, PyObject *args)
 	
 	if (strchr(addr, '@')) {
 		char *tmp = 0, *pos = 0;
-		if (tmp = strdup(addr))
+		if ((tmp = strdup(addr)))
 			pos = strchr(tmp, ':');
 		if (pos) {
 			pos[0] = 0;
@@ -904,7 +907,7 @@ p2pship_http_register(PyObject *self, PyObject *args)
 		}
 		freez(tmp);
 	} else {
-		s = netio_http_server_create(addr, pymod_http_process_req, h);
+		s = netio_http_server_create((char*)addr, pymod_http_process_req, h);
 	}
 	if (s != -1) {
 		ship_ht_put_int(pymod_http_servers, s, h);
@@ -927,7 +930,7 @@ p2pship_http_modif(PyObject *self, PyObject *args)
 	if (!PyArg_ParseTuple(args, "is:http_modif", &handle, &addr))
 		goto err;
 
-	if (netio_http_server_modif(handle, addr)) {
+	if (netio_http_server_modif(handle, (char*)addr)) {
 		PyErr_SetString(PyExc_EnvironmentError, "Could not reassign server");
 	}
 
@@ -1048,7 +1051,6 @@ static
 void pymod_ol_close(struct olclient_module* mod)
 {
 	pymod_ol_handler_t *h = 0;
-	PyObject *arglist;
 	PyObject *result;
 	int ret = -1;
 
@@ -1151,14 +1153,13 @@ p2pship_ol_data_got(PyObject *self, PyObject *args)
 {
 	char *id = 0, *data = 0;
 	int code = -1;
-	PyObject *ret = 0;
 	olclient_get_task_t *task = 0;
 	
 	if (!PyArg_ParseTuple(args, "si|s", &id, &code, &data))
 		return NULL;
 	
 	ship_lock(pymod_ol_gets);
-	if (task = ship_ht_get_string(pymod_ol_gets, id)) {
+	if ((task = ship_ht_get_string(pymod_ol_gets, id))) {
 		if (task->callback) {
 			task->callback((data? strdup(data):NULL), code, task);//->lookup, wait->mod);
 			if (code < 1) {
@@ -1234,8 +1235,8 @@ initp2pship(void)
 
 	ASSERT_TRUE(dir = processor_config_string(processor_get_config(), P2PSHIP_CONF_PYTHON_LIB_DIR), err);
 	ASSERT_TRUE(list = ship_list_dir(dir, "*.py", 1), err);
-	while (fn = ship_list_pop(list)) {
-		if (fp = fopen(fn, "r")) {
+	while ((fn = ship_list_pop(list))) {
+		if ((fp = fopen(fn, "r"))) {
 			LOG_DEBUG("loading python library '%s'..\n", fn);
 			PyRun_SimpleFile(fp, fn);
 			fclose(fp);
@@ -1276,7 +1277,7 @@ pymod_init(processor_config_t *config)
 
 	/* get the main thread state */
 	mainThreadState = PyThreadState_Get();
-	if (state = pymod_state_new("<shell>", mainThreadState, NULL))
+	if ((state = pymod_state_new("<shell>", mainThreadState, NULL)))
 		ship_ht_put_ptr(pymod_states, state->tstate, state);
 
 	pymod_alive = 1;
@@ -1285,7 +1286,7 @@ pymod_init(processor_config_t *config)
 	/* load scripts */
 	ASSERT_TRUE(dir = processor_config_string(processor_get_config(), P2PSHIP_CONF_PYTHON_SCRIPTS_DIR), err);
 	ASSERT_TRUE(list = ship_list_dir(dir, "*.py", 1), err);
-	while (fn = ship_list_pop(list)) {
+	while ((fn = ship_list_pop(list))) {
 		ASSERT_ZERO(pymod_run_file(fn), err);
 		freez(fn);
 	}
@@ -1316,31 +1317,31 @@ pymod_close()
 	ship_list_free(pymod_ol_clients);
 	pymod_ol_clients = NULL;
 
-	while (task = ship_ht_pop(pymod_ol_gets)) {
+	while ((task = ship_ht_pop(pymod_ol_gets))) {
 		ship_obj_unref(task);
 	}
 	ship_ht_free(pymod_ol_gets);
 	pymod_ol_gets = NULL;
 
-	while (ptr = ship_ht_pop(pymod_ipc_handlers))
+	while ((ptr = ship_ht_pop(pymod_ipc_handlers)))
 		pymod_ipc_free(ptr);
 	ship_ht_free(pymod_ipc_handlers);
 
-	while (ptr = ship_ht_pop(pymod_config_updaters))
+	while ((ptr = ship_ht_pop(pymod_config_updaters)))
 		pymod_ipc_free(ptr);
 	ship_ht_free(pymod_config_updaters);
 
 	// unregister these?
-	while (ptr = ship_ht_pop(pymod_http_servers))
+	while ((ptr = ship_ht_pop(pymod_http_servers)))
 		pymod_ipc_free(ptr);
 	ship_ht_free(pymod_http_servers);
 
-	while (ptr = ship_ht_pop(pymod_states))
+	while ((ptr = ship_ht_pop(pymod_states)))
 		pymod_state_free(ptr);
 	ship_ht_free(pymod_states);
 	pymod_states = NULL;
 
-	while (ptr = ship_ht_pop(pymod_default_services))
+	while ((ptr = ship_ht_pop(pymod_default_services)))
 		pymod_service_free(ptr);
 	ship_ht_free(pymod_default_services);
 
@@ -1393,10 +1394,10 @@ pymod_run_file_thread(processor_worker_t *w)
 	FILE *fp = 0;
 	pymod_state_t *state = NULL;
 
-	if (fp = fopen(fn, "r")) {
+	if ((fp = fopen(fn, "r"))) {
 		PyThreadState *myThreadState = NULL;
-		PyInterpreterState *mainInterpreterState = NULL;
-		
+		//PyInterpreterState *mainInterpreterState = NULL;
+
 		/* Create a local thread state for each new thread */
 		PyEval_AcquireLock();
 
@@ -1411,7 +1412,7 @@ pymod_run_file_thread(processor_worker_t *w)
 #endif
 		w->extra = myThreadState;
 
-		if (state = pymod_state_new(fn, myThreadState, NULL))
+		if ((state = pymod_state_new(fn, myThreadState, NULL)))
 			ship_ht_put_ptr(pymod_states, state->tstate, state);
 
 		initp2pship();

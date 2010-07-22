@@ -58,6 +58,7 @@ SHIP_INCLUDE_TYPE(sipp_request);
 
 /* inits & fires up the sip proxy sub-system */
 int sipp_init(processor_config_t *config);
+void sipp_register();
 
 /* closes the sip proxy sub-system */
 void sipp_close();
@@ -111,4 +112,8 @@ typedef struct sipp_relay_s {
 } sipp_relay_t;
 
 #endif
+
+int sipp_buddy_handle_subscribe(ident_t *from, char *to, int expire, char *callid);
+int sipp_buddy_handle_subscribes(ident_t *from, char **to, int expire, char *callid);
+
 #endif

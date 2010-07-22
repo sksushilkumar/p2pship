@@ -16,7 +16,7 @@ done
 while [ 1 ]; do
     if [ ! -z "$hip" ]; then
 	echo "starting HIP"
-        sudo hipd -k &
+        sudo hipd -kb
 	sleep 1
     fi
     if [ ! -z "$hip_nat" ]; then

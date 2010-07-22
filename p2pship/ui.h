@@ -19,6 +19,8 @@
 #ifndef __UI_H__
 #define __UI_H__
 
+#include "ident.h"
+
 #define ui_define_operation(func_name, func_string, func_args, call_args) \
 int func_name func_args\
 {\
@@ -35,7 +37,32 @@ int func_name func_args\
 
 void ui_reg_handler(char *func_name, void *func);
 void ui_register();
+void ui_stdin_register();
 
+int ui_query_ident_operation(const ident_t *ident, const char *operation, 
+			     const char* true_op, const char *false_op);
 
+int ui_query_ca_operation(const ca_t *cert, const char *operation, 
+			  const char* true_op, const char *false_op);
+
+int ui_open_frontpage();
+
+int _ui_print_error(char *buf);
+
+int _ui_print_import_result(char *buf);
+
+int _ui_popup(char *buf);
+
+int ui_query_import_contacts(ship_list_t *list);
+
+int ui_query_simple(char *header, char *body, char *true_op, char *false_op);
+
+int ui_query_three(char *header, char *body, char *one_op, char *two_op, char *three_op);
+
+void ui_popup(const char *template, ...);
+
+void ui_print_import_result(const char *template, ...);
+
+void ui_print_error(const char *template, ...);
 
 #endif

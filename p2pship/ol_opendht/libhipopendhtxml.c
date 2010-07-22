@@ -74,10 +74,10 @@ int build_packet_rm(unsigned char * key,
     xml_node = xmlNewChild(xml_root, NULL, BAD_CAST "params", NULL);
     xml_new_param(xml_node, "base64", (char *)key64);
     xml_new_param(xml_node, "base64", (char *)hash);
-    xml_new_param(xml_node, "string", BAD_CAST "SHA");
+    xml_new_param(xml_node, "string", (char*)BAD_CAST "SHA");
     xml_new_param(xml_node, "base64", (char *)secret64);
     xml_new_param(xml_node, "int", ttl_str);
-    xml_new_param(xml_node, "string", BAD_CAST "HIPL");
+    xml_new_param(xml_node, "string", (char*)BAD_CAST "HIPL");
     xmlDocDumpFormatMemory(xml_doc, &xml_buffer, &xml_len, 0);
 
     memset(out_buffer, '\0', sizeof(out_buffer));
@@ -137,7 +137,7 @@ int build_packet_put_rm(unsigned char * key,
     char secret_hash[21];
     memset(secret_hash, '\0', sizeof(secret_hash));
 
-    sha_retval = (unsigned char *)SHA1(secret, secret_len, secret_hash);
+    sha_retval = (unsigned char *)SHA1(secret, secret_len, (unsigned char*)secret_hash);
     if (!sha_retval) {
 	    LOG_ERROR("SHA1 error when creating hash of the secret for the removable put\n");
             return(-1);
@@ -176,7 +176,7 @@ int build_packet_put_rm(unsigned char * key,
         }
 
     xml_new_param(xml_node_skip, "int", ttl_str);  
-    xml_new_param(xml_node_skip, "string", BAD_CAST "HIPL");
+    xml_new_param(xml_node_skip, "string", (char*)BAD_CAST "HIPL");
     xmlDocDumpFormatMemory(xml_doc, &xml_buffer, &xml_len, 0);
 
     memset(out_buffer, '\0', sizeof(out_buffer));
@@ -245,7 +245,7 @@ int build_packet_put(unsigned char * key,
     xml_new_param(xml_node, "base64", (char *)value64);
 
     xml_new_param(xml_node, "int", (char*)&ttl_str);  
-    xml_new_param(xml_node, "string", BAD_CAST "HIPL");
+    xml_new_param(xml_node, "string", (char*)BAD_CAST "HIPL");
     xmlDocDumpFormatMemory(xml_doc, &xml_buffer, &xml_len, 0);
     //xmlCleanupParser();
 
@@ -299,7 +299,7 @@ int build_packet_get(unsigned char * key,
     xml_new_param(xml_node, "base64", (char *)key64);
     xml_new_param(xml_node, "int", "10");	/* maxvals */
     xml_new_param(xml_node, "base64", "");	/* placemark */ 
-    xml_new_param(xml_node, "string", BAD_CAST "HIPL");
+    xml_new_param(xml_node, "string", (char*)BAD_CAST "HIPL");
     xmlDocDumpFormatMemory(xml_doc, &xml_buffer, &xml_len, 0);
 
     memset(out_buffer, '\0', sizeof(out_buffer));
@@ -463,7 +463,7 @@ int read_packet_content2(char * in_buffer, char *** out_value)
 					    
 					    tmp2 = (char*)malloc(j+1);
 					    if (tmp2) {
-						    evpret = EVP_DecodeBlock((unsigned char *)tmp2, tmp, j);
+						    evpret = EVP_DecodeBlock((unsigned char *)tmp2, (unsigned char*)tmp, j);
 						    if (evpret > 0) {
 							    tmp2[evpret] = '\0';
 							    ship_list_add(tmplist, tmp2);
@@ -676,7 +676,7 @@ int read_packet_content(char * in_buffer, char * out_value)
 				 if (strchr(base64_chars, xml_data[i]))
 					 tmp[j++] = xml_data[i];
 			 }
-			 evpret = EVP_DecodeBlock((unsigned char *)out_value, tmp, j);
+			 evpret = EVP_DecodeBlock((unsigned char *)out_value, (unsigned char*)tmp, j);
 			 if (evpret > 0) {
 				 out_value[evpret] = '\0';
 				 ret = 0;

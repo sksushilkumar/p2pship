@@ -24,6 +24,8 @@
 #include <netinet/ip.h>
 #include <arpa/inet.h>
 #include "services.h"
+#include "conn.h"
+#include "netio.h"
 
 extern ship_list_t *sipp_mps;
 static ship_list_t *mp_infos = 0;
@@ -35,7 +37,7 @@ static char *
 sipp_mp_create_mp_info_str(char *aor, addr_t *addr)
 {
 	char *buf = 0;
-	if (buf = mallocz(strlen(aor) + strlen(addr->addr) + 32)) {
+	if ((buf = mallocz(strlen(aor) + strlen(addr->addr) + 32))) {
 		strcpy(buf, aor);
 		strcat(buf, ";[");
 		strcat(buf, addr->addr);
@@ -54,7 +56,7 @@ sipp_mp_info_handle_message(char *data, int data_len,
 	if (pos && !strncmp(data, source, pos-data)) {
 		char *tmp = 0;
 		LOG_DEBUG("got mp fragmentation support notification: %s\n", data);
-		if (tmp = mallocz(data_len+1)) {
+		if ((tmp = mallocz(data_len+1))) {
 			memcpy(tmp, data, data_len);
 			ship_list_add(mp_infos, tmp);
 
@@ -121,7 +123,7 @@ sipp_mp_clean_by_id(char *aor)
                 void *prev = NULL;
                 sipp_media_proxy_t *mp;
                 
-                while (mp = ship_list_next(sipp_mps, &ptr)) {
+                while ((mp = ship_list_next(sipp_mps, &ptr))) {
                         if (!strcmp(aor, mp->sip_aor)) {
                                 ship_list_remove(sipp_mps, mp);
                                 sipp_mp_close(mp);
@@ -142,7 +144,7 @@ sipp_mp_clean_by_call(char* callid)
                 void *prev = NULL;
                 sipp_media_proxy_t *mp;
                 
-                while (mp = ship_list_next(sipp_mps, &ptr)) {
+                while ((mp = ship_list_next(sipp_mps, &ptr))) {
                         if (!strcmp(mp->callid, callid)) {
                                 ship_list_remove(sipp_mps, mp);
                                 sipp_mp_close(mp);
@@ -203,7 +205,7 @@ sipp_mp_cb_data_got(int s, char *data, size_t len,
 {
         sipp_media_proxy_t *mp;
 	int err = 0;
-        if (mp = sipp_mp_find_by_socket(s)) {
+        if ((mp = sipp_mp_find_by_socket(s))) {
                 ident_t *ident;
 
                 if (!mp->started)
@@ -224,7 +226,7 @@ sipp_mp_cb_data_got(int s, char *data, size_t len,
 			}
 #endif			
 		case SIPP_MP_SENDBY_TUNNEL: 
-			if (ident = ident_find_by_aor(mp->sip_aor)) {
+			if ((ident = ident_find_by_aor(mp->sip_aor))) {
 				addr_t addr;
 				if (!ident_addr_sa_to_addr(sa, len, &addr) &&
 				    conn_send_mp_to(mp->remote_aor, ident,
@@ -336,7 +338,7 @@ sipp_mp_notify_fragmentation_support(sipp_media_proxy_t *mp)
 {
 	char *buf = 0;
 	int ret = -1;
-	if (buf = sipp_mp_create_mp_info_str(mp->sip_aor, &mp->local_addr)) {
+	if ((buf = sipp_mp_create_mp_info_str(mp->sip_aor, &mp->local_addr))) {
 		LOG_DEBUG("sending mp support on %s\n", buf);
 		ret = conn_queue_to_peer(mp->remote_aor, mp->sip_aor,
 					 SERVICE_TYPE_MP_INFO,
@@ -565,12 +567,12 @@ sipp_mp_dump_json(char **msg)
 	char *tmpaddr1 = 0, *tmpaddr2 = 0, *tmp = 0;
 	ship_list_t *callids = 0;
 	char *str = 0;
-	
+	int ret = -1;
 	ship_lock(sipp_mps);
 	
 	/* collect callids */
 	ASSERT_TRUE(callids = ship_list_new(), err);
-	while (mp = ship_list_next(sipp_mps, &ptr)) {
+	while ((mp = ship_list_next(sipp_mps, &ptr))) {
 		int found = 0;
 		while (!found && (str = ship_list_next(callids, &ptr2))) {
 			if (!strcmp(str, mp->callid))
@@ -585,13 +587,13 @@ sipp_mp_dump_json(char **msg)
 	/* for each call id .. */
 	ASSERT_TRUE(buf = append_str("var p2pship_mps = {\n", buf, &buflen, &datalen), err);
 	ptr2 = 0;
-	while (str = ship_list_next(callids, &ptr2)) {
+	while ((str = ship_list_next(callids, &ptr2))) {
 		ASSERT_TRUE(buf = append_str("     \"", buf, &buflen, &datalen), err);
 		ASSERT_TRUE(buf = append_str(str, buf, &buflen, &datalen), err);
 		ASSERT_TRUE(buf = append_str("\" : [\n", buf, &buflen, &datalen), err);
 
 		ptr = 0;
-		while (mp = ship_list_next(sipp_mps, &ptr)) {
+		while ((mp = ship_list_next(sipp_mps, &ptr))) {
 			int len = 0;
 			
 			if (!strcmp(mp->callid, str)) {
@@ -605,7 +607,7 @@ sipp_mp_dump_json(char **msg)
 				sprintf(tmp, "         [ \"%s\", \"%s\", \"%s\", \"%s\", \"%s\",\n           \"%s\", \"%s\", \"%d\", \"%d\", \"%d\", \"%d\" ],\n",
 					mp->sip_aor, tmpaddr1, mp->remote_aor, tmpaddr2, sipp_mp_sendby_str(mp->sendby),
 					mp->callid, mp->mediatype,
-					mp->started, mp->start_time, mp->last, mp->counter);
+					mp->started, (int)mp->start_time, (int)mp->last, mp->counter);
 				
 				ASSERT_TRUE(buf = append_str(tmp, buf, &buflen, &datalen), err);
 				freez(tmp);
@@ -621,6 +623,7 @@ sipp_mp_dump_json(char **msg)
 	ASSERT_TRUE(buf = append_str("};\n", buf, &buflen, &datalen), err);
 	*msg = buf;
 	buf = 0;
+	ret = 0;
  err:
 	ship_unlock(sipp_mps);
 	ship_list_free(callids);
@@ -628,4 +631,5 @@ sipp_mp_dump_json(char **msg)
 	freez(tmpaddr1);
 	freez(tmpaddr2);
 	freez(tmp);
+	return ret;
 }

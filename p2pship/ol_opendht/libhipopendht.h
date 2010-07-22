@@ -42,7 +42,30 @@ int opendht_get(unsigned char * key,
 		void *param);
 void opendht_close();
 int opendht_init(char* addr, void (*callback) (char *gateway, int port, int status));
+int opendht_rm(char *key,
+	       char *hash,
+	       char *secret);
 
+int read_packet_content2(char * in_buffer, char *** out_value);
+int build_packet_put_rm(unsigned char * key, 
+			int key_len,
+			unsigned char * value,
+			int value_len, 
+			unsigned char *secret,
+			int secret_len,
+			int port,
+			unsigned char * host_ip,
+			char * out_buffer,
+			int ttl);
+int build_packet_rm(unsigned char * key, 
+                    int key_len,
+                    unsigned char * hash,
+                    unsigned char * secret,
+                    int secret_len,
+                    int port,
+                    unsigned char * host_ip,
+                    char * out_buffer,
+                    int ttl);
 
 #define OPENDHT_TASK_NONE 0
 #define OPENDHT_TASK_PUT 1

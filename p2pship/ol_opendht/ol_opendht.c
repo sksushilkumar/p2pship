@@ -80,7 +80,7 @@ ol_opendht_get(char *key, olclient_get_task_t *task)
 		g->mod = mod;
 	*/
 	ship_obj_ref(task);
-	if (opendht_get(key, ol_opendht_get_cb, task)) {
+	if (opendht_get((unsigned char*)key, ol_opendht_get_cb, task)) {
 		ship_obj_unref(task);
 		return -1;
 	}
@@ -125,7 +125,7 @@ ol_opendht_remove(char *key, char* secret, struct olclient_module* mod)
 
 	/* fetch the hash from somewhere, use it! */
 	ship_lock(ol_opendht_entries);
-	while (e = ship_list_next(ol_opendht_entries, &ptr)) {
+	while ((e = ship_list_next(ol_opendht_entries, &ptr))) {
 		if (!strcmp(e->key, key) && !strcmp(secret, e->secret)) {
 			opendht_rm(key, e->hash, secret);
 			ship_list_remove(ol_opendht_entries, e);
@@ -148,17 +148,16 @@ static void
 ol_opendht_put_part_cb(char *key, char *value, void *param, int status)
 {
 	char value_hash[21];
-	char *sha_retval;
 	ol_opendht_entry_t *e;
 	void *ptr = 0;
 	
 	/* find an entry with the same key-secret & store the hash there (of value) */
 	ship_lock(ol_opendht_entries);
-	while (e = ship_list_next(ol_opendht_entries, &ptr)) {
+	while ((e = ship_list_next(ol_opendht_entries, &ptr))) {
 		if (!strcmp(e->key, key) && param == e->secret) {
 			freez(e->hash);
 			memset(value_hash, '\0', sizeof(value_hash));
-			if (!SHA1(value, strlen(value), value_hash)) {
+			if (!SHA1((unsigned char*)value, strlen(value), (unsigned char *)value_hash)) {
 				LOG_ERROR("SHA1 error when creating hash of the value for rm msg\n");
 			} else {
 				e->hash = (char *)base64_encode((unsigned char *)value_hash, 20);
@@ -197,7 +196,7 @@ ol_opendht_put(char *key, char *data, int timeout, char *secret, int cached, str
 	   the secret here.. */
 	ship_list_add(ol_opendht_entries, e);
 	ship_unlock(ol_opendht_entries);
-	ret = opendht_put(key, data, secret, timeout, ol_opendht_put_cb, e->secret, ol_opendht_put_part_cb);
+	ret = opendht_put((unsigned char *)key, (unsigned char *)data, secret, timeout, ol_opendht_put_cb, e->secret, ol_opendht_put_part_cb);
 	return ret;
 }
 
@@ -231,7 +230,6 @@ int
 ol_opendht_init(processor_config_t *config)
 {
 	char *od = 0;
-	addr_t odaddr;
 	
 #ifdef CONFIG_OPENDHT_ENABLED
 	ASSERT_ZERO(processor_config_get_string(config, P2PSHIP_CONF_OPENDHT_PROXY, &od), err);

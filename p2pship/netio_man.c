@@ -38,7 +38,7 @@ static ship_ht_t *netio_man_conns = 0;
 int
 netio_man_init(processor_config_t *config)
 {
-	if (netio_man_conns = ship_ht_new())
+	if ((netio_man_conns = ship_ht_new()))
 		return 0;
 	return -1;
 }
@@ -51,7 +51,7 @@ netio_man_close()
 	ship_lock(netio_man_conns);	
 
 	/* signal close to all! */
-	while (conn = ship_ht_pop(netio_man_conns)) {
+	while ((conn = ship_ht_pop(netio_man_conns))) {
 		conn->data_cb(conn->socket, conn->conn_obj, NULL, -1);
 		free(conn);
 	}

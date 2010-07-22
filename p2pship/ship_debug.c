@@ -434,7 +434,7 @@ ship_debug_dump_json(char **msg)
 	
 	ASSERT_TRUE(buf = append_str("var p2pship_info = {\n", buf, &buflen, &datalen), err);
 
-	sprintf(tmp, "%d\",\n", now-p2pship_start);
+	sprintf(tmp, "%d\",\n", (int)(now-p2pship_start));
 	ASSERT_TRUE(buf = append_str("     \"uptime\" : \"", buf, &buflen, &datalen), err);
 	ASSERT_TRUE(buf = append_str(tmp, buf, &buflen, &datalen), err);
 

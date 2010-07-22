@@ -16,6 +16,7 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include "addrbook.h"
 #include "ident.h"
 #include "ship_debug.h"
 #include "ship_utils.h"
@@ -109,7 +110,6 @@ addrbook_load_imported(ship_list_t *list)
 	}
 	
 	LOG_DEBUG("Loaded %d entries\n", ship_list_length(list));
- err:
 	ship_unlock(addrbook_lock);
 	return ret;
 }
@@ -127,7 +127,7 @@ addrbook_save_imported(ship_list_t *list)
 	char *buf = 0, *tmp = 0, *tmp2 = 0;
 	int len = 0, size = 0;
 	
-	while (c = ship_list_next(list, &ptr)) {
+	while ((c = ship_list_next(list, &ptr))) {
 		char tbuf[32];
 		char *k = 0;
 
@@ -152,12 +152,12 @@ addrbook_save_imported(ship_list_t *list)
 		}
 		ASSERT_TRUE((tmp = append_str(",", buf, &size, &len)) && (buf = tmp), err);
 		
-		sprintf(tbuf, "%d", c->added);
+		sprintf(tbuf, "%d", (int)c->added);
 		ASSERT_TRUE((tmp = append_str(tbuf, buf, &size, &len)) && (buf = tmp), err);
 
 		/* add the optional stuff */
 		ASSERT_TRUE(keys = ship_ht_keys(c->params), err);
-		while (k = ship_list_pop(keys)) {
+		while ((k = ship_list_pop(keys))) {
 			char *v = ship_ht_get_string(c->params, k);
 
 			ASSERT_TRUE((tmp = append_str(",", buf, &size, &len)) && (buf = tmp), err);
@@ -236,7 +236,7 @@ addrbook_normalize_aor(char *aor)
 		return NULL;
 	
 	/* skip anything before a ':' */
-	if (start = strchr(aor, ':'))
+	if ((start = strchr(aor, ':')))
 		start++;
 	else
 		start = aor;
@@ -244,7 +244,7 @@ addrbook_normalize_aor(char *aor)
 	if (!(end = strchr(start, ';')))
 		end = start + strlen(start);
 	
-	if (ret = mallocz(end-start+1))
+	if ((ret = mallocz(end-start+1)))
 		strncpy(ret, start, end-start);
 	return ret;
 }
@@ -264,7 +264,7 @@ addrbook_has_contact(char *user_aor, char *contact_aor)
 	if (addrbook_retrieve_contacts(list))
 		goto err;
 	
-	while (buddy = ship_list_pop(list)) {
+	while ((buddy = ship_list_pop(list))) {
 		if (!strcmp(norm, buddy->sip_aor))
 			ret = 1;
 		ident_contact_free(buddy);
@@ -280,14 +280,17 @@ addrbook_has_contact(char *user_aor, char *contact_aor)
 int
 addrbook_import_contacts(ship_list_t *newco, int *concount, int query)
 {
-	ship_list_t *imported = 0;
-	ship_list_t *imps = 0, *done = 0;
+	ship_list_t *imps = 0;
 	int ret = -1;
-	void *ptr = 0, *last = 0;
+	void *ptr = 0;
 	contact_t *c = 0;
 	*concount = 0;
 
 #ifdef OLD_LOGIC
+	void *last = 0;
+	ship_list_t *done = 0;
+	ship_list_t *imported = 0;
+
 	/* this is the 'old' way - check whether we already have
 	   imported an entry, skip if so. */
 
@@ -332,7 +335,7 @@ addrbook_import_contacts(ship_list_t *newco, int *concount, int query)
 #else
 	/* this is another way - check if we *have* the entry, skip if so */
 	ASSERT_TRUE(imps = ship_list_new(), err);
-	while (c = ship_list_next(newco, &ptr)) {
+	while ((c = ship_list_next(newco, &ptr))) {
 		if (!addrbook_has_contact(NULL, c->sip_aor))
 			ship_list_add(imps, c);
 	}
@@ -345,7 +348,7 @@ addrbook_import_contacts(ship_list_t *newco, int *concount, int query)
 	*concount = ship_list_length(imps);
 	
 	/* print out */
-	while (c = ship_list_next(newco, &ptr)) {
+	while ((c = ship_list_next(newco, &ptr))) {
 		LOG_WARN("Ignoring import of contact %s, sip: %s\n",
 			 c->name, c->sip_aor);
 	}

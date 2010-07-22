@@ -48,4 +48,6 @@ typedef struct service_s
 
 } service_t;
 
+service_type_t service_str_to_type(char *service);
+
 #endif

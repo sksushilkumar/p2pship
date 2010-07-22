@@ -32,45 +32,17 @@
 #include "ship_debug.h"
 #include "ol_p2pext.h"
 #include "ident.h"
+#include "netio_http.h"
+#include "processor_config.h"
 
 /* the name of this module */
 static struct olclient_module ol_p2pext_module;
 static char *ol_p2pext_proxy = 0;
 
-/*
-typedef struct ol_p2pext_s {
-	void (*callback) (char *val, int status, olclient_lookup_t *lookup, struct olclient_module* mod);
-	olclient_lookup_t *lookup;
-	struct olclient_module* mod;
-} ol_p2pext_t;
-*/
-
-/*
-ol_p2pext_t *
-ol_p2pext_new(void (*callback) (char *val, int status, olclient_lookup_t *lookup, struct olclient_module* mod),
-	      olclient_lookup_t *lookup, struct olclient_module* mod)
-{
-	ol_p2pext_t *ret = mallocz(sizeof(ol_p2pext_t));
-	if (ret) {
-		ret->callback = callback;
-		ret->lookup = lookup;
-		ret->mod = mod;
-	}
-	return ret;
-}
-
-void
-ol_p2pext_free(ol_p2pext_t *l)
-{
-	freez(l);
-}
-*/
-
 static void 
 ol_p2pext_get_cb(char *url, int respcode, char *data, 
 		 int datalen, void *pkg)
 {
-	//ol_p2pext_t *l = pkg;
 	olclient_get_task_t *task = pkg;
 	char *d2 = 0;
 
@@ -81,28 +53,23 @@ ol_p2pext_get_cb(char *url, int respcode, char *data,
 		}
 		if (d2) {
 			memcpy(d2, data, datalen);
-			task->callback(d2, 0, task); //->lookup, task->mod);
+			task->callback(d2, 0, task);
 		} else
-			task->callback(0, 0, task);  //->lookup, task->mod);
+			task->callback(0, 0, task);
 		ship_obj_unref(task);
-		//ol_p2pext_free(l);
 	}
 }
 
 static int 
 ol_p2pext_get(char *key, olclient_get_task_t *task)
-	      /* void (*callback) (char *val, int status, olclient_lookup_t *lookup, struct olclient_module* mod), */
-	      /* olclient_lookup_t *lookup, struct olclient_module* mod) */
 {
 	char *data = 0, *tmp = 0;
 	int len = 0, size = 0;
-	//ol_p2pext_t *l = 0;
 	int ret = -1;
 	
 	LOG_DEBUG("Performing get for key %s\n", key);
 	
 	/* create a nice post param packet from this */
-	//ASSERT_TRUE(l = ol_p2pext_new(callback, lookup, mod), err);
 	ASSERT_TRUE((tmp = ship_addparam_urlencode("key", key, data, &size, &len)) && (data = tmp), err);
 	ASSERT_TRUE((tmp = ship_addparam_urlencode("entry", "0", data, &size, &len)) && (data = tmp), err);
 	
@@ -111,12 +78,10 @@ ol_p2pext_get(char *key, olclient_get_task_t *task)
 						     "/get", "",
 						     "application/x-www-form-urlencoded", 
 						     data, len, ol_p2pext_get_cb, task)) {
-		//l = 0;
 		ret = 0;
 	} else
 		ship_obj_unref(task);
  err:
-	//ol_p2pext_free(l);
 	freez(data);
 	return ret;
 }
@@ -176,18 +141,16 @@ ol_p2pext_put(char *key, char *pdata, int timeout, char *secret, int cached, str
 	return ret;
 }
 
-static int
+static void
 ol_p2pext_cb_config_update(processor_config_t *config, char *k, char *v)
 {
-	char *proxy = 0, *tmp;
+	char *proxy = 0, *tmp = 0;
 	ASSERT_ZERO(processor_config_get_string(config, P2PSHIP_CONF_P2PEXT_PROXY,
 						&proxy), err);
 	tmp = ol_p2pext_proxy;
 	ol_p2pext_proxy = strdup(proxy);
-	freez(tmp);
-	return 0;
  err:
-	return -1;
+	freez(tmp);
 }
 
 int 
@@ -197,7 +160,6 @@ ol_p2pext_init(processor_config_t *config)
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_P2PEXT_PROXY, ol_p2pext_cb_config_update);
 	ol_p2pext_cb_config_update(config, NULL, NULL);
 	return olclient_register_module(&ol_p2pext_module /*, ol_p2pext_name_str, NULL*/);
- err:
 #endif
 	return -1;
 }

@@ -36,11 +36,10 @@ static ship_list_t *rvs_arr = NULL;
 int hipapi_update_rvs_registration();
 
 
-static int
+static void
 hipapi_cb_config_update(processor_config_t *config, char *k, char *v)
 {
 	hipapi_update_rvs_registration();
-	return 0;
 }
 
 /* inits the hipapi */
@@ -48,7 +47,6 @@ int
 hipapi_init(processor_config_t *config)
 {
         int ret = -1;
-	int tmp;
 	LOG_INFO("Initing the hipapi module..\n");
 	
 	if (hipapi_gethit(&ownhit) && !processor_config_bool(config, P2PSHIP_CONF_ALLOW_NONHIP)) {
@@ -104,13 +102,13 @@ hipapi_update_rvs_registration()
 
 	ship_lock(rvs_arr);
 	/* clear the rvs registrations */
-	while (rvs = ship_list_pop(rvs_arr)) {
+	while ((rvs = ship_list_pop(rvs_arr))) {
 		hipapi_register_to_rvs(&(rvs[0]), &(rvs[1]), 0);
 		freez(rvs);
 	}
 	
 	/* register to the RVS's we have specified */
-	if (str = processor_config_string(processor_get_config(), P2PSHIP_CONF_RVS))
+	if ((str = processor_config_string(processor_get_config(), P2PSHIP_CONF_RVS)))
 		ASSERT_ZERO(ship_tokenize(str, strlen(str), &tokens, &toklen, ';'), err);
 	for (c = 0; c < toklen; c++) {
 		char *loc = strchr(tokens[c], ','), *hit = tokens[c];
@@ -211,8 +209,8 @@ hipapi_has_linkto(addr_t *remote_hit)
 	static const char *tcp6_file = "/proc/net/tcp6";
 	int ret = 0;
 	unsigned long rxq, txq, time_len, retr, inode;
-	int num, local_port, rem_port, d, state, uid, timer_run, timeout;
-	char rem_addr[128], local_addr[128], timers[64], buffer[1024], more[512];
+	int local_port, rem_port, d, state, uid, timer_run, timeout;
+	char rem_addr[128], local_addr[128], more[512];
 
 	/* todo: a better way to do this! Currently we just red the
 	   tcp6 table, trying to find an active connection to the
@@ -226,7 +224,6 @@ hipapi_has_linkto(addr_t *remote_hit)
 		ssize_t got = 0;
 		while (!ret && (got = getline(&buf, &len, f)) > -1) {
 			addr_t addr;
-			char *key;
 			struct in6_addr in6;
 			int num;
 
@@ -250,7 +247,6 @@ hipapi_has_linkto(addr_t *remote_hit)
 		freez(buf);
 		fclose(f);
 	}
- err:
 	return ret;
 }
 
@@ -396,7 +392,7 @@ hipapi_getrvs(ship_list_t *list)
 	for (i=0; rvs_arr && i < ship_list_length(rvs_arr); i++) {
 		addr_t *r, *copy;
 		r = ship_list_get(rvs_arr, i);
-		if (copy = mallocz(sizeof(addr_t))) {
+		if ((copy = mallocz(sizeof(addr_t)))) {
 			memcpy(copy, &r[1], sizeof(addr_t));
 			ship_list_add(list, copy);
 		}
@@ -409,7 +405,7 @@ int
 hipapi_list_hits()
 {
 	ship_list_t *hits = NULL;
-	int i, j, ret = -1, us;
+	int i, ret = -1, us;
 	addr_t defhit;
 	
 	ASSERT_TRUE(hits = ship_list_new(), err);
@@ -465,6 +461,7 @@ int
 hipapi_clear_sas()
 {
 	TODO("we should reset the SAs!\n");
+	return 0;
 }
 
 

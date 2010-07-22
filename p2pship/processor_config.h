@@ -22,22 +22,22 @@
 #include "ship_utils.h"
 
 /* list of config keys */
-#define P2PSHIP_CONF_DAEMON "daemon"
-#define P2PSHIP_CONF_WORKER_THREADS "worker_threads"
+#define P2PSHIP_CONF_DAEMON "ship_daemon"
+#define P2PSHIP_CONF_WORKER_THREADS "ship_worker_threads"
 #define P2PSHIP_CONF_SHIP_PORT "ship_port"
 #define P2PSHIP_CONF_SHIP_PORT_RANGE "ship_port_range"
-#define P2PSHIP_CONF_IFACES "ifaces"
+#define P2PSHIP_CONF_IFACES "ship_ifaces"
 
 #define P2PSHIP_CONF_OL_SECRET "ol_secret"
 
-#define P2PSHIP_CONF_IDENT_IGNORE_CERT_VALIDITY "sipp_ignore_cert_validity"
-#define P2PSHIP_CONF_IDENT_ALLOW_UNKNOWN_REGISTRATIONS "sipp_allow_unknown_registrations"
-#define P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED "sipp_allow_untrusted"
-#define P2PSHIP_CONF_IDENT_REQUIRE_AUTHENTICATION "sipp_require_authentication"
-#define P2PSHIP_CONF_IDENT_UA_MODE "sipp_ua_mode"
-#define P2PSHIP_CONF_IDENTS_FILE "idents_file"
-#define P2PSHIP_CONF_IDENT_RENEGOTIATE_SECRET "renegotiate_secret"
+#define P2PSHIP_CONF_IDENT_IGNORE_CERT_VALIDITY "ident_ignore_cert_validity"
+#define P2PSHIP_CONF_IDENT_ALLOW_UNKNOWN_REGISTRATIONS "ident_allow_unknown_registrations"
+#define P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED "ident_allow_untrusted"
+#define P2PSHIP_CONF_IDENT_REQUIRE_AUTHENTICATION "ident_require_authentication"
+#define P2PSHIP_CONF_IDENT_UA_MODE "ident_ua_mode"
+#define P2PSHIP_CONF_IDENT_RENEGOTIATE_SECRET "ident_renegotiate_secret"
 
+#define P2PSHIP_CONF_IDENTS_FILE "idents_file"
 #define P2PSHIP_CONF_CONF_FILE "conf_file"
 #define P2PSHIP_CONF_AUTOREG_FILE "autoreg_file"
 #define P2PSHIP_CONF_LOG_FILE "log_file"
@@ -46,16 +46,17 @@
 #define P2PSHIP_CONF_CONTACTS_FILE "contacts_log"
 #define P2PSHIP_CONF_WHITELIST_FILE "whitelist_file"
 #define P2PSHIP_CONF_BLACKLIST_FILE "blacklist_file"
-#define P2PSHIP_CONF_PATHFINDER "pathfinder"
-#define P2PSHIP_CONF_USE_PATHFINDER "use_pathfinder"
+
+#define P2PSHIP_CONF_PATHFINDER "ac_pathfinder"
+#define P2PSHIP_CONF_USE_PATHFINDER "ac_use_pathfinder"
 #define P2PSHIP_CONF_AC_HTTP "ac_http"
 #define P2PSHIP_CONF_AC_MAX_PATH "ac_maxpath"
 
-#define P2PSHIP_CONF_CONN_KEEPALIVE "keepalive_interval"
+#define P2PSHIP_CONF_CONN_KEEPALIVE "conn_keepalive"
 
 #ifdef CONFIG_PYTHON_ENABLED
-#define P2PSHIP_CONF_START_SHELL "start_shell"
-#define P2PSHIP_CONF_RUN_SCRIPT "run_script"
+#define P2PSHIP_CONF_START_SHELL "py_start_shell"
+#define P2PSHIP_CONF_RUN_SCRIPT "py_run_script"
 
 #define P2PSHIP_CONF_PYTHON_LIB_DIR "py_lib"
 #define P2PSHIP_CONF_PYTHON_SCRIPTS_DIR "py_scripts"
@@ -65,20 +66,21 @@
 
 /* hm, should these be in ? */
 #ifdef CONFIG_SIP_ENABLED
-#define P2PSHIP_CONF_SIPP_PROXY_IFACES "proxy_ifaces"
+#define P2PSHIP_CONF_SIPP_PROXY_IFACES "sip_proxy_ifaces"
 #define P2PSHIP_CONF_SIPP_PROXY_PORT "sip_proxy_port"
-#define P2PSHIP_CONF_SIPP_MEDIA_PROXY "sipp_media_proxy"
-#define P2PSHIP_CONF_SIPP_MEDIA_PROXY_MOBILITY_SUPPORT "sipp_media_proxy_mobility"
-#define P2PSHIP_CONF_SIPP_FORCE_PROXY "sipp_force_proxy"
-#define P2PSHIP_CONF_SIPP_TUNNEL_PROXY "sipp_tunnel_proxy"
+#define P2PSHIP_CONF_SIPP_MEDIA_PROXY "sip_media_proxy"
+#define P2PSHIP_CONF_SIPP_MEDIA_PROXY_MOBILITY_SUPPORT "sip_media_proxy_mobility"
+#define P2PSHIP_CONF_SIPP_FORCE_PROXY "sip_force_proxy"
+#define P2PSHIP_CONF_SIPP_TUNNEL_PROXY "sip_tunnel_proxy"
 #define P2PSHIP_CONF_CALL_LOG_SHOW_PATHINFO "call_log_show_path"
 #define P2PSHIP_CONF_CALL_LOG_SHOW_DROPPED "call_log_show_dropped"
-#define P2PSHIP_CONF_SIPP_ROUTING_FILE "sipp_routing_file"
-#endif
+#define P2PSHIP_CONF_SIPP_ROUTING_FILE "sip_routing_file"
 
 /* the post-dial delay measurement-related things */
 #define P2PSHIP_CONF_PDD_RESET_MODE "pdd_reset_mode"
 #define P2PSHIP_CONF_PDD_LOG "pdd_log"
+#endif
+
 
 #ifdef CONFIG_BROADCAST_ENABLED
 #define P2PSHIP_CONF_BC_ADDR "bc_addr"
@@ -94,15 +96,11 @@
 #endif
 
 #ifdef CONFIG_HIP_ENABLED
-#define P2PSHIP_CONF_PROVIDE_RVS "provide_rvs"
-#define P2PSHIP_CONF_NAT_TRAVERSAL "nat_traversal"
-#define P2PSHIP_CONF_RVS "rvs"
-#define P2PSHIP_CONF_HIP_SHUTDOWN "hipd_shutdown"
-#define P2PSHIP_CONF_ALLOW_NONHIP "allow_nonhip"
-
-#define HIP_NAT_TRAVERSAL_NONE 0
-#define HIP_NAT_TRAVERSAL_PLAIN 1
-#define HIP_NAT_TRAVERSAL_ICE 2
+#define P2PSHIP_CONF_PROVIDE_RVS "hip_provide_rvs"
+#define P2PSHIP_CONF_NAT_TRAVERSAL "hip_nat_traversal"
+#define P2PSHIP_CONF_RVS "hip_rvs"
+#define P2PSHIP_CONF_HIP_SHUTDOWN "hip_shutdown"
+#define P2PSHIP_CONF_ALLOW_NONHIP "hip_allow_nonhip"
 #endif
 
 #ifdef CONFIG_WEBCONF_ENABLED
@@ -142,6 +140,8 @@ int processor_config_load(processor_config_t *config, char *filename);
 int processor_config_save(processor_config_t *config, char *filename);
 int processor_config_load_defaults(processor_config_t *config);
 
+void processor_config_dump_json(processor_config_t *config, char **msg);
+
 /* overwrites the values from one to another one */
 int processor_config_transfer(processor_config_t *target, processor_config_t *source);
 
@@ -150,26 +150,41 @@ void processor_config_free(processor_config_t *config);
 void processor_config_clear(processor_config_t *config);
 processor_config_t *processor_config_new();
 
+int processor_config_init();
+void processor_config_close();
+
 /* getters / setters */
-int processor_config_set_int(processor_config_t *config, char *key, int value);
-int processor_config_set_string(processor_config_t *config, char *key, char *value);
+int processor_config_set_int(processor_config_t *config, const char *key, const int value);
+int processor_config_set_string(processor_config_t *config, const char *key, const char *value);
 #define processor_config_set_true(config, key) processor_config_set_string(config, key, "yes")
 #define processor_config_set_false(config, key) processor_config_set_string(config, key, "no")
 
 /* ownership NOT given */
-int processor_config_get_int(processor_config_t *config, char *key, int *value);
-int processor_config_get_bool(processor_config_t *config, char *key, int *value);
-int processor_config_is_true(processor_config_t *config, char *key);
-int processor_config_is_false(processor_config_t *config, char *key);
-int processor_config_get_string(processor_config_t *config, char *key, char **value);
+int processor_config_get_int(processor_config_t *config, const char *key, int *value);
+int processor_config_get_bool(processor_config_t *config, const char *key, int *value);
+int processor_config_is_true(processor_config_t *config, const char *key);
+int processor_config_is_false(processor_config_t *config, const char *key);
+int processor_config_get_string(processor_config_t *config, const char *key, char **value);
+int processor_config_get_enum(processor_config_t *config, const char *key, int *value);
 
-char * processor_config_string(processor_config_t *config, char *key);
-int processor_config_int(processor_config_t *config, char *key);
-int processor_config_bool(processor_config_t *config, char *key);
+char * processor_config_string(processor_config_t *config, const char *key);
+int processor_config_int(processor_config_t *config, const char *key);
+int processor_config_bool(processor_config_t *config, const char *key);
 
-void processor_config_remove(processor_config_t *config, char *key);
+void processor_config_remove(processor_config_t *config, const char *key);
+
+int processor_config_is_valid_key(char *key);
 
 /* check if we have a key .. */
-int processor_config_has_key(processor_config_t *config, char *key);
+int processor_config_has_key(processor_config_t *config, const char *key);
+
+int processor_config_set_dynamic_update(processor_config_t *config, 
+					const char *key, void (*func) (processor_config_t *c, char *k, char *v));
+int processor_config_dynamic_update(processor_config_t *config, 
+				    char *key, char *value);
+
+void processor_config_set_dynamic(processor_config_t *config, const char *key);
+int processor_config_create_key(processor_config_t *config, const char *key, const char *description,
+				const char *type, const char *value);
 
 #endif
