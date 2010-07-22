@@ -1,10 +1,5 @@
 #summary List of configuration values
 
-= Introduction =
-
-Add your content here.
-
-Table of contents:
 
 <wiki:toc max_depth="3" />
 
