@@ -39,7 +39,7 @@ _todo_
 
 _todo_
 
-See [Configuration#Access%20Control Access control- related configuration values]
+See [Configuration#Access_Control Access control- related configuration values]
 
 = SIP Gateway =
 
