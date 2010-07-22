@@ -1,0 +1,225 @@
+<html>
+<head>
+<style type="text/css" media="all">@import url(style.css);</style>
+<script src="code.js" language="javascript" type="text/javascript"></script>
+<script src="/json/all" language="javascript" type="text/javascript"></script>
+<title>p2pship proxy configuration application</settings>
+</head>
+<body onLoad="initpage('start');">
+
+<!-- **************************************************************** -->
+<!-- loading.. -->
+<div id="header">
+  P2PSHIP proxy configuration
+</div>
+
+<!-- **************************************************************** -->
+<!-- loading.. -->
+<div id="page_loading" style="display:none;">
+  <b>Loading, please wait..</b>
+</div>
+
+<!-- **************************************************************** -->
+<!-- The login page -->
+<div id="page_login" style="display:none;">
+  <h1>Enter proxy to configure</h1>
+
+  <form method="get">
+  <input type="hidden" name="page" value="main">
+  <table>
+    <tbody>
+      <tr>
+	<td>Host:</td>
+	<td><input type="text" name="host"></td>
+      </tr>
+      <tr>
+	<td>Port:</td>
+	<td><input type="text" name="port"></td>
+      </tr>
+      <tr>
+	<td></td>
+	<td align="right"><input type="submit" value="Connect"></td>
+      </tr>
+    </tbody>
+  </table>
+  </form>
+</div>
+
+<!-- **************************************************************** -->
+<!-- The start page for online mode -->
+<div id="page_start" style="display:none;">
+  <h1>HIIT P2PSHIP Configuration interface</h1>
+
+  <p>
+  Please choose a category to configure
+  </p>
+
+</div>
+
+<!-- **************************************************************** -->
+<!-- error -->
+<div id="page_error" style="display:none;">
+  <h1>Error occured</h1>
+<div id="error_msg"></div>
+<p>
+<a href="start.html">Login</a>
+</p>
+</div>
+
+<!-- **************************************************************** -->
+<!-- The main page -->
+<div id="page_main" style="display:none;">
+  <h1>System configuration</h1>
+
+  <form method="post" id="main_confform">
+  <table>
+    <tbody id="main_conftable">
+      <tr>
+	<td class="thead">Config</td>
+	<td class="thead">Value</td>
+	<td class="thead"></td>
+      </tr>
+      <tr id="main_conftable_buttons">
+	<td></td>
+	<td></td>
+	<td align="right">
+	<input type="button" name="apply" value="Apply" onClick='submit_reload("main_confform");'>
+	<input type="button" name="save" value="Save" onClick='add_input("main_confform", "save", "true");
+	                                                       submit_reload("main_confform");'>
+	</td>
+      </tr>
+    </tbody>
+  </table>
+  </form>
+</div>
+
+<!-- **************************************************************** -->
+<!-- The ident page -->
+<div id="page_ident" style="display:none;">
+  <h1>Identity management</h1>
+
+    <p>
+  To acquire a new HIIT P2PSIP identity, please press <a href="http://trustinet.hiit.fi/p2pship/reg.php">this</a>.
+  </p>
+
+  <form method="post" enctype="multipart/form-data" id="ident_fileform">
+  Import an identity package:
+  <input type="file" name="file">
+  <input type="button" value="import" onClick='submit_reload("ident_fileform");'>
+  </form>
+
+  <p>
+
+  <form method="post" id="ident_form">
+  <table>
+    <tbody id="ident_table">
+      <tr>
+	<td class="thead">Identity</td>
+	<td class="thead">Name</td>
+	<td class="thead">Status</td>
+	<td class="thead"></td>
+      </tr>
+    </tbody>
+  </table>
+  </form>
+
+  <p>
+
+  <form method="post" id="ca_form">
+  <table>
+    <tbody id="ca_table">
+      <tr>
+	<td class="thead">CA Name</td>
+	<td class="thead">Certificate serial</td>
+	<td class="thead"></td>
+      </tr>
+    </tbody>
+  </table>
+  </form>
+
+  <p>
+
+  <form method="post" id="ident_syncform">
+  <input type="button" value="Save changes" onClick='submit_reload("ident_syncform");'>
+  </form>
+  
+  <p>
+
+  <form method="post" id="ident_reloadform">
+  <input type="button" value="Reload old configuration" onClick='submit_reload("ident_reloadform");'>
+  </form>
+
+</div>
+
+<!-- **************************************************************** -->
+<!-- The mediaproxy page -->
+<div id="page_mp" style="display:none;">
+  <h1>Media proxies</h1>
+
+  <form method="post" id="mp_form">
+  <table>
+    <tbody id="mp_table">
+    </tbody>
+  </table>
+  </form>
+
+</div>
+
+<!-- **************************************************************** -->
+<!-- The admin page -->
+<div id="page_admin" style="display:none;">
+  <h1>Admin</h1>
+
+  <a href="start.html" id="links_shutdown">Shutdown P2PSHIP</a>
+  <a href="start.html" id="links_restarthipd">Restart HIPD</a>
+
+  <p>
+
+</div>
+
+<!-- **************************************************************** -->
+<!-- The stats page -->
+<div id="page_stats" style="display:none;">
+  <h1>Stats</h1>
+  <p>
+
+  <table>
+    <tbody id="stats_table">
+      <tr>
+	<td class="thead">Date</td>
+	<td class="thead">Type</td>
+	<td class="thead">From</td>
+	<td class="thead">To</td>
+	<td class="thead">PDD (lookup / connect / handshake / remote app / misc. processing)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+  
+</div>
+
+<!-- **************************************************************** -->
+<!-- footer -->
+
+<div id="div_links" style="display:none;">
+  <p>
+  <a href="start.html" id="links_sys">System configuration</a>
+  <a href="start.html" id="links_ident">Identity management</a>
+  <a href="start.html" id="links_mp">Media proxies</a>
+  <a href="start.html" id="links_admin">Admin menu</a>
+  <a href="start.html" id="links_stats">Stats</a>
+  <a href="start.html">Exit</a>
+</div>
+
+<div id="div_info" class="info">
+
+</div>
+
+<div id="div_debug" style="display:none;">
+  <textarea cols="100" rows="10" id="debug">
+  </textarea>
+</div>
+
+</body>
+</html>
