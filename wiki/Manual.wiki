@@ -30,7 +30,7 @@ Currently the p2pship proxy supports the following applications
 For lookup:
 
  * LAN broadcast (see [Lookup#Broadcast the lookup documentation])
- * OpenDHT / OpenLookup 1 (see [Lookup#OpenDHT the lookup documentation])
+ * [http://www.opendht.org OpenDHT] / [http://www.openlookup.org OpenLookup 1] (see [Lookup#OpenDHT the lookup documentation])
  * P2PExt, a simple key-based web lookup (see [Lookup#P2PEXT the lookup documentation])
 
 Transports:
