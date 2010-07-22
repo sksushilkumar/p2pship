@@ -16,6 +16,7 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#define _GNU_SOURCE /* memmem */
 #include "ident.h"
 #include "ship_debug.h"
 #include <netinet/in.h>
@@ -24,6 +25,10 @@
 #include <stdio.h>
 #include "netio_http.h"
 #include "processor.h"
+#include "netio.h"
+#ifdef CONFIG_WEBCACHE_ENABLED
+#include "webcache.h"
+#endif
 
 /* the list of servers */
 static ship_ht_t *http_servers = 0;
@@ -36,7 +41,7 @@ static ship_ht_t *conns_ht = 0;
 static const char *post_header = "POST %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: HIIT P2PSIP\r\nAccept: *\r\nContent-Length: %d\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
 static const char *get_header = "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: HIIT P2PSIP\r\nAccept: *\r\nConnection: close\r\n\r\n";
 
-char *strndup(const char *s, size_t n);
+//char *strndup(const char *s, size_t n);
 
 /* some packet ordering funcs. these are a bit quick&dirty, yes.*/
 
@@ -49,7 +54,7 @@ netio_http_packet_orderer_create(char *tracking_id)
 {
 	ship_ht_t *l = 0;
 	ship_lock(orderer);
-	if (l = ship_ht_new()) {
+	if ((l = ship_ht_new())) {
 		/* this is really ugly, using the ht to keep
 		   netio_httptrack of the next element .. */
 		ship_ht_put_string(l, "next", 0);
@@ -64,7 +69,7 @@ netio_http_packet_orderer_close(char *tracking_id)
 {
 	ship_ht_t *l = 0;
 	ship_lock(orderer);
-	if (l = ship_ht_remove_string(orderer, tracking_id)) {
+	if ((l = ship_ht_remove_string(orderer, tracking_id))) {
 		/* free up the stuff */
 		ship_ht_remove_string(l, "next");
 		ship_ht_empty_free_with(l, (void (*) (void *))ship_lenbuf_free);
@@ -79,7 +84,7 @@ netio_http_packet_orderer_put(char *tracking_id, int piece, char *content, int l
 {
 	ship_ht_t *l = 0;
 	ship_lock(orderer);
-	if (l = ship_ht_get_string(orderer, tracking_id)) {
+	if ((l = ship_ht_get_string(orderer, tracking_id))) {
 		ship_ht_put_int(l, piece, ship_lenbuf_create_copy(content, len));
 	}
 	ship_unlock(orderer);
@@ -93,10 +98,10 @@ netio_http_packet_orderer_pop_next(char *tracking_id, int *piece, char **content
 	int ret = -1;
 	ship_ht_t *l = 0;
 	ship_lock(orderer);
-	if (l = ship_ht_get_string(orderer, tracking_id)) {
+	if ((l = ship_ht_get_string(orderer, tracking_id))) {
 		ship_lenbuf_t *val = 0;
 		int next = (int)ship_ht_get_string(l, "next");
-		if (val = ship_ht_remove_int(l, next)) {
+		if ((val = ship_ht_remove_int(l, next))) {
 			(*content) = val->data;
 			(*len) = val->len;
 			val->data = 0;
@@ -114,7 +119,7 @@ void
 netio_conn_reset(netio_http_conn_t *conn)
 {
 	netio_http_param_t *param = 0;
-	while (param = ship_ht_pop(conn->params)) {
+	while ((param = ship_ht_pop(conn->params))) {
 		freez(param->data);
 		freez(param->name);
 		freez(param);
@@ -180,7 +185,10 @@ netio_http_conn_close(netio_http_conn_t *conn)
 #ifdef CONFIG_WEBCACHE_ENABLED
 		webcache_close_trackers(conn->tracking_id);
 #endif
-		if (conn->socket != -1) {
+
+		// todo: if we don't OWN the socket, do not close it!!!
+		// -> the ownership might have been moved to some other http_conn!
+		if (conn->owns_socket && conn->socket != -1) {
 			netio_man_close_socket(conn->socket);
 			conn->socket = -1;
 		}
@@ -235,6 +243,7 @@ netio_http_conn_new(int socket)
 	netio_http_conn_t *ret = 0;
 	ASSERT_TRUE(ret = mallocz(sizeof(netio_http_conn_t)), err);
 	ret->socket = socket;
+	ret->owns_socket = 1;
 	ret->forward_socket = -1;
 	ASSERT_ZERO(ship_lock_new(&ret->lock), err);
 	netio_http_track_conn(ret, socket);
@@ -288,8 +297,8 @@ __netio_http_cb_conn(int s, void *obj)
 		return;
 	
 	/* write the data! */
-	if (buf = mallocz(strlen(post_header) + strlen(h->url) + 
-			  zstrlen(h->content_type) + strlen(h->host) + 64 + h->data_len)) {
+	if ((buf = mallocz(strlen(post_header) + strlen(h->url) + 
+			   zstrlen(h->content_type) + strlen(h->host) + 64 + h->data_len))) {
 		int len = 0;
 		if (h->buf) {
 			sprintf(buf, post_header, h->url, h->host, h->data_len, h->content_type);
@@ -337,7 +346,7 @@ netio_http_serialize(netio_http_conn_t* conn, char **ret, int *retlen)
 	}
 
 	ASSERT_TRUE(list = ship_ht_keys(conn->headers), err);
-	while (key = ship_list_next(list, &ptr)) {
+	while ((key = ship_list_next(list, &ptr))) {
 		val = ship_ht_get_string(conn->headers, key);
 		ASSERT_TRUE((tmp = append_str(key, buf, &size, &len)) && (buf = tmp), err);
 		ASSERT_TRUE((tmp = append_str(": ", buf, &size, &len)) && (buf = tmp), err);
@@ -369,6 +378,22 @@ netio_http_serialize(netio_http_conn_t* conn, char **ret, int *retlen)
 	freez(buf);
 	return -1;
 }
+
+
+/* cuts off overrun data that doesn't belong to the given request at
+   all. e.g. for proxy connections where a bunch of requests might
+   come at once. this function just returns a pointer to the starting
+   location of the overrun data + the len of it */
+void
+netio_http_cut_overrun(netio_http_conn_t* conn, char **data, int *datalen)
+{
+	*datalen = 0;
+	if ((conn->content_len + conn->header_len) < conn->data_len) {
+		*datalen = conn->data_len - conn->header_len - conn->content_len;
+		*data = &conn->buf[conn->header_len + conn->content_len];
+	}
+}
+
 
 /* returns 0 = done, ok. 1 = not done yet, -1 = error */
 static int 
@@ -414,7 +439,7 @@ __netio_http_parse_data(netio_http_conn_t* conn, char *data, int datalen)
 				char *tmple;
 				
 				/* store method */
-				if (tmple = strchr(line, ' ')) {
+				if ((tmple = strchr(line, ' '))) {
 					char *t2;
 					tmple++;
 					
@@ -474,7 +499,6 @@ __netio_http_parse_data(netio_http_conn_t* conn, char *data, int datalen)
 		}
 		
 		if (conn->method) {
-			netio_http_param_t *param = 0;
 			LOG_DEBUG("Got total %d bytes, %d bytes data for %s on http\n",
 				  conn->data_len, conn->content_len, conn->url);
 			
@@ -489,7 +513,6 @@ __netio_http_parse_data(netio_http_conn_t* conn, char *data, int datalen)
 					ps = memmem_after(&conn->buf[conn->header_len], conn->data_len - conn->header_len, bound, strlen(bound));
 					while (ps) {
 						char *tmp, *name, *tmp2;
-						int datalen = 0;
 						pe = (char*)memmem(ps, conn->data_len - (ps-conn->buf), bound, strlen(bound));
 						if (!pe) {
 							pe = conn->buf + conn->data_len;
@@ -497,7 +520,7 @@ __netio_http_parse_data(netio_http_conn_t* conn, char *data, int datalen)
 						} else
 							tmp = pe + strlen(bound);
 
-						if (name = strstr(ps, "Content-Disposition: "))
+						if ((name = strstr(ps, "Content-Disposition: ")))
 							tmp2 = strstr(name, "\r\n");
 						ps = strstr_after(ps, "\r\n\r\n");
 						if (ps && name && tmp2) {
@@ -513,7 +536,7 @@ __netio_http_parse_data(netio_http_conn_t* conn, char *data, int datalen)
 				}
 			} else {
 				int parsedata = conn->header_len;
-				char *ns, *pe;
+				char *ns;
 
 				ns = &(conn->buf[parsedata]);
 				
@@ -613,7 +636,7 @@ netio_http_decode_encoding(netio_http_conn_t *conn)
 		char *eol = 0;
 		
 		ASSERT_TRUE(newdata = mallocz(conn->content_len), err);
-		while (eol = strstr(olddata, "\r\n")) {
+		while ((eol = strstr(olddata, "\r\n"))) {
 			int chunklen = 0;
 
 			/* decode the hex digits .. */
@@ -713,7 +736,7 @@ netio_http_post_host(char *host, char *path, char *urlstr, char *content_type, c
 	ASSERT_ZERO(ident_addr_addr_to_sa(&addr, &sa, &sa_len), err);
 	
 	/* new managed api: */
-	if (http_conn = netio_http_wait_new(&addr, urlstr, host, path, content_type, data, data_len, func, pkg)) {
+	if ((http_conn = netio_http_wait_new(&addr, urlstr, host, path, content_type, data, data_len, func, pkg))) {
 		ship_lock(conns);
 		http_conn->socket = netio_man_connto(sa, sa_len, http_conn, __netio_http_cb_conn, __netio_http_cb_data);
 		if (http_conn->socket != -1) {
@@ -784,7 +807,7 @@ netio_http_set_header(netio_http_conn_t* conn, char *key, char *data)
 	if (!key)
 		return 0;
 	
-	if (old = ship_ht_remove_string(conn->headers, key))
+	if ((old = ship_ht_remove_string(conn->headers, key)))
 		free(old);
 	
 	if (data && (old = strdup(data))) {
@@ -805,7 +828,7 @@ char *
 netio_http_conn_get_param(netio_http_conn_t *conn, char *name)
 {
 	netio_http_param_t *param = 0;
-	if (param = ship_ht_get_string(conn->params, name))
+	if ((param = ship_ht_get_string(conn->params, name)))
 		return param->data;
 	return NULL;
 }
@@ -866,7 +889,6 @@ netio_http_respond_multipart(netio_http_conn_t *conn,
 {
 	const char *templ = "%s\r\nContent-Type: %s\r\nContent-Transfer-Encoding: binary\r\n\r\n";
 	char *msg = mallocz(strlen(templ) + strlen(content_type) + 128);
-	int i = 0;
 	char *boundary = 0;
 
 	/* if no header set yet, create one */
@@ -1001,7 +1023,8 @@ netio_http_get_conn_by_socket(int s)
 		return NULL;
 	ship_lock(conns); {
 		while (!conn && (conn = ship_list_next(conns, &ptr))) {
-			if (conn->socket != s)
+			// todo: check that it also owns the socket!
+			if (!conn->owns_socket || conn->socket != s)
 				conn = 0;
 			else {
 				conn = netio_http_conn_lock(conn);
@@ -1018,7 +1041,7 @@ netio_http_get_conn_by_id(char *id)
 	if (!conns)
 		return NULL;
 	ship_lock(conns); {
-		if (conn = ship_ht_get_string(conns_ht, id)) {
+		if ((conn = ship_ht_get_string(conns_ht, id))) {
 			conn = netio_http_conn_lock(conn);
 		}
 	} ship_unlock(conns);
@@ -1056,7 +1079,11 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 	}
 
 	/* process.. */
-	if (!ret) {
+	while (!ret) {
+		netio_http_conn_t *new_conn = 0;
+		
+		// cut off stuff meant for the next request!
+		netio_http_cut_overrun(conn, &data, &datalen);
 		ret = __netio_http_process_req(conn);
 
 		/* forts; todo: this is pretty dangerous if some
@@ -1066,7 +1093,26 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 		/* we strip the data from the conn now as there might
 		   come another request on the same connection, which
 		   would mess things up.. */
-		netio_conn_reset(conn); 
+
+		// don't do this; just start a new conn! and transfer the ownership of socket!
+		// netio_conn_reset(conn);
+		ASSERT_TRUE(new_conn = netio_http_conn_new(s), err);
+		memcpy(&(new_conn->addr), &(conn->addr), sizeof(addr_t));
+		new_conn->ss = conn->ss;
+		conn->owns_socket = 0;
+
+		if (ret < 1) {
+			netio_http_conn_close(conn);
+		} else {
+			ship_unlock(conn);
+		}
+		conn = new_conn;
+
+		/* and here .. do a parse thing again! */
+		if (datalen > 0)
+			ret = __netio_http_parse_data(conn, data, datalen);
+		else
+			ret = 1;
 	}
  err:
 	if (ret < 1) {
@@ -1101,7 +1147,6 @@ __netio_http_server_listen(char *new_address)
 	struct sockaddr *sa = 0;
 	socklen_t salen;
 	int ret = -1;
-	char *ss_addr;
 	char buf[1024];
 
 	ASSERT_ZERO(ident_addr_str_to_sa(new_address, &sa, &salen), err);
@@ -1171,7 +1216,7 @@ void
 netio_http_server_close(int ss)
 {
 	netio_http_server_t *server = 0;
-	if (server = ship_ht_remove_int(http_servers, ss)) {
+	if ((server = ship_ht_remove_int(http_servers, ss))) {
 		netio_http_server_free(server);
 	}
 }

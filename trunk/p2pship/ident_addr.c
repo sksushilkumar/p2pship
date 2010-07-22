@@ -22,6 +22,9 @@
 #include "ident.h"
 #include "ship_debug.h"
 #include "processor.h"
+#ifdef CONFIG_HIP_ENABLED
+#include "hipapi.h"
+#endif
 
 /* dummy to lock getaddrinfo calls */
 static ship_list_t *getaddrinfolock = 0;
@@ -71,7 +74,7 @@ ident_addr_close()
 	getaddrinfolock = 0;
 	if (getaddrinfo_cache) {
 		getaddrinfo_cache_t *e = 0;
-		while (e = ship_ht_pop(getaddrinfo_cache)) {
+		while ((e = ship_ht_pop(getaddrinfo_cache))) {
 			freez(e->sa);
 			freez(e);
 		}
@@ -288,7 +291,7 @@ ident_addr_addr_to_sa_to(void *data)
 	}
 
 	/* if not, then put there an entry NULL with validity of .. secs */
-	if (e = mallocz(sizeof(getaddrinfo_cache_t))) {
+	if ((e = mallocz(sizeof(getaddrinfo_cache_t)))) {
 		e->valid = time(0) + 30; /* 30 secs */
 		ship_ht_put_string(getaddrinfo_cache, addr.addr, e);
 	}
@@ -314,7 +317,7 @@ ident_addr_addr_to_sa_to(void *data)
 		sat->sa_family = res->ai_family;
 #ifdef CACHE_GETADDR
 		if (e) {
-			if (e->sa = mallocz(sat_len)) {
+			if ((e->sa = mallocz(sat_len))) {
 				e->sa_len = sat_len;
 				memcpy(e->sa, sat, sat_len);
 				e->valid = time(0) + 3600; /* 1 hrs */
@@ -364,8 +367,6 @@ ident_addr_lookup_init(ident_addr_lookup_t *obj, void *param)
 	obj->valid = 1;
 	obj->addr = (addr_t*)param;
 	return 0;
- err:
-	return -1;
 }
 
 int 
@@ -406,8 +407,8 @@ ident_addr_socket_to_addr(int s, addr_t *addr)
 	struct sockaddr_in6 sa; // use the biggest we'll ever encounter..
 	socklen_t salen = sizeof(sa);
 	
-	if (!getpeername(s, &sa, &salen))
-		return ident_addr_sa_to_addr(&sa, &salen, addr);
+	if (!getpeername(s, (struct sockaddr*)&sa, &salen))
+		return ident_addr_sa_to_addr((struct sockaddr*)&sa, salen, addr);
 	return -1;
 }
 

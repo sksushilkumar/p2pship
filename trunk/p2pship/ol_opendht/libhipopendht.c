@@ -32,6 +32,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <linux/socket.h>
+#include <openssl/md5.h>
 
 #include "ship_utils.h"
 #include "ship_debug.h"
@@ -63,7 +64,7 @@ opendht_task_free(opendht_task_t *task)
 		   each (=call each's callback) */
 		if (task->subs) {
 			opendht_task_t *child;
-			while (child = ship_list_pop(task->subs)) {
+			while ((child = ship_list_pop(task->subs))) {
 				child->parent = NULL;
 				opendht_task_free(child);
 			}
@@ -117,7 +118,7 @@ opendht_task_close(opendht_task_t *task)
 			/* todo: sync this around the parent! */
 			task->closed = 1;
 			task->parent->status = 0;
-			while (peer = ship_list_next(task->parent->subs, &ptr)) {
+			while ((peer = ship_list_next(task->parent->subs, &ptr))) {
 				if (peer->status == 1 || !peer->closed) {
 					task->parent->status = 1;
 					break;
@@ -282,7 +283,7 @@ opendht_subget_cb(char *key, char *value, void *param, int status)
 
 	if (status == 0) {
 		/* construct our message, deliver to the callback! */
-		while (child = ship_list_next(task->subs, &ptr))
+		while ((child = ship_list_next(task->subs, &ptr)))
 			msg_len += child->value_len;
 		
 		task->value = mallocz(msg_len+1);
@@ -290,7 +291,7 @@ opendht_subget_cb(char *key, char *value, void *param, int status)
 		if (task->value) {
 			ptr = 0;
 			msg_len = 0;
-			while (child = ship_list_next(task->subs, &ptr)) {
+			while ((child = ship_list_next(task->subs, &ptr))) {
 				memcpy(task->value+msg_len, child->value, child->value_len);
 				msg_len += child->value_len;
 			}
@@ -308,7 +309,6 @@ static void
 opendht_socket_read(int s, char *data, ssize_t datalen)
 {
         opendht_task_t *task = NULL;
-	int ret = -1;
 	char **resps = NULL;
 	int resp_count = 0;
 	char *ans = NULL;
@@ -370,7 +370,7 @@ opendht_socket_read(int s, char *data, ssize_t datalen)
 
 	case OPENDHT_TASK_GET: {
 		int i, j, key_count, val_count;
-		opendht_task_t *sub_task = NULL, *subsub_task = NULL;
+		opendht_task_t *sub_task = NULL;
 
 		/* for each entry, create a new task-tree */
 		task->status = -1;
@@ -415,7 +415,6 @@ opendht_socket_read(int s, char *data, ssize_t datalen)
 				opendht_task_close(sub_task);
 		}
 		
-	get_err:
 		if (task->status == 1) {
 			LOG_DEBUG("Requested %d entries for key '%s'\n", val_count, task->key);
 		} else {
@@ -476,7 +475,7 @@ opendht_socket_opened(int s, struct sockaddr *sa, socklen_t addrlen)
 
 	/* md5 the key */
 	memset(tmp_key, 0, sizeof(tmp_key));
-	MD5(task->key, strlen(task->key), tmp_key);
+	MD5((unsigned char*)task->key, strlen(task->key), (unsigned char*)tmp_key);
 	key_len = 16;
 	memset(packet, '\0', sizeof(packet));
 
@@ -568,7 +567,8 @@ opendht_put_part(unsigned char * key,
 		 void (*callback) (char *key, char *value, void *param, int status),
 		 void *param)
 {
-	return opendht_task_init(OPENDHT_TASK_PUT_PART, callback, param, key, value, value_len, secret, opendht_ttl, parent);
+	return opendht_task_init(OPENDHT_TASK_PUT_PART, callback, param, (char*)key, (char*)value, 
+				 value_len, secret, opendht_ttl, parent);
 }
 
 #define key_rand_len 20
@@ -587,7 +587,7 @@ opendht_put(unsigned char * key,
 {
 	int ret = -1;
 	char *tmpkey = NULL, *index = NULL;
-	int key_len = strlen(key) + key_rand_len +1, pkglen, parts = 0;
+	int key_len = strlen((char*)key) + key_rand_len +1, pkglen, parts = 0;
         opendht_task_t *task = NULL;
 	
 	/* new protocol: put the data under n number of x sized blocks
@@ -597,27 +597,27 @@ opendht_put(unsigned char * key,
 	/* create parent task for this! */
 	ship_lock(opendht_tasks);
 	ASSERT_TRUE(task = opendht_task_new(OPENDHT_TASK_PUT, callback, param, 
-					    key, value, strlen(value), secret, opendht_ttl, NULL),
+					    (char*)key, (char*)value, strlen((char*)value), secret, opendht_ttl, NULL),
 		    put_err);
 	ship_list_add(opendht_tasks, task);
 	
 	ASSERT_TRUE(tmpkey = (char*)mallocz(key_len + 1), put_err);
-	ASSERT_TRUE(index = (char*)mallocz(((strlen(value) / PACKET_SIZE) + 1) * (key_len + 1)), put_err);
-	while (pkglen = strlen(value)) {
+	ASSERT_TRUE(index = (char*)mallocz(((strlen((char*)value) / PACKET_SIZE) + 1) * (key_len + 1)), put_err);
+	while ((pkglen = strlen((char*)value))) {
 		if (pkglen > PACKET_SIZE)
 			pkglen = PACKET_SIZE;
 		
-		strcpy(tmpkey, key);
+		strcpy(tmpkey, (char*)key);
 		for (key_len = 0; key_len < key_rand_len; key_len++) {
-			tmpkey[strlen(key)+key_len] = rand_chars[rand() % strlen(rand_chars)];
+			tmpkey[strlen((char*)key)+key_len] = rand_chars[rand() % strlen(rand_chars)];
 		}
-		tmpkey[strlen(key)+key_len] = 0;
+		tmpkey[strlen((char*)key)+key_len] = 0;
 					
 		strcat(index, tmpkey);
 		strcat(index, "\n");
 
 		LOG_VDEBUG("Putting %d bytes under key '%s'\n", pkglen, tmpkey);
-		ASSERT_ZERO(ret = opendht_put_part(tmpkey, value, pkglen, secret, opendht_ttl, task,
+		ASSERT_ZERO(ret = opendht_put_part((unsigned char*)tmpkey, (unsigned char*)value, pkglen, secret, opendht_ttl, task,
 						   part_callback, param), put_err);
 		value += pkglen;
 		parts++;
@@ -625,7 +625,7 @@ opendht_put(unsigned char * key,
 	
 	/* put the index also */
 	LOG_VDEBUG("Putting index %d bytes under key '%s'\n", strlen(index), key);
-	ASSERT_ZERO(ret = opendht_put_part(key, index, strlen(index), secret, opendht_ttl, task,
+	ASSERT_ZERO(ret = opendht_put_part(key, (unsigned char*)index, strlen(index), secret, opendht_ttl, task,
 					   part_callback, param), put_err);
 	task->status = 1; /* waiting.. */
 	ret = 0;
@@ -653,5 +653,5 @@ opendht_get(unsigned char * key,
             void (*callback) (char *key, char *value, void* param, int status),
 	    void *param)
 {
-	return opendht_task_init(OPENDHT_TASK_GET, callback, param, key, NULL, 0, NULL, 0, NULL);
+	return opendht_task_init(OPENDHT_TASK_GET, callback, param, (char*)key, NULL, 0, NULL, 0, NULL);
 }

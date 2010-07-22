@@ -27,6 +27,7 @@
 #include "netio_http.h"
 #ifdef CONFIG_SIP_ENABLED
 #include "sipp.h"
+#include "sipp_mp.h"
 #include "access_control.h"
 #endif
 
@@ -173,7 +174,6 @@ webconf_process_req(netio_http_conn_t *conn, void *pkg)
 
 	} else if (str_startswith(conn->url, "/shutdown")) {
 		char *redir = 0, *resp = 0;
-		void *ptr = 0;
 
 		redir = netio_http_conn_get_param(conn, "return_url");
 		if (redir && (resp = mallocz(strlen(redir) + 256))) {
@@ -203,7 +203,7 @@ webconf_process_req(netio_http_conn_t *conn, void *pkg)
 				execvp(*tokens, tokens);
 			}
 			
-			if (resp = mallocz(strlen(cmd) + 128)) {
+			if ((resp = mallocz(strlen(cmd) + 128))) {
 				sprintf(resp, "'%s' was executed as process %d", cmd, ret);
 				netio_http_respond_str(conn, 200, "OK", resp);
 			} else {
@@ -216,7 +216,7 @@ webconf_process_req(netio_http_conn_t *conn, void *pkg)
 		freez(resp);
 #endif
 	} else if (str_startswith(conn->url, "/web/")) {
-		char *filename = 0, *buf = 0;
+		char *filename = 0;
 		char *filepath = conn->url + 4; /* skip '/web' */
 		struct stat sdata;
 		int found = 0;
@@ -232,7 +232,7 @@ webconf_process_req(netio_http_conn_t *conn, void *pkg)
 			strcat(filename, filepath);
 			
 			/* cut off */
-			if (filepath = strchr(filename, '?'))
+			if ((filepath = strchr(filename, '?')))
 				filepath[0] = 0;
 			
 			if (stat(filename, &sdata)) {
@@ -273,11 +273,9 @@ webconf_process_req(netio_http_conn_t *conn, void *pkg)
 }
 
 /* this gets called when an config has been updated */
-static int
+static void
 webconf_cb_config_update(processor_config_t *config, char *k, char *v)
 {
-	int ret = -1;
-
 	/* webdir & shutdown command are used dynamically anyway.. */
 	if (!strcmp(k, P2PSHIP_CONF_WEBCONF_SS)) {
 		char *ss_addr;
@@ -287,13 +285,13 @@ webconf_cb_config_update(processor_config_t *config, char *k, char *v)
 			ASSERT_TRUE((webconf_ss = netio_http_server_create(ss_addr, 
 									   webconf_process_req, NULL)) != -1, err);
 		} else {
+			int ret;
 			ASSERT_ZERO((ret = netio_http_server_modif(webconf_ss, ss_addr)) != -1, err);
 			webconf_ss = ret;
 		}
 	}
-	ret = 0;
  err:
-	return ret;
+	return;
 }
 
 #ifdef CONFIG_SIP_ENABLED
@@ -329,14 +327,14 @@ webconf_un_receive_sip_log(char *event, void *data, void *eventdata)
 
 	ASSERT_TRUE((tmp = append_str(e->local_aor, str, &size, &len)) && (str = tmp), err);
 	ASSERT_TRUE((tmp = append_str(";", str, &size, &len)) && (str = tmp), err);
-	if (ident = ident_find_by_aor(e->local_aor))
+	if ((ident = ident_find_by_aor(e->local_aor)))
 		name = ident->username;
 	ASSERT_TRUE((tmp = append_str((name? name:""), str, &size, &len)) && (str = tmp), err);
 	ASSERT_TRUE((tmp = append_str(";", str, &size, &len)) && (str = tmp), err);
     
 	ASSERT_TRUE((tmp = append_str(e->remote_aor, str, &size, &len)) && (str = tmp), err);
 	ASSERT_TRUE((tmp = append_str(";", str, &size, &len)) && (str = tmp), err);
-	if (r = ident_find_foreign_reg(e->remote_aor))
+	if ((r = ident_find_foreign_reg(e->remote_aor)))
 		name = r->name;
 	ASSERT_TRUE((tmp = append_str((name? name:""), str, &size, &len)) && (str = tmp), err);
 	ASSERT_TRUE((tmp = append_str(";", str, &size, &len)) && (str = tmp), err);
@@ -354,7 +352,7 @@ webconf_un_receive_sip_log(char *event, void *data, void *eventdata)
 	ASSERT_TRUE((tmp = append_str(";\n", str, &size, &len)) && (str = tmp), err);
 	
 	/* loop through and send */
-	while (s = ship_list_next(un_events, &ptr)) {
+	while ((s = ship_list_next(un_events, &ptr))) {
 		if (getpeername(*s, addr, &addrlen)) {
 			netio_close_socket(*s);
 			ship_list_remove(un_events, s);
@@ -382,7 +380,6 @@ webconf_un_read_cb(int s, char *data, ssize_t datalen)
 {
 	if (datalen > 0) {
 		char *ret = 0;
-		int val = -1;
 		char *conf, *conf_val;
 		
 		LOG_VDEBUG("got '%s' over unix socket\n", data);
@@ -391,7 +388,7 @@ webconf_un_read_cb(int s, char *data, ssize_t datalen)
 			if (processor_config_is_valid_key(conf)) {
 				if (!(conf_val = processor_config_string(p_config, conf)))
 					conf_val = "";
-				if (ret = mallocz(strlen(conf) + strlen(conf_val) + 10))
+				if ((ret = mallocz(strlen(conf) + strlen(conf_val) + 10)))
 					sprintf(ret, "%s:%s", conf, conf_val);
 				
 				LOG_VDEBUG("sending config value for %s:%s\n", conf, conf_val);
@@ -400,7 +397,7 @@ webconf_un_read_cb(int s, char *data, ssize_t datalen)
 				ret = strdup("invalid key");
 			}
 		} else if (str_startswith(data, "set_conf:")) {
-			if (conf_val = strchr(conf, '=')) {
+			if ((conf_val = strchr(conf, '='))) {
 				conf_val[0] = 0;
 				conf_val++;
 
@@ -442,10 +439,10 @@ webconf_un_read_cb(int s, char *data, ssize_t datalen)
 				ret = strdup("");
 			
 		} else if (str_startswith(data, "events:")) {
-			int *s2 = 0;
 #ifdef CONFIG_SIP_ENABLED
+			int *s2 = 0;
 			if (!strcmp(conf, "sip_log")) {
-				if (s2 = mallocz(sizeof(int))) {
+				if ((s2 = mallocz(sizeof(int)))) {
 					*s2 = s;
 					ship_lock(un_events);
 					ship_list_push(un_events, s2);
@@ -463,9 +460,9 @@ webconf_un_read_cb(int s, char *data, ssize_t datalen)
 			char *name = 0;
 			ship_ht_t *list = 0;
 
-			if (listname = strchr(conf, ':')) {
+			if ((listname = strchr(conf, ':'))) {
 				listname++;
-				if (name = strchr(listname, ':'))
+				if ((name = strchr(listname, ':')))
 					name++;
 				if (str_startswith(listname, "whitelist"))
 					list = ac_lists_whitelist();
@@ -478,17 +475,17 @@ webconf_un_read_cb(int s, char *data, ssize_t datalen)
 				char *tmp;
 				ship_list_t *names = 0;
 				
-				if (tmp = append_str("", ret, &size, &len))
+				if ((tmp = append_str("", ret, &size, &len)))
 					ret = tmp;
 
-				if (names = ship_ht_keys(list)) {
-					while(name = ship_list_pop(names)) {
-						if (tmp = append_str(name, ret, &size, &len))
+				if ((names = ship_ht_keys(list))) {
+					while((name = ship_list_pop(names))) {
+						if ((tmp = append_str(name, ret, &size, &len)))
 							ret = tmp;
 						/* todo: add the name & other metainfo */
-						if (tmp = append_str(",User name", ret, &size, &len))
+						if ((tmp = append_str(",User name", ret, &size, &len)))
 							ret = tmp;
-						if (tmp = append_str("\n", ret, &size, &len))
+						if ((tmp = append_str("\n", ret, &size, &len)))
 							ret = tmp;						
 						free(name);
 					}

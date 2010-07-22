@@ -16,34 +16,14 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
-#ifndef __EXT_API_H__
-#define __EXT_API_H__
+#ifndef __ADDRBOOK_H__
+#define __ADDRBOOK_H__
 
 #include "ship_utils.h"
 
-typedef struct extapi_http_req_s {
-
-	char id[17]; // clumsy’ but ..
-	char *request;
-	int request_len;
-	char *tracking_id;
-	int piece_number;
-
-	char *from_aor;
-	char *to_aor;
-
-	char *buf;
-	int buf_len;
-	int data_len;
-} extapi_http_req_t;
-
-#ifdef CONFIG_HTTPPROXY_ENABLED
-int extapi_register_p2phttp_handler(char *aor, const int dport, addr_t *addr, const int expire, 
-				    int (*func) (netio_http_conn_t *conn, void *pkg, extapi_http_req_t* req), void *pkg);
-#endif
-
-void extapi_register();
-extapi_http_req_t *extapi_get_http_req(const char *id);
-void extapi_http_data_return(extapi_http_req_t *req, char *data, int odatalen);
+void addrbook_register();
+int addrbook_import_contacts(ship_list_t *newco, int *concount, int query);
+int addrbook_has_contact(char *user_aor, char *contact_aor);
+int addrbook_retrieve_contacts(ship_list_t *list);
 
 #endif

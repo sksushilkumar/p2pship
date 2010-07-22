@@ -24,6 +24,8 @@
 #include "processor.h"
 #include "trustman.h"
 #include "ident.h"
+#include "addrbook.h"
+#include "netio_http.h"
 
 #define trustman_pf_get_template "http://%s/pathlength/from/%s/to/%s/"
 
@@ -35,6 +37,7 @@
 static ship_list_t *params_ht = NULL;
 static char *pathfinder = 0;
 static int trustman_fetch_params(trustparams_t *params);
+static trustparams_t *trustman_get_trustparams(char *from_aor, char *to_aor);
 
 static void
 trustman_trustparams_free(trustparams_t *params)
@@ -64,13 +67,13 @@ trustman_trustparams_new(char *from_aor, char *to_aor)
 	return 0;
 }
 
-static int
+static void
 trustman_cb_config_update(processor_config_t *config, char *k, char *v)
 {
 	freez(pathfinder);
-	if (pathfinder = strdup(processor_config_string(config, P2PSHIP_CONF_PATHFINDER)))
-		return 0;
-	return -1;
+	if ((pathfinder = strdup(processor_config_string(config, P2PSHIP_CONF_PATHFINDER))))
+		return;
+	return;
 }
 
 int
@@ -79,7 +82,7 @@ trustman_init(processor_config_t *config)
 	ASSERT_TRUE(params_ht = ship_list_new(), err);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_PATHFINDER, trustman_cb_config_update);
 	processor_config_set_dynamic(config, P2PSHIP_CONF_USE_PATHFINDER);
-	ASSERT_ZERO(trustman_cb_config_update(config, NULL, NULL), err);
+	trustman_cb_config_update(config, NULL, NULL);
 	return 0;
  err:
 	return -1;
@@ -94,7 +97,7 @@ trustman_close()
 	ship_lock(params_ht);
 	params_ht = NULL;
 	ship_unlock(list);
-	while (param = ship_list_pop(list)) {
+	while ((param = ship_list_pop(list))) {
 		ship_lock(param->queued_packets);
 		ship_unlock(param->queued_packets);
 		trustman_trustparams_free(param);
@@ -174,7 +177,7 @@ trustman_fetch_params_cb(char *url, int respcode, char *data, int data_len, void
 	params->requesting = 0;
 	
 	/* we should do something with the queued packets.. */
-	while (ptr = ship_list_pop(params->queued_packets)) {
+	while ((ptr = ship_list_pop(params->queued_packets))) {
 		int (*func) (char *from_aor, char *to_aor, 
 			     char *params, int param_len,
 			     void *data) = ptr[0];
@@ -298,7 +301,7 @@ trustman_handle_trustparams(char *from_aor, char *to_aor, char *payload, int pkg
 	char *tmp = 0;
 
 	/* save trust params somewhere as from_aor - to_aor.. */
-	if (tmp = mallocz(pkglen+1))
+	if ((tmp = mallocz(pkglen+1)))
 		memcpy(tmp, payload, pkglen);
 	
 	LOG_DEBUG("Got remotely trust parameters: '%s'\n", tmp);
@@ -373,7 +376,7 @@ trustman_get_valid_trustparams(char *from_aor, char *to_aor)
 		/* go through the ident's buddies, check whether we
 		   have any info on this guy */
 		ident_t *ident = NULL;
-		if (ident = ident_find_by_aor(from_aor)) {
+		if ((ident = ident_find_by_aor(from_aor))) {
 			new_len = ident_data_bb_get_first_level(ident->buddy_list, to_aor);
 			if (new_len > -1)
 				new_len += 2;
@@ -409,12 +412,11 @@ trustparams_t *
 trustman_get_create_trustparams(char *from_aor, char *to_aor)
 {
 	trustparams_t *params = 0;
-	void *ptr = 0;
 
 	ship_lock(params_ht);
 	params = trustman_get_trustparams(from_aor, to_aor);
 	if (!params) { 
-		if (params = trustman_trustparams_new(from_aor, to_aor)) {
+		if ((params = trustman_trustparams_new(from_aor, to_aor))) {
 			ship_lock(params->queued_packets);
 			ship_list_add(params_ht, params);
 		}

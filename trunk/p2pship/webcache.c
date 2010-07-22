@@ -22,6 +22,9 @@
 #include "processor.h"
 #include "netio_http.h"
 #include "ident.h"
+#include "webcache.h"
+#include "conn.h"
+#include "olclient.h"
 
 /* the currently in-progree dls */
 static ship_ht_t *all_dls = 0;
@@ -159,7 +162,7 @@ webcache_save()
 	ASSERT_TRUE((tmp = append_str(tbuf, buf, &size, &len)) && (buf = tmp), err);
 	ASSERT_TRUE((tmp = append_str("\n#\n\n", buf, &size, &len)) && (buf = tmp), err);
 	
-	while (e = ship_ht_next(webcache_cache, &ptr)) {
+	while ((e = ship_ht_next(webcache_cache, &ptr))) {
 		
 		/* format: filename,expires=url */
 		ASSERT_TRUE((tmp = append_str(e->filename, buf, &size, &len)) && (buf = tmp), err);
@@ -262,7 +265,7 @@ webcache_flush_removed()
 		return;
 	
 	ship_lock(webcache_cache);
-	while (cache = ship_list_pop(webcache_removed)) {
+	while ((cache = ship_list_pop(webcache_removed))) {
 		webcache_tracker_free(cache);
 	}
 	ship_unlock(webcache_cache);
@@ -278,7 +281,7 @@ webcache_get_resource(char *url, char **buf, int *len)
 
 	ship_lock(webcache_cache);
 	*buf = 0;
-	if (e = ship_ht_get_string(webcache_cache, url)) {
+	if ((e = ship_ht_get_string(webcache_cache, url))) {
 		if (e->expires > time(0)) {
 			ASSERT_TRUE(*buf = mallocz(e->size + 1), err);
 			*len = e->size;
@@ -287,7 +290,7 @@ webcache_get_resource(char *url, char **buf, int *len)
 			ASSERT_TRUE(fread(*buf, sizeof(char), *len, f) == *len, err);
 			e->last_access = time(0);
 			ret = 0;
-		} else if (e = ship_ht_remove(webcache_cache, e)) {			
+		} else if ((e = ship_ht_remove(webcache_cache, e))) {			
 			ship_list_add(webcache_removed, e);
 			webcache_save();
 			webcache_flush_removed();
@@ -332,19 +335,19 @@ webcache_record(char *tracking_id, char *url, char *data, int datalen)
 		ASSERT_TRUE(tmp = append_mem(data, datalen, cache->buf, &cache->buflen, &cache->datalen), err);
 		cache->buf = tmp;
 
-		if (conn = netio_http_parse_header(cache->buf, cache->datalen)) {
+		if ((conn = netio_http_parse_header(cache->buf, cache->datalen))) {
 			char *tmp;
 
 			/* cache by default */
 			cache->cache = 1;
 			cache->expires = 3600*2; /* what should this be? */
 
-			if (tmp = netio_http_get_header(conn, "Pragma")) {
+			if ((tmp = netio_http_get_header(conn, "Pragma"))) {
 				if (!strcmp(tmp, "no-cache"))
 					cache->cache = 0;
 			}
 
-			if (tmp = netio_http_get_header(conn, "Cache-Control")) {
+			if ((tmp = netio_http_get_header(conn, "Cache-Control"))) {
 				char *param;
 				
 				if (!strcmp(tmp, "public")) {
@@ -353,7 +356,7 @@ webcache_record(char *tracking_id, char *url, char *data, int datalen)
 					   str_startswith(tmp, "max-age")) {
 					
 					cache->cache = 1;
-					if (param = strchr(tmp, '=')) {
+					if ((param = strchr(tmp, '='))) {
 						cache->expires = atoi(param+1);
 					}
 				} else if (strstr(tmp, "no-cache")) {
@@ -430,7 +433,7 @@ webcache_make_room(int size)
 	now = time(0);
 	
 	/* clear first all expired */
-	while (e = ship_ht_next(webcache_cache, &ptr)) {
+	while ((e = ship_ht_next(webcache_cache, &ptr))) {
 		if (now > e->expires &&
 		    (e = ship_ht_remove(webcache_cache, e))) {
 			ship_list_add(webcache_removed, e);
@@ -449,7 +452,7 @@ webcache_make_room(int size)
 		ptr = 0;
 		e2 = 0;
 		totsize = 0;
-		while (e = ship_ht_next(webcache_cache, &ptr)) {
+		while ((e = ship_ht_next(webcache_cache, &ptr))) {
 			if (!e2 || e->last_access < e2->last_access) {
 				e2 = e;
 			}
@@ -480,7 +483,7 @@ webcache_import_entry(char *url, char *filename, int size, int expires)
 		goto err;
 
 	/* remove previous entry, if one exists */
-	if (cache = ship_ht_remove_string(webcache_cache, url)) {
+	if ((cache = ship_ht_remove_string(webcache_cache, url))) {
 		ship_list_add(webcache_removed, cache);
 	}
 	
@@ -522,9 +525,9 @@ webcache_close_trackers(char *tracking_id)
 {
 	ship_ht_t *dls;
 	ship_lock(all_dls);
-	if (dls = ship_ht_remove_string(all_dls, tracking_id)) {
+	if ((dls = ship_ht_remove_string(all_dls, tracking_id))) {
 		webcache_tracker_t *cache = 0;
-		while (cache = ship_ht_pop(dls)) {
+		while ((cache = ship_ht_pop(dls))) {
 			/* ok, now index & save! */
 			if (cache->size > 0 && cache->expires > 0 && cache->filename)
 				webcache_import_entry(cache->url, cache->filename, cache->size, cache->expires);
@@ -535,13 +538,12 @@ webcache_close_trackers(char *tracking_id)
 	ship_unlock(all_dls);
 }
 
-static int
+static void
 webcache_cb_config_update(processor_config_t *config, char *k, char *v)
 {
 	processor_config_get_int(config, P2PSHIP_CONF_WEBCACHE_FILELIMIT, &webcache_file_limit);
 	processor_config_get_int(config, P2PSHIP_CONF_WEBCACHE_LIMIT, &webcache_limit);
 	processor_config_get_enum(config, P2PSHIP_CONF_WEBCACHE_STRICTNESS, &cache_strictness);
-	return 0;
 }
 
 static int
@@ -584,8 +586,8 @@ webcache_close()
 		ship_ht_t *dl = 0;
 		ship_lock(all_dls);
 		
-		while (dl = ship_ht_pop(all_dls)) {
-			while (cache = ship_ht_pop(dl)) {
+		while ((dl = ship_ht_pop(all_dls))) {
+			while ((cache = ship_ht_pop(dl))) {
 				webcache_tracker_free_remove(cache);
 			}
 			ship_ht_free(dl);
@@ -596,7 +598,7 @@ webcache_close()
 
 	if (webcache_cache) {
 		ship_lock(webcache_cache);
-		while (cache = ship_ht_pop(webcache_cache)) {
+		while ((cache = ship_ht_pop(webcache_cache))) {
 			webcache_tracker_free(cache);
 		}
 
@@ -646,7 +648,7 @@ webcache_p2p_get_resource_hosts(char *url, ship_list_t *hosts)
 
 	ship_lock(resource_id_cache);
 	ASSERT_TRUE(k = ship_ht2_keys(resource_id_cache, url), err);
-	while (key = ship_list_pop(k)) {
+	while ((key = ship_list_pop(k))) {
 		ship_list_add(hosts, key);
 	}
 	ship_list_free(k);
@@ -665,7 +667,7 @@ webcache_p2p_get_resource_id(char *host, char *url)
 	resource_id_cache_t *rid = 0;
 	ship_lock(resource_id_cache);
 
-	if (rid = ship_ht2_get_string(resource_id_cache, url, host)) {
+	if ((rid = ship_ht2_get_string(resource_id_cache, url, host))) {
 		if (rid->expires >= time(0))
 			ret = strdup(rid->resource);
 		else {
@@ -674,7 +676,6 @@ webcache_p2p_get_resource_id(char *host, char *url)
 			free(rid);
 		}
 	}
- err:
 	ship_unlock(resource_id_cache);
 	return ret;
 }
@@ -686,11 +687,10 @@ webcache_p2p_has_resource_id(char *host, char *url)
 	resource_id_cache_t *rid = 0;
 	ship_lock(resource_id_cache);
 
-	if (rid = ship_ht2_get_string(resource_id_cache, url, host)) {
+	if ((rid = ship_ht2_get_string(resource_id_cache, url, host))) {
 		if (rid->expires >= time(0))
 			ret = 1;
 	}
- err:
 	ship_unlock(resource_id_cache);
 	return ret;
 }
@@ -704,7 +704,7 @@ webcache_p2p_store_resource_id(char *host, char *url, char *resource, int size, 
 	
 	ship_lock(resource_id_cache);
 
-	if (rid = ship_ht2_remove_string(resource_id_cache, url, host)) {
+	if ((rid = ship_ht2_remove_string(resource_id_cache, url, host))) {
 		freez(rid->resource);
 	} else {
 		ASSERT_TRUE(rid = mallocz(sizeof(*rid)), err);
@@ -796,7 +796,7 @@ resourcefetch_close()
 	if (pending_rfs) {
 		pending_rf_t *rf;
 		ship_lock(pending_rfs);
-		while (rf = ship_list_pop(pending_rfs)) {
+		while ((rf = ship_list_pop(pending_rfs))) {
 			rf->func(rf->data, rf->host, rf->rid, NULL, 0);
 			resourcefetch_free(rf);
 		}
@@ -807,7 +807,7 @@ resourcefetch_close()
 	if (resource_id_cache) {
 		resource_id_cache_t *rid = 0;
 		ship_lock(resource_id_cache);
-		while (rid = ship_ht2_pop(resource_id_cache)) {
+		while ((rid = ship_ht2_pop(resource_id_cache))) {
 			freez(rid->resource);
 			free(rid);
 		}
@@ -818,7 +818,7 @@ resourcefetch_close()
 	if (resources) {
 		char *val;
 		ship_lock(resources);
-		while (val = ship_ht_pop(resources)) {
+		while ((val = ship_ht_pop(resources))) {
 			freez(val);
 		}
 		ship_ht_free(resources);
@@ -861,7 +861,7 @@ resourcefetch_handle_message(char *data, int data_len,
 		/* load file .. */
 		if (sdata.st_size && !(f = fopen(fn, "r")))
 			sdata.st_size = 0;
-		if (buf = malloc(sdata.st_size + strlen(rid) + 32)) {
+		if ((buf = malloc(sdata.st_size + strlen(rid) + 32))) {
 			size_t r = 0;
 			int l = 0;
 			
@@ -888,7 +888,7 @@ resourcefetch_handle_message(char *data, int data_len,
 		
 		/* find the entry .. */
 		ship_lock(pending_rfs);
-		while (rf = ship_list_next(pending_rfs, &ptr)) {
+		while ((rf = ship_list_next(pending_rfs, &ptr))) {
 			if (!strcmp(rid, rf->rid) && !strcmp(source, rf->host)) {
 				ship_list_remove(pending_rfs, rf);
 				// halt
@@ -988,8 +988,8 @@ resourcefetch_store(char *filename, char **id)
 	int ret = -1;
 	char *dup = 0, *old = 0;
 	
-	ASSERT_TRUE(*id = ship_hmac_sha1_base64(filename, "todo.."), err);
-	ASSERT_TRUE(dup = strdup(filename), err);
+	ASSERT_TRUE(*id = (char*)ship_hmac_sha1_base64(filename, "todo.."), err);
+	ASSERT_TRUE(dup = strdupz(filename), err);
 	LOG_DEBUG("storing resource %s under id %s\n", filename, *id);
 	
 	ship_lock(resources);
@@ -1010,7 +1010,7 @@ resourcefetch_remove(char *filename)
 	char *tmp = 0, *tmp2 = 0;
 	int ret = -1;
 
-	ASSERT_TRUE(tmp = ship_hmac_sha1_base64(filename, "todo.."), err);
+	ASSERT_TRUE(tmp = (char*)ship_hmac_sha1_base64(filename, "todo.."), err);
 	tmp2 = ship_ht_remove_string(resources, tmp);
 	freez(tmp2);
 	freez(tmp);
@@ -1038,7 +1038,7 @@ webcache_p2p_lookup_cb_do(void *data, processor_task_t **wait, int wait_for_code
 	ship_lock(e);
 	while (e->lookups < MAX_NUMBER_OF_SIMULTANEOUS_LOOKUPS && ship_list_first(e->lookup_queue)) {
 		/* remove one entry. fetch it */
-		if (host = ship_list_pop(e->lookup_queue)) {
+		if ((host = ship_list_pop(e->lookup_queue))) {
 			char *rid = 0;
 
 			/* stop if we already got the data */
@@ -1089,7 +1089,6 @@ webcache_p2p_lookup_cb(char *key, char *data, char *signer, void *param, int sta
 {
 	webcache_p2p_lookup_entry_t *e = param;
 	if (data && signer && status > -1) {
-		ship_list_t *urls = 0;
 		char *tmp = 0;
 		
 		/* parse the info into the common cache for these things */
@@ -1098,7 +1097,7 @@ webcache_p2p_lookup_cb(char *key, char *data, char *signer, void *param, int sta
 		ship_unlock(p2p_mappings);
 		
 		/* check async whether we found that thing during the lookup */
-		if (tmp = strdup(signer)) {
+		if ((tmp = strdup(signer))) {
 			ship_lock(e);
 			ship_list_add(e->lookup_queue, tmp);
 			ship_obj_ref(e);
@@ -1116,7 +1115,7 @@ int
 webcache_p2p_lookup(char *url, void *ptr, void (*func) (char *url, void *obj, char *data, int datalen))
 {
 	int ret = -1, found = 0;
-	char *k = 0, *rid = 0;
+	char *k = 0;
 	webcache_p2p_lookup_entry_t *e = 0; // todo: ship obj this!
 	ship_list_t *conn_peers = 0;
 	
@@ -1134,9 +1133,9 @@ webcache_p2p_lookup(char *url, void *ptr, void (*func) (char *url, void *obj, ch
 	/* here, we should first check whether the peers we are
 	   connected to have this url */
 	ASSERT_TRUE(conn_peers = ship_list_new(), err);
-	ASSERT_ZERO(conn_get_connected_peers(NULL, conn_peers), err);
+	conn_get_connected_peers(NULL, conn_peers);
 	
-	while (k = ship_list_pop(conn_peers)) {
+	while ((k = ship_list_pop(conn_peers))) {
 		if (!found && webcache_p2p_has_resource_id(k, e->url)) {
 			ship_list_add(e->lookup_queue, k);
 			found = 1;
@@ -1147,7 +1146,7 @@ webcache_p2p_lookup(char *url, void *ptr, void (*func) (char *url, void *obj, ch
 	/* if we did not fetch anything, then check whether we know of
 	   someone that should have it. */
 	if (!found && !webcache_p2p_get_resource_hosts(e->url, conn_peers) && ship_list_first(conn_peers)) {
-		while (k = ship_list_pop(conn_peers)) {
+		while ((k = ship_list_pop(conn_peers))) {
 			ship_list_add(e->lookup_queue, k);
 		}
 	}
@@ -1186,7 +1185,6 @@ webcache_p2p_update()
 	void *ptr = 0;
 	char *buf = 0;
 	ident_t *ident = 0;
-	char *aor = NULL;
 	/* todo: this should actually be called also when we change networks */
 
 	/* go through list, remove all that have been removed or validity changed */
@@ -1202,9 +1200,9 @@ webcache_p2p_update()
 	ship_lock(webcache_cache);
 	
 	/* remove removed and updated ones */
-	while (e = ship_list_next(webcache_removed, &ptr)) {
+	while ((e = ship_list_next(webcache_removed, &ptr))) {
 		LOG_VDEBUG("should remove advert for %s\n", e->url);
-		if (buf = mallocz(strlen(e->url) + strlen(WEBCACHE_KEY_PREFIX) + 2)) {
+		if ((buf = mallocz(strlen(e->url) + strlen(WEBCACHE_KEY_PREFIX) + 2))) {
 			strcpy(buf, WEBCACHE_KEY_PREFIX);
 			strcat(buf, e->url);
 			resourcefetch_remove(e->filename);
@@ -1215,7 +1213,7 @@ webcache_p2p_update()
 	/* this is logic that chould be changed according to some
 	   optimal algorithm / scheme */
 	ptr = 0;
-	while (e = ship_ht_next(webcache_cache, &ptr)) {
+	while ((e = ship_ht_next(webcache_cache, &ptr))) {
 		char *data = 0, *tmp = 0;
 		int len = 0, size = 0;
 		char *rid = 0, *u = 0;
@@ -1224,7 +1222,7 @@ webcache_p2p_update()
 			continue;
 		
 		LOG_VDEBUG("should advert %s\n", e->url);
-		if (buf = mallocz(strlen(e->url) + strlen(WEBCACHE_KEY_PREFIX) + 2)) {
+		if ((buf = mallocz(strlen(e->url) + strlen(WEBCACHE_KEY_PREFIX) + 2))) {
 			char b2[64];
 			
 			strcpy(buf, WEBCACHE_KEY_PREFIX);

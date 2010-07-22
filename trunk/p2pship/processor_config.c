@@ -58,10 +58,10 @@ static char* DEFAULT_CONFIGURATION[] =
 
 		P2PSHIP_CONF_CALL_LOG_SHOW_PATHINFO, "yes", "Show trustpath for accepted calls", "bool", 0,
 		P2PSHIP_CONF_CALL_LOG_SHOW_DROPPED, "yes", "Show dropped calls", "bool", 0,
-#endif
 
 		P2PSHIP_CONF_PDD_RESET_MODE, "no", "Reset peer connections before each call", "bool", 0,
 		P2PSHIP_CONF_PDD_LOG, "no", "Log PDD data to separate file", "bool", 0,
+#endif
 		
 		P2PSHIP_CONF_IDENT_UA_MODE, "open", "UA mode", "enum:open,relax,paranoid", 0,
 		P2PSHIP_CONF_CONN_KEEPALIVE, "30", "Keepalive interval in seconds", "int", 0,
@@ -135,8 +135,9 @@ static char* DEFAULT_FILES[] =
 #define DEFAULT_WEB_DIR ".p2pship/web"
 #define DEFAULT_LOG_FILE ".p2pship/log"
 #define DEFAULT_WEBCACHE_INDEX ".p2pship/webcache/index.txt"
+#ifdef CONFIG_SIP_ENABLED
 #define DEFAULT_SIPP_ROUTING_FILE ".p2pship/sip-routing.xml"
-
+#endif
 #define DEFAULT_CONTACTS_FILE ".p2pship/contacts.log"
 
 /* the white / blacklists */
@@ -184,7 +185,7 @@ processor_config_close()
 {
 	char **ptr = 0;
 	if (processor_config_dynamic) {
-		while (ptr = (char**)ship_ht_pop(processor_config_dynamic)) {
+		while ((ptr = (char**)ship_ht_pop(processor_config_dynamic))) {
 			freez_arr(ptr, 4);
 		}
 		ship_ht_free(processor_config_dynamic);
@@ -234,7 +235,7 @@ processor_config_get_keys(ship_list_t *list)
 
 /* checks that the given string is a valid config key */
 static inline char **
-processor_config_get_default(char *key)
+processor_config_get_default(const char *key)
 {
 	char **arr = DEFAULT_CONFIGURATION;
 	while (*arr) {
@@ -258,6 +259,7 @@ processor_config_is_valid_key(char *key)
 }
 
 /* gets the default value for some key */
+/*
 static char *
 processor_config_get_default_val(processor_config_t *config, 
 				 char *key)
@@ -267,21 +269,21 @@ processor_config_get_default_val(processor_config_t *config,
 		return NULL;
 	return arr[1];
 }
+*/
 
-/* marks a config value as dynamic */
-int
-processor_config_set_dynamic(processor_config_t *config, char *key)
+/* marks a config value as dynamic (even though no callback) */
+void
+processor_config_set_dynamic(processor_config_t *config, const char *key)
 {
 	char **arr = processor_config_get_default(key);
-	if (!arr)
-		return -1;
-	arr[4] = (void*)-1;
+	if (arr)
+		arr[4] = (void*)-1;
 }
 
 /* sets a callback for dynamic config updates */
 int
 processor_config_set_dynamic_update(processor_config_t *config, 
-				    char *key, void (*func) (processor_config_t *c, char *k, char *v))
+				    const char *key, void (*func) (processor_config_t *c, char *k, char *v))
 {
 	/* hm.. these should be config-specific, but.. */
 	char **arr = processor_config_get_default(key);
@@ -346,7 +348,7 @@ processor_config_dump_json(processor_config_t *config, char **msg)
 	ASSERT_ZERO(processor_config_get_keys(list), err);
 	
 	ASSERT_TRUE(buf = append_str("var p2pship_config = {\n", buf, &buflen, &datalen), err);
-	while (key = ship_list_pop(list)) {
+	while ((key = ship_list_pop(list))) {
 		char **def = processor_config_get_default(key);
 		char *value = 0;
 		if (!def) continue;
@@ -382,7 +384,7 @@ processor_config_transfer(processor_config_t *target, processor_config_t *source
 {
 	processor_config_item_t *item;
 	void *ptr = 0;
-	while (item = ship_list_next(source, &ptr)) {
+	while ((item = ship_list_next(source, &ptr))) {
 		if (processor_config_set_string(target, item->key, item->value))
 			return -1;
 	}	
@@ -402,7 +404,7 @@ processor_config_check_ensure_homedir_file(char *filename, char *conf_name,
 	if (default_content)
 		ship_ensure_file(tmpstr, default_content);
 	else
-		ship_ensure_dir(tmpstr, default_content);
+		ship_ensure_dir(tmpstr);
 	ret = 0;
  err:
 	freez(tmpstr);
@@ -438,9 +440,10 @@ processor_config_load_defaults(processor_config_t *config)
 	ASSERT_ZERO(processor_config_check_ensure_homedir_file(DEFAULT_BLACKLIST_FILE, P2PSHIP_CONF_BLACKLIST_FILE, 
 							       "# The blacklist for P2PSHIP\n# Please don't edit white the proxy is running!\n#\n\n", config), err);
 	
+#ifdef CONFIG_SIP_ENABLED
 	ASSERT_ZERO(processor_config_check_ensure_homedir_file(DEFAULT_SIPP_ROUTING_FILE, P2PSHIP_CONF_SIPP_ROUTING_FILE, 
 							       "<sip-routing />\n", config), err);
-
+#endif
 	ASSERT_ZERO(ship_get_homedir_file(DEFAULT_WEB_DIR, &tmpstr), err);
 	ASSERT_ZERO(processor_config_set_string(config, P2PSHIP_CONF_WEB_DIR, tmpstr), err);
 
@@ -536,8 +539,8 @@ __processor_config_save_content_cb(void *data, int lc, char *key, char *value, c
 	/* modify only those that differ & part of the default set */
 	char *newvalue = processor_config_string(config, key);
 	if (processor_config_get_default(key) && 
-	    (!newvalue && strlen(value)) || 
-	    (newvalue && strcmp(newvalue, value))) {
+	    ((!newvalue && strlen(value)) || 
+	     (newvalue && strcmp(newvalue, value)))) {
 		ASSERT_TRUE((*buf) = append_str(key, *buf, size, len), err);
 		ASSERT_TRUE((*buf) = append_str(" = ", *buf, size, len), err);
 		if (newvalue)
@@ -558,7 +561,6 @@ __processor_config_save_ignore_cb(void *data, int lc, char *key, char *line)
 	void **blob = data;
 	char **buf = blob[0];
 	int *len = blob[1], *size = blob[2];
-	processor_config_t *config = blob[3];
 
 	(*buf) = append_str(line, *buf, size, len);
 }
@@ -600,20 +602,18 @@ processor_config_save(processor_config_t *config, char *filename)
 		       __processor_config_save_ignore_cb);
 	
 	/* go through the remaining entries, append those */
-	while (item = ship_list_next(dup, &ptr)) {
+	while ((item = ship_list_next(dup, &ptr))) {
 		/* should we save additional stuff.. ? */
-		//if (processor_config_get_default(item->key)) {
-			if (!added) {
-				ASSERT_TRUE(data = append_str("\n#\n# Added by the web configuration interface:\n\n", 
-							      data, &size, &len), err);
-				added = 1;
-			}
-			ASSERT_TRUE(data = append_str(item->key, data, &size, &len), err);
-			ASSERT_TRUE(data = append_str(" = ", data, &size, &len), err);
-			if (item->value)
-				ASSERT_TRUE(data = append_str(item->value, data, &size, &len), err);
-			ASSERT_TRUE(data = append_str("\n", data, &size, &len), err);
-			//}
+		if (!added) {
+			ASSERT_TRUE(data = append_str("\n#\n# Added by the web configuration interface:\n\n", 
+						      data, &size, &len), err);
+			added = 1;
+		}
+		ASSERT_TRUE(data = append_str(item->key, data, &size, &len), err);
+		ASSERT_TRUE(data = append_str(" = ", data, &size, &len), err);
+		if (item->value)
+			ASSERT_TRUE(data = append_str(item->value, data, &size, &len), err);
+		ASSERT_TRUE(data = append_str("\n", data, &size, &len), err);
 	}
 
 	if (!(f = fopen(filename, "w"))) {
@@ -658,7 +658,7 @@ processor_config_new()
 
 /* getters / setters */
 int 
-processor_config_set_int(processor_config_t *config, char *key, int value)
+processor_config_set_int(processor_config_t *config, const char *key, const int value)
 {
 	char buf[24];
 	sprintf(buf, "%d", value);
@@ -666,23 +666,22 @@ processor_config_set_int(processor_config_t *config, char *key, int value)
 }
 
 int 
-processor_config_set_string(processor_config_t *config, char *key, char *value)
+processor_config_set_string(processor_config_t *config, const char *key, const char *value)
 {
 	processor_config_item_t *item = 0;
 	int i = -2;
 	char *tmp = 0;
 	void *ptr = 0;
 
-	/* */
-	value = trim(value);
-
 	/* set only if len > 0 */
 	if (value && value[0]) {
 		ASSERT_TRUE(tmp = strdup(value), err);
 	}
 
+	tmp = trim(tmp);
+
 	/* try to replace first */
-	while (item = ship_list_next(config, &ptr)) {
+	while ((item = ship_list_next(config, &ptr))) {
 		if (!strcmp(item->key, key)) {
 			/* reverse order as maemo compiler seems to
 			   screw this up */
@@ -714,11 +713,11 @@ processor_config_set_string(processor_config_t *config, char *key, char *value)
 }
 
 void
-processor_config_remove(processor_config_t *config, char *key)
+processor_config_remove(processor_config_t *config, const char *key)
 {
 	processor_config_item_t *item;
 	void *ptr = 0, *last = 0;
-	while (item = ship_list_next(config, &ptr)) {
+	while ((item = ship_list_next(config, &ptr))) {
 		if (!strcmp(item->key, key)) {
 			ship_list_remove(config, item);
 			freez(item->value);
@@ -732,7 +731,7 @@ processor_config_remove(processor_config_t *config, char *key)
 
 /* ownership NOT given */
 int 
-processor_config_get_int(processor_config_t *config, char *key, int *value)
+processor_config_get_int(processor_config_t *config, const char *key, int *value)
 {
 	char *tmp;
 	if (!processor_config_get_string(config, key, &tmp)) {
@@ -744,7 +743,7 @@ processor_config_get_int(processor_config_t *config, char *key, int *value)
 }
 
 int 
-processor_config_is_true(processor_config_t *config, char *key)
+processor_config_is_true(processor_config_t *config, const char *key)
 {
 	int tmp;
 	if (processor_config_get_bool(config, key, &tmp) || !tmp)
@@ -754,7 +753,7 @@ processor_config_is_true(processor_config_t *config, char *key)
 }
 
 int 
-processor_config_is_false(processor_config_t *config, char *key)
+processor_config_is_false(processor_config_t *config, const char *key)
 {
 	int tmp;
 	if (processor_config_get_bool(config, key, &tmp) || tmp)
@@ -764,7 +763,7 @@ processor_config_is_false(processor_config_t *config, char *key)
 }
 
 int 
-processor_config_get_bool(processor_config_t *config, char *key, int *value)
+processor_config_get_bool(processor_config_t *config, const char *key, int *value)
 {
 	char *tmp;
 	if (!processor_config_get_string(config, key, &tmp)) {
@@ -780,12 +779,12 @@ processor_config_get_bool(processor_config_t *config, char *key, int *value)
 }
 
 int 
-processor_config_get_string(processor_config_t *config, char *key, char **value)
+processor_config_get_string(processor_config_t *config, const char *key, char **value)
 {
 	processor_config_item_t *item;
 	void *ptr = NULL;
 
-	while (item = ship_list_next(config, &ptr)) {
+	while ((item = ship_list_next(config, &ptr))) {
 		if (!strcmp(key, item->key) && item->value) {
 			*value = item->value;
 			return 0;
@@ -795,7 +794,7 @@ processor_config_get_string(processor_config_t *config, char *key, char **value)
 }
 
 int
-processor_config_get_enum(processor_config_t *config, char *key, int *value)
+processor_config_get_enum(processor_config_t *config, const char *key, int *value)
 {
 	int ret = -1;
 	char *tmp;
@@ -821,7 +820,7 @@ processor_config_get_enum(processor_config_t *config, char *key, int *value)
 }
 
 char *
-processor_config_string(processor_config_t *config, char *key)
+processor_config_string(processor_config_t *config, const char *key)
 {
 	char *ret = 0;
 	if (config && !processor_config_get_string(config, key, &ret))
@@ -830,7 +829,7 @@ processor_config_string(processor_config_t *config, char *key)
 }
 
 int
-processor_config_int(processor_config_t *config, char *key)
+processor_config_int(processor_config_t *config, const char *key)
 {
 	int ret = 0;
 	if (config && !processor_config_get_int(config, key, &ret))
@@ -839,7 +838,7 @@ processor_config_int(processor_config_t *config, char *key)
 }
 
 int
-processor_config_bool(processor_config_t *config, char *key)
+processor_config_bool(processor_config_t *config, const char *key)
 {
 	int ret = 0;
 	if (config && !processor_config_get_bool(config, key, &ret))

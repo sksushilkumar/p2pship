@@ -42,11 +42,13 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <netinet/in.h>
+
 #include "processor_config.h"
 #include "ship_utils.h"
 #include "ident_addr.h"
-#include <netinet/in.h>
 #include "ship_debug.h"
+#include "processor.h"
 
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 /* how many levels of bloombuddies do we store .. */
@@ -103,12 +105,14 @@ enum {
 
 /* functions for converting between formats: */
 SHIP_INCLUDE_TYPE(ident_addr_lookup);
+int ident_addr_sa_to_addr(struct sockaddr *sa, socklen_t sa_len, addr_t *addr);
 int ident_addr_str_to_addr(char *str, addr_t* addr);
 int ident_addr_addr_to_str(addr_t *addr, char **str);
 int ident_addr_addr_to_sa(addr_t *addr, struct sockaddr **sa, socklen_t *sa_len);
 int ident_addr_str_to_sa(char *str, struct sockaddr **sa, socklen_t *sa_len);
 int ident_addr_sa_to_str(struct sockaddr *sa, socklen_t sa_len, char *str);
 int ident_load_ident_xml(xmlNodePtr cur, void *ptr);
+int ident_addr_str_to_addr_lookup(char *str, addr_t* addr);
 
 /* more: */
 void ident_addr_in6_to_addr(struct in6_addr*, addr_t*);
@@ -260,9 +264,6 @@ typedef struct ident_s
 }
 ident_t;
 
-/* void ident_free(ident_t *ident); */
-/* int ident_init(ident_t *ret, char *sip_aor); */
-
 SHIP_INCLUDE_TYPE(ident);
 
 #include "services.h"
@@ -306,11 +307,11 @@ int ident_get_ident_struct_memory(ident_t **ident, const char *data);
 char *ident_get_regxml(ident_t *ident);
 
 /* inits & closes the identity manager */
-/* int ident_init(processor_config_t *config); */
-/* void ident_close(); */
+void ident_register();
 
 int ident_load_identities();
 int ident_save_identities();
+void ident_save_identities_async();
 ship_list_t *ident_get_identities();
 ship_list_t *ident_get_cas();
 
@@ -321,6 +322,8 @@ void *ident_get_service_data(ident_t *ident, service_type_t service_type);
 int ident_process_register(char *aor, service_type_t service_type, service_t *service, 
 			   addr_t *addr, int expire, void *pkg);
 ident_service_t *ident_service_new();
+void ident_service_close(ident_service_t *s, ident_t *ident);
+int ident_service_register(service_t *service);
 
 /* returns own reg package for AOR */
 char * ident_get_cached_reg_str(char *sip_aor);
@@ -338,15 +341,24 @@ ident_t *ident_register_new_empty_ident(char *sip_aor);
 
 service_t *ident_get_default_service(service_type_t service_type);
 int ident_register_default_service(service_type_t service_type, service_t *s);
+int ident_registration_is_valid(ident_t *ident, service_type_t service);
+int ident_lookup_registration(ident_t *ident, char *remote_aor, 
+			      reg_package_t **pkg, processor_task_t **wait);
+time_t ident_registration_timeleft(ident_t *ident);
 
 reg_package_t *ident_find_foreign_reg(char *sip_aor);
 void ident_reset_foreign_regs();
+int ident_import_foreign_reg(reg_package_t *reg);
 
 char *ident_get_status(char *aor);
 
 /* reg package data type handling */
 void ident_reg_free(reg_package_t *reg) ;
 reg_package_t *ident_reg_new(ident_t *ident);
+int ident_reg_xml_to_struct(reg_package_t **__reg, const char *data);
+int ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur);
+int ident_ca_xml_to_struct(ca_t **__ca, xmlNodePtr cur);
+int ident_contact_xml_to_struct(contact_t **__contact, xmlNodePtr cur);
 
 /* ident data type handling */
 int ident_set_aor(char **target, char *result);
@@ -355,6 +367,7 @@ int ident_set_aor(char **target, char *result);
 
 /* contacts */
 contact_t *ident_contact_new();
+void ident_contact_free(contact_t *contact);
 
 /* ca data type handling */
 void ident_ca_free(ca_t *ca);
@@ -370,15 +383,47 @@ ca_t *ident_get_issuer_ca(X509 *cert);
 #define ident_data_x509_get_subject_digest(cert) \
            ident_data_x509_get_name_digest(X509_get_subject_name(cert))
 
+void ident_data_print_cas(ship_list_t* cas);
+int ident_remove_ca(char *name);
+void ident_data_print_idents(ship_list_t* idents);
+void ident_data_print_cert(char *prefix, X509* cert);
+int ident_remove_ident(char *name);
+int ident_remove_ident_query(char *name, int query);
+int ident_import_file(char *file, int query);
+int ident_import_mem(char *data, int datalen, int query, int modif);
+int ident_import_ident_cas(ship_list_t *newi, ship_list_t *newc, int query, int modif, int *icount, int *ccount);
+int ident_autoreg_load();
+int ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text);
+int ident_create_new_reg(ident_t *ident);
+int ident_create_reg_xml(reg_package_t *reg, ident_t *ident, char **text);
 
+int ident_cert_is_trusted(X509 *cert);
+int ident_cert_is_valid(X509 *cert);
+
+
+/* buddy */
 buddy_t *ident_buddy_find(ident_t *ident, char *sip_aor);
 buddy_t *ident_buddy_new(char *name, char *sip_aor, char *shared_secret);
 buddy_t *ident_buddy_find_or_create(ident_t *ident, char *sip_aor);
 
 /* '********** */
 
-
 char *ident_data_x509_get_cn(X509_NAME* name);
+int ident_data_x509_get_validity(X509 *cert, time_t *start, time_t *end);
 
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+int ident_data_bb_encode(ship_list_t *buddy_list, buddy_t *buddy, char **buf, int *buflen, int level);
+int ident_data_bb_decode(char *data, int data_len, ship_bloom_t **bloom, int *level);
+int ident_data_bb_load_ascii(char *buf, ship_bloom_t *friends[]);
+int ident_data_bb_dump_ascii(ship_bloom_t *friends[], char **buf);
+int ident_data_bb_get_first_level(ship_list_t *buddy_list, char *to_aor);
+int ident_data_bb_find_connections_on_level(ship_list_t *buddy_list, char *remote_aor, int level, ship_list_t *list);
+#endif
+
+void ident_data_dump_identities_json(ship_list_t *identities, char **msg);
+void ident_data_dump_cas_json(ship_list_t *cas, char **msg);
+
+void ident_set_status(char *aor, char *status);
+int ident_has_ident(const char* aor, const char *password);
 
 #endif

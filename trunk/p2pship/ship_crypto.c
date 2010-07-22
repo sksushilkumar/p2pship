@@ -63,12 +63,12 @@ ship_decode_base64(char *input, int length, int* outlen)
 char *
 ship_encode_base64(char *input, int length)
 {
-	unsigned char * ret = NULL;
+	char *ret = NULL;
 	unsigned char in[48];
 	int blen, i=0, ilen, len=0, olen=0;
 	
 	blen = (((length + 2) / 3) * 4) + 3;
-	ASSERT_TRUE(ret = (unsigned char *)malloc(blen), err);
+	ASSERT_TRUE(ret = (char *)malloc(blen), err);
 	
 	while(i<length){
 		
@@ -78,7 +78,7 @@ ship_encode_base64(char *input, int length)
 		i += ilen;
 		
 		/* Each 48-byte text should encode to 64-byte binary */ 
-		len = EVP_EncodeBlock(ret+olen, in, ilen);
+		len = EVP_EncodeBlock((unsigned char*)ret+olen, in, ilen);
 		olen += len;
 	}
 
@@ -92,12 +92,12 @@ err:
 char *
 ship_decode_base64(char *input, int length, int* outlen)
 {
-	unsigned char * ret = NULL;
+	char *ret = NULL;
 	unsigned char in[64];
 	int blen, len=0, i=0, ilen, olen=0;
 	
 	blen = (((length + 3) / 4) * 3);
-	ASSERT_TRUE(ret = (unsigned char *)mallocz(blen), err); 
+	ASSERT_TRUE(ret = (char *)mallocz(blen), err); 
 	
 	while(i<length){
 		
@@ -107,7 +107,7 @@ ship_decode_base64(char *input, int length, int* outlen)
 		i += ilen;
 
 		/* Each 64-byte text should decode to 48-byte binary */ 
-		len = EVP_DecodeBlock(ret+olen, in, ilen);
+		len = EVP_DecodeBlock((unsigned char*)ret+olen, in, ilen);
 		olen += len;
 	}
 	
@@ -129,7 +129,7 @@ ship_hash_sha1_base64(char *data, int datalen)
 	char *ret = 0;
 	
 	ASSERT_TRUE(digest = (char *)mallocz(SHA_DIGEST_LENGTH), err);
-	ASSERT_TRUE(SHA1(data, datalen, digest), err);
+	ASSERT_TRUE(SHA1((unsigned char*)data, datalen, (unsigned char*)digest), err);
 	
 	ASSERT_TRUE(ret = ship_encode_base64(digest, SHA_DIGEST_LENGTH), err);
 	
@@ -161,8 +161,8 @@ ship_hash(const char *algo, unsigned char *data, unsigned char **hash)
 	ASSERT_TRUE(*hash = mallocz(size * sizeof(unsigned char)), err);
 	EVP_MD_CTX_init(&ctx);
 	ASSERT_TRUE(EVP_DigestInit_ex(&ctx, md, NULL), err);
-	ASSERT_TRUE(EVP_DigestUpdate(&ctx,data,strlen(data)), err); 
-	ASSERT_TRUE(EVP_DigestFinal_ex(&ctx, *hash, &len), err);
+	ASSERT_TRUE(EVP_DigestUpdate(&ctx, data, strlen((char*)data)), err); 
+	ASSERT_TRUE(EVP_DigestFinal_ex(&ctx, *hash, (unsigned int*)&len), err);
 	EVP_MD_CTX_cleanup(&ctx);
 	return len;
 	
@@ -180,8 +180,8 @@ ship_hmac_sha1_base64(char *key, char* secret)
 	
 	/* hmac key and shared secret */
 	ASSERT_TRUE((hmac_key = mallocz(SHA_DIGEST_LENGTH * sizeof(unsigned char) + 1)), err);
-	ASSERT_TRUE(HMAC(EVP_sha1(), secret, strlen(secret), key, strlen(key), hmac_key, &klen), err);
-	hmac_key64 = (unsigned char*)ship_encode_base64(hmac_key, klen);
+	ASSERT_TRUE(HMAC(EVP_sha1(), secret, strlen(secret), (unsigned char*)key, strlen(key), hmac_key, (unsigned int*)&klen), err);
+	hmac_key64 = (unsigned char*)ship_encode_base64((char*)hmac_key, klen);
  err:
 	freez(hmac_key);
 	return hmac_key64;
@@ -206,7 +206,7 @@ ship_encrypt(const char *algo, unsigned char *key, unsigned char *iv, unsigned c
 	}
 	
 	ASSERT_TRUE(bsize = EVP_CIPHER_block_size(ci), err);
-	tlen = strlen(text);
+	tlen = strlen((char*)text);
 	csize = ((tlen/bsize + 1) * bsize) + 1;
 	ASSERT_TRUE(cipher = mallocz(csize * sizeof(unsigned char)), err);
 	ASSERT_TRUE(EVP_EncryptInit_ex(&ctx, ci, NULL, key, iv), err);
@@ -301,7 +301,7 @@ ship_encrypt64 (const char *algo, unsigned char *key, unsigned char *iv, unsigne
 	int clen = 0;
 	
 	ASSERT_TRUE(tmp = ship_encrypt(algo, key, iv, text, &clen), err);
-	cipher64 = (unsigned char *)ship_encode_base64(tmp, clen);
+	cipher64 = (unsigned char *)ship_encode_base64((char*)tmp, clen);
 err:
 	freez(tmp);
 	return cipher64;
@@ -315,7 +315,7 @@ ship_decrypt64 (const char *algo, unsigned char *key, unsigned char *iv, unsigne
 	unsigned char *decipher = NULL;
 	int len = 0;
 	
-	ASSERT_TRUE(tmp = (unsigned char *)ship_decode_base64(cipher, strlen(cipher), &len), err);
+	ASSERT_TRUE(tmp = (unsigned char *)ship_decode_base64((char*)cipher, strlen((char*)cipher), &len), err);
 	decipher = ship_decrypt(algo, key, iv, tmp, len);
  err:
 	freez(tmp);
@@ -388,7 +388,6 @@ ship_sign(char *subject, int ttl, RSA* signer_key)
 {
 	X509 *x = 0, *ret = 0;
 	X509_NAME *tmp = 0;
-	BIGNUM *btmp;
 	EVP_PKEY *pr_key = 0;
 	
 	ASSERT_TRUE(x = X509_new(), err);
@@ -402,7 +401,7 @@ ship_sign(char *subject, int ttl, RSA* signer_key)
 	
 	ASSERT_TRUE(tmp = X509_get_subject_name(x), err);
 	ASSERT_TRUE(X509_NAME_add_entry_by_txt(tmp, "CN", MBSTRING_ASC, 
-					       subject, -1, -1, 0), err);
+					       (unsigned char*)subject, -1, -1, 0), err);
 	ASSERT_TRUE(X509_set_subject_name(x, tmp), err);
 
 	ASSERT_TRUE(X509_set_pubkey(x, pr_key), err);

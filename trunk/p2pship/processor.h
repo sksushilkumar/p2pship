@@ -119,9 +119,10 @@ int processor_init(processor_config_t *config);
 
 /* closes the processor & everyting */
 void processor_close();
+void processor_shutdown();
 
 /* registers a new module */
-int processor_register(processor_module_t *module);
+void processor_register(processor_module_t *module);
 
 /* inits just one module */
 int processor_init_module(const char *module, processor_config_t *config);
@@ -164,6 +165,10 @@ int processor_to(void *thread_id,
 		 int timeout_ms);
 
 void processor_run_async(void (*func)(void));
+int processor_tasks_add_periodic(int (*func) (void), int period);
+void processor_kill_workers(const char *type);
+int processor_create_worker(const char *type, void (*func)(processor_worker_t*), void *data,
+			    void (*kill_func)(processor_worker_t*));
 
 
 #define PROCESSOR_TO_ERROR -1

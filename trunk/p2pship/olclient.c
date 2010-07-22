@@ -19,10 +19,18 @@
 #include "olclient.h"
 #ifdef CONFIG_OPENDHT_ENABLED
 #include "libhipopendht.h"
+#include "ol_opendht.h"
 #endif
 #include "ship_utils.h"
 #include "ship_debug.h"
 #include "processor.h"
+
+#ifdef CONFIG_BROADCAST_ENABLED
+#include "ol_broadcast.h"
+#endif
+#ifdef CONFIG_P2PEXT_ENABLED
+#include "ol_p2pext.h"
+#endif
 
 /* crypto stuff */
 #define CRYPT_ALGO "aes-256-cbc"
@@ -34,7 +42,6 @@ static char* olclient_sign_xml_record(char *data, RSA *pr_key, X509 *cert);
 static char* olclient_create_wrap_xml_record(char *key, char *data, int timeout);
 static int olclient_decrypt_for_someone(olclient_verifier_t *pr_key, char *value, char **res_value);
 static char *olclient_verify_data_sig(olclient_signer_t *cert, char *data, char **signer);
-static char *olclient_parse_and_verify_data_sig(RSA *pu_key, char *data);
 
 static ship_obj_list_t *olclient_lookups = 0;
 static ship_list_t *olclient_modules = 0;
@@ -64,7 +71,7 @@ static int
 olclient_get_task_init(olclient_get_task_t *ret, olclient_lookup_t *lookup)
 {
  	ASSERT_TRUE(ret->id = mallocz(64), err);
-	sprintf(ret->id, "%08x.%d", ret, rand());
+	sprintf(ret->id, "%08x.%d", (unsigned int)ret, rand());
 
 	ship_obj_ref(lookup);
 	ret->lookup = lookup;
@@ -95,7 +102,6 @@ olclient_extra_free(olclient_extra_t *e)
 static void 
 olclient_lookup_free(olclient_lookup_t *l)
 {
-	char **result;
 	if (l->callback) {
 		l->callback(l->key, NULL, NULL, l->param, l->status);
 	}
@@ -190,7 +196,7 @@ olclient_module_new(const struct olclient_module mod, const char *name, void *mo
 {
 	struct olclient_module* ret = (struct olclient_module*)mallocz(sizeof(*ret));
 	memcpy(ret, &mod, sizeof(mod));
-	if (ret->name = strdup(name)) {
+	if ((ret->name = strdup(name))) {
 		ret->module_data = module_data;
 		return ret;
 	}
@@ -246,7 +252,7 @@ olclient_close()
 	if (olclient_modules) {
 		struct olclient_module *mod;
 		ship_lock(olclient_modules);
-		while (mod = (struct olclient_module *)ship_list_pop(olclient_modules)) {
+		while ((mod = (struct olclient_module *)ship_list_pop(olclient_modules))) {
 			mod->close(mod);
 			/* freez(mod->name); */
 			/* freez(mod); */
@@ -258,7 +264,7 @@ olclient_close()
 	/* close the storage */
 	if (entries) {
 		olclient_storage_entry_t *e;
-		while (e = ship_list_pop(entries)) {
+		while ((e = ship_list_pop(entries))) {
 			olclient_storage_entry_free(e);
 		}
 		ship_list_free(entries);
@@ -292,7 +298,7 @@ olclient_notify_complete(void *data, processor_task_t **wait, int wait_for_code)
 	/* is it our time to shine? */
 	if (callback) {
 		do {
-			if (res = (char*)ship_list_pop(l->results)) {
+			if ((res = (char*)ship_list_pop(l->results))) {
 				ship_unlock(l);
 				callback(l->key, res, l->signer_aor, l->param, 1);
 				freez(res);
@@ -345,14 +351,14 @@ olclient_cb_get(char *value, int status,
 			LOG_VDEBUG("decrypting using symmetric..\n");
 
 			/* generate 16-bytes iv from a cipher_secret */
-			ship_hash("md5", l->extra->cipher_secret, &iv);
+			ship_hash("md5", (unsigned char *)l->extra->cipher_secret, &iv);
 			/* generate 32-bytes key from a cipher_secret */
-			ship_hash("sha256", l->extra->cipher_secret, &cipher_key);
+			ship_hash("sha256", (unsigned char *)l->extra->cipher_secret, &cipher_key);
 			
 			if (cipher_key && iv) {
-				cipher_key64 = (unsigned char *)ship_encode_base64(cipher_key, 32);
-				iv64 = (unsigned char *)ship_encode_base64(iv, 16);
-				if (!(res_value = ship_decrypt64(CRYPT_ALGO, cipher_key, iv, value)))
+				cipher_key64 = (unsigned char *)ship_encode_base64((char*)cipher_key, 32);
+				iv64 = (unsigned char *)ship_encode_base64((char*)iv, 16);
+				if (!(res_value = (char*)ship_decrypt64(CRYPT_ALGO, cipher_key, iv, (unsigned char*)value)))
 					LOG_WARN("Cannot decrypt the data with the cipher_secret %s\n", cipher_key);
 			}
 			freez(value);
@@ -396,7 +402,7 @@ olclient_cb_get(char *value, int status,
 			value = 0;
 		}
 	}
- err:
+
 	ship_obj_ref(l);
 	if (status != 1)
 		ship_obj_list_remove(l->tasks, task);
@@ -445,13 +451,14 @@ olclient_get_to(void *data, processor_task_t **wait, int wait_for_code)
 	/* timeout expired on the lookup, clear the queue, call for
 	   notification */
 	ship_lock(l);
-	while (task = ship_list_next(l->tasks, &ptr)) {
+	while ((task = ship_list_next(l->tasks, &ptr))) {
 		LOG_DEBUG("timeout for lookup on module %s..\n", task->mod->name);
 	}
 
 	ship_obj_list_clear(l->tasks);
 	ship_unlock(l);
 	processor_tasks_add(olclient_notify_complete, l, olclient_notify_complete_done);
+	return 0;
 }
 
 
@@ -482,7 +489,7 @@ olclient_get_entry(char *key, void *param,  olclient_extra_t *extra,
 	arr[2] = extra;
 	arr[3] = callback;
 
-	ASSERT_TRUE(processor_tasks_add(olclient_get_entry_do, 
+	ASSERT_TRUE(processor_tasks_add(olclient_get_entry_do,
 					arr, 
 					olclient_get_entry_done), err);
 	return 0;
@@ -499,7 +506,6 @@ olclient_get_entry_done(void *data, int code)
 	void **arr = data;
 	char *key = arr[0];
 	void *param = arr[1];
-	olclient_extra_t *extra = arr[2];
 	void (*callback) (char *key, char *data, char *signer, void *param, int status) = arr[3];
 
 	if (code) {
@@ -527,7 +533,7 @@ olclient_get_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 	l->param = param;
 	l->extra = extra;
 	l->callback = callback;
-	while (mod = (struct olclient_module*)ship_list_next(olclient_modules, &ptr)) {    	    			    
+	while ((mod = (struct olclient_module*)ship_list_next(olclient_modules, &ptr))) {    	    			    
 		olclient_get_task_t *task = (olclient_get_task_t *)ship_obj_new(TYPE_olclient_get_task, l);
 		if (!task)
 			continue;
@@ -543,16 +549,16 @@ olclient_get_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 		if (l->extra->verify_flags & VERIFY_SIGNER) {
 			if (l->extra->signer && // if no signer, then just verify that it is someone trusted!
 			    mod->get_signed && 
-			    !mod->get_signed(key, l->extra->signer, task /*olclient_cb_get, l, mod*/))
+			    !mod->get_signed(key, l->extra->signer, task))
 				ret = 0;
 			/* module doesn't support get_signed, we call mod->get and
 			 * ask cb_get_signed to verify the data signature instead */
 			else {
 				task->callback = olclient_cb_get_signed;
-				if (!mod->get(key, task /*olclient_cb_get_signed, l, mod*/))
+				if (!mod->get(key, task))
 					ret = 0;
 			} 
-		} else if (!mod->get(key, task /*olclient_cb_get, l, mod */))
+		} else if (!mod->get(key, task))
 			ret = 0;
 		
 		if (ret)
@@ -622,11 +628,11 @@ olclient_get_with_secret(char *key, char *cipher_secret, void *param,
 	
 	/* hmac the key and cipher secret */
 	ASSERT_TRUE(hmac_key = mallocz(SHA_DIGEST_LENGTH * sizeof(unsigned char) + 1), err);
-	ASSERT_TRUE(HMAC(EVP_sha1(), cipher_secret, strlen(cipher_secret), key, strlen(key), hmac_key, &klen), err);
-	ASSERT_TRUE(hmac_key64 = (unsigned char*)ship_encode_base64(hmac_key, klen), err);
+	ASSERT_TRUE(HMAC(EVP_sha1(), cipher_secret, strlen(cipher_secret), (unsigned char*)key, strlen(key), hmac_key, (unsigned int*)&klen), err);
+	ASSERT_TRUE(hmac_key64 = (unsigned char*)ship_encode_base64((char *)hmac_key, klen), err);
 	
 	ASSERT_TRUE(extra = olclient_extra_new(cipher_secret, NULL, NULL, VERIFY_NONE), err);
-	ret = olclient_get_entry(hmac_key64, param, extra, callback);
+	ret = olclient_get_entry((char *)hmac_key64, param, extra, callback);
  err:
 	freez(hmac_key);
 	return ret;
@@ -657,11 +663,11 @@ olclient_get_for_someone_with_secret(char *key, ident_t *receiver, char *shared_
 
 	/* hmac the key and shared secret */
 	ASSERT_TRUE(hmac_key = mallocz(SHA_DIGEST_LENGTH * sizeof(unsigned char) + 1), err);
-	ASSERT_TRUE(HMAC(EVP_sha1(), shared_secret, strlen(shared_secret), key, strlen(key), hmac_key, &klen), err);
-	ASSERT_TRUE(hmac_key64 = (unsigned char*)ship_encode_base64(hmac_key, klen), err);
+	ASSERT_TRUE(HMAC(EVP_sha1(), shared_secret, strlen(shared_secret), (unsigned char*)key, strlen(key), hmac_key, (unsigned int*)&klen), err);
+	ASSERT_TRUE(hmac_key64 = (unsigned char*)ship_encode_base64((char*)hmac_key, klen), err);
 	
 	ASSERT_TRUE(extra = olclient_extra_new(NULL, receiver, NULL, VERIFY_NONE), err);
-	ret = olclient_get_entry(hmac_key64, param, extra, callback);
+	ret = olclient_get_entry((char*)hmac_key64, param, extra, callback);
  err:
 	freez(hmac_key);
 	return ret;
@@ -680,11 +686,11 @@ olclient_get_signed_for_someone_with_secret(char *key, buddy_t *signer, ident_t 
 	
 	/* hmac the key and shared secret */
 	ASSERT_TRUE(hmac_key = mallocz(SHA_DIGEST_LENGTH * sizeof(unsigned char) + 1), err);
-	ASSERT_TRUE(HMAC(EVP_sha1(), shared_secret, strlen(shared_secret), key, strlen(key), hmac_key, &klen), err);
-	ASSERT_TRUE(hmac_key64 = (unsigned char*)ship_encode_base64(hmac_key, klen), err);
+	ASSERT_TRUE(HMAC(EVP_sha1(), shared_secret, strlen(shared_secret), (unsigned char*)key, strlen(key), hmac_key, (unsigned int*)&klen), err);
+	ASSERT_TRUE(hmac_key64 = (unsigned char*)ship_encode_base64((char*)hmac_key, klen), err);
 	
 	ASSERT_TRUE(extra = olclient_extra_new(NULL, receiver, signer, VERIFY_SIGNER), err);
-	ret = olclient_get_entry(hmac_key64, param, extra, callback);
+	ret = olclient_get_entry((char*)hmac_key64, param, extra, callback);
 err:
 	freez(hmac_key);
 	return ret;
@@ -703,11 +709,11 @@ olclient_get_anonymous_signed_for_someone_with_secret(char *key, buddy_t *signer
 	
 	/* hmac the key and shared secret */
 	ASSERT_TRUE(hmac_key = mallocz(SHA_DIGEST_LENGTH * sizeof(unsigned char) + 1), err);
-	ASSERT_TRUE(HMAC(EVP_sha1(), shared_secret, strlen(shared_secret), key, strlen(key), hmac_key, &klen), err);
-	ASSERT_TRUE(hmac_key64 = (unsigned char*)ship_encode_base64(hmac_key, klen), err);
+	ASSERT_TRUE(HMAC(EVP_sha1(), shared_secret, strlen(shared_secret), (unsigned char*)key, strlen(key), hmac_key, (unsigned int*)&klen), err);
+	ASSERT_TRUE(hmac_key64 = (unsigned char*)ship_encode_base64((char *)hmac_key, klen), err);
 	
 	ASSERT_TRUE(extra = olclient_extra_new(NULL, receiver, signer, VERIFY_INTERNAL_SIGNER), err);
-	ret = olclient_get_entry(hmac_key64, param, extra, callback);
+	ret = olclient_get_entry((char *)hmac_key64, param, extra, callback);
 err:
 	freez(hmac_key);
 	freez(hmac_key64);
@@ -737,14 +743,14 @@ olclient_put_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 	LOG_DEBUG("putting %d bytes: for key '%s'\n", strlen(e->data), e->key);
 	LOG_VDEBUG("putting %d bytes: '%s'->'%s'\n", strlen(e->data), e->key, e->data);
 	ship_lock(olclient_modules);
-	while (mod = ship_list_next(olclient_modules, &ptr)) {
+	while ((mod = ship_list_next(olclient_modules, &ptr))) {
 		if (e->signer) {
 			if (e->add_cert || !mod->put_signed ||
 			    (ret = mod->put_signed(e->key, e->data, e->signer, 
 						   e->timeout, e->secret, e->cached, mod))) {
 				char *wrap_data = NULL;
-				if (wrap_data = olclient_create_signed_wrap(e->key, e->data, 
-									    e->signer, e->add_cert, e->timeout)) {
+				if ((wrap_data = olclient_create_signed_wrap(e->key, e->data, 
+									     e->signer, e->add_cert, e->timeout))) {
 					ret = mod->put(e->key, wrap_data, e->timeout, e->secret, e->cached, mod);
 					free(wrap_data);
 				}
@@ -793,6 +799,7 @@ olclient_put_entry(char *key, char *data, ident_t *signer, int add_cert, int tim
  err:
 	if (e)
 		olclient_put_entry_done(e, -1);
+	return 0;
 }
 
 int
@@ -843,13 +850,13 @@ olclient_put_with_secret(char *key, char *data, char *cipher_secret, int timeout
 	/* encrypt the data with cipher_secret*/
 	
 	/* generate 16-bytes iv from a cipher_secret */
-	ASSERT_TRUE(ship_hash("md5", cipher_secret, &iv), err);
+	ASSERT_TRUE(ship_hash("md5", (unsigned char*)cipher_secret, &iv), err);
 	/* generate 32-bytes key from a cipher_secret */
-	ASSERT_TRUE(ship_hash("sha256", cipher_secret, &cipher_key), err);
+	ASSERT_TRUE(ship_hash("sha256", (unsigned char*)cipher_secret, &cipher_key), err);
 	
-	ASSERT_TRUE(cipher64 = ship_encrypt64(CRYPT_ALGO, cipher_key, iv, data),err);
+	ASSERT_TRUE(cipher64 = ship_encrypt64(CRYPT_ALGO, cipher_key, iv, (unsigned char*)data),err);
 	
-	ret = olclient_put(hmac_key64, cipher64, timeout, secret);
+	ret = olclient_put((char*)hmac_key64, (char*)cipher64, timeout, secret);
 	free(cipher64);
 err:
 	freez(hmac_key64);
@@ -868,7 +875,7 @@ olclient_put_for_someone(char *key, char *data, buddy_t *receiver, int timeout, 
 	/* encrypt the data with receiver's public key */
 	ASSERT_TRUE(value = olclient_encrypt_for_someone(key, data, receiver), err);
 	
-	ret = olclient_put(key, value, timeout, secret);
+	ret = olclient_put(key, (char*)value, timeout, secret);
 	free(value);	
 err:
 	return ret; 
@@ -888,7 +895,7 @@ olclient_put_signed_for_someone(char *key, char *data, ident_t *signer, buddy_t 
 	/* encrypt the data with receiver's public key */
 	ASSERT_TRUE(value = olclient_encrypt_for_someone(key, data, receiver), err);
 	
-	ret = olclient_put_signed(hmac_key64, value, signer, timeout, secret);
+	ret = olclient_put_signed((char*)hmac_key64, (char*)value, signer, timeout, secret);
 	free(value);
 	
 err:
@@ -910,12 +917,12 @@ olclient_put_anonymous_signed_for_someone_with_secret(char *key, char *data, ide
 	ASSERT_TRUE(hmac_key64 = ship_hmac_sha1_base64(key, shared_secret), err);
 	
 	/* wrap data and append data signature */
-	ASSERT_TRUE(wrap_data = olclient_create_signed_wrap(hmac_key64, data, signer, 0, timeout), err);
+	ASSERT_TRUE(wrap_data = olclient_create_signed_wrap((char*)hmac_key64, data, signer, 0, timeout), err);
 	
 	/* encrypt the wrap_data with receiver's public key */
 	ASSERT_TRUE(value = olclient_encrypt_for_someone(key, wrap_data, receiver), err);
 
-	ret = olclient_put(hmac_key64, value, timeout, secret);	
+	ret = olclient_put((char*)hmac_key64, (char*)value, timeout, secret);	
 	
 err:
 	freez(value);
@@ -939,7 +946,7 @@ olclient_put_for_someone_with_secret(char *key, char *data, buddy_t *receiver,
 	/* encrypt the wrap_data with receiver's public key */
 	ASSERT_TRUE(value = olclient_encrypt_for_someone(key, data, receiver), err);
 
-	ret = olclient_put(hmac_key64, value, timeout, secret);	
+	ret = olclient_put((char*)hmac_key64, (char*)value, timeout, secret);	
 err:
 	freez(value);
 	freez(hmac_key64);
@@ -956,7 +963,7 @@ olclient_remove(char *key, char* secret)
 	
 	LOG_VDEBUG("removing from dht key %s\n", key);
 	ship_lock(olclient_modules);
-	while (mod = ship_list_next(olclient_modules, &ptr)) {
+	while ((mod = ship_list_next(olclient_modules, &ptr))) {
 		if (!mod->remove(key, secret, mod)) {
 			ret = 0;
 		}
@@ -968,110 +975,12 @@ olclient_remove(char *key, char* secret)
 
 /************************ crypto wrappers **********************/
 
-
-/* parse xmldata returning from get, and verify a data signature */
-static char *
-olclient_parse_and_verify_data_sig(RSA *pu_key, char *data) 
-{
-	xmlDocPtr doc= NULL;
-	xmlNodePtr root= NULL;
-	xmlNodePtr node= NULL;
-	xmlNodePtr childnode= NULL;
-	xmlChar *buf = NULL;
-	int blen = 0;
-	char *sig_decode = NULL;
-	int slen;
-	char *tmp_value = NULL;
-	char *res_value = NULL;
-	char *sign_algo = NULL;
-	unsigned char *data_sig = NULL;
-	unsigned char *digest = NULL;
-	time_t now;
-	time_t texpire;
-	char *expire = NULL;
-
-	/* pasre the char data into xmlDoc*/
-	ASSERT_TRUE(data, err);
-	ASSERT_TRUE(doc = xmlReadMemory(data, strlen(data), NULL, NULL, 0), err);
-	ASSERT_TRUE(root = xmlDocGetRootElement(doc), err);
-	ASSERT_TRUE(node = root->children, err);
-	
-	/* get the data and signature */
-	while(node != NULL){
-		if (xmlStrEqual(node->name,"data")==1){
-			ASSERT_TRUE(tmp_value = xmlNodeGetContent(node), err);
-		}else if(xmlStrEqual(node->name,"expires")==1){
-			ASSERT_TRUE(expire = xmlNodeGetContent(node), err);
-		}else if (xmlStrEqual(node->name,"signature")==1){
-				childnode = node->children;
-			while(childnode != NULL){
-				if (xmlStrEqual(childnode->name,"algorithm")==1){
-					ASSERT_TRUE(sign_algo = xmlNodeGetContent(childnode), err);
-				}else if (xmlStrEqual(childnode->name,"value")==1){
-					ASSERT_TRUE(data_sig = xmlNodeGetContent(childnode), err);
-					xmlNodeSetContent(childnode, NULL);
-				}
-				childnode = childnode->next;
-			}
-		}
-		node = node->next;
-	}
-	
-	xmlDocDumpFormatMemory(doc, &buf, &blen, 1);
-	
-	/* Check the signature algorithm */
-	if (strcmp(sign_algo, SIGN_ALGO)) {
-		LOG_WARN("Data signed with unknown algorithm\n");
-		goto err;
-	}
-
-	/* check if the signature is still valid or expire */
-	
-	if(expire == NULL){
-		LOG_WARN("No expiry information found\n");
-	}
-	else{
-		time(&now);
-		texpire = ship_parse_time(expire);
-		if (texpire - now <= 0){
-			LOG_WARN("The data signature has already expired\n");
-		}
-	}
-
-	/* hash the data */
-	ASSERT_TRUE(digest = (unsigned char *)mallocz(SHA_DIGEST_LENGTH * sizeof(unsigned char) + 1), err);
-	ASSERT_TRUE(SHA1(buf, blen, digest), err);
-
-	/* decode the signature */
-	ASSERT_TRUE(sig_decode = ship_decode_base64(data_sig, strlen(data_sig), &slen), err);
-
-	/* verify the hash of data and signature */
-	if (!RSA_verify(NID_sha1, digest, SHA_DIGEST_LENGTH, sig_decode, slen, pu_key)) {
-		LOG_WARN("Signature not verified\n");
-		goto err;
-	} 
-	
-	res_value = strdup(tmp_value);
-
-err:
-	freez(sig_decode);
-	freez(digest);
-	freez(tmp_value);
-	freez(sign_algo);
-	freez(data_sig);
-	if (buf) xmlFree(buf);
-	if (doc) xmlFreeDoc(doc);
-	//xmlCleanupParser();
-		
-	return res_value;
-}
-
 int
 olclient_parse_xml_record(char *data, char **res, char **key, time_t *expires)
 {
 	int ret = -1;
 
-	xmlChar *result = NULL;
+	char *result = NULL;
 	xmlDocPtr doc = NULL;
 	xmlNodePtr cur = NULL;
 	
@@ -1096,7 +1005,7 @@ olclient_parse_signed_xml_record(char *data, X509 **cert, char **signature, char
 {
 	int ret = -1;
 	BIO *bio_cert = NULL;
-	xmlChar *result = NULL;
+	char *result = NULL;
 	xmlDocPtr doc = NULL;
 	xmlNodePtr cur = NULL;
 	
@@ -1110,7 +1019,7 @@ olclient_parse_signed_xml_record(char *data, X509 **cert, char **signature, char
 	ASSERT_ZERO(xmlStrcmp(cur->name, (xmlChar*)OLCLIENT_PKG), err);
 	
 	/* certificate */
-	if (result = ship_xml_get_child_field(cur, "certificate")) {
+	if ((result = ship_xml_get_child_field(cur, "certificate"))) {
 		ASSERT_TRUE(bio_cert = BIO_new(BIO_s_mem()), err);
 		ASSERT_TRUE(BIO_puts(bio_cert, result) > 0, err);
 		ASSERT_TRUE(*cert = PEM_read_bio_X509(bio_cert, NULL, NULL, NULL), err);
@@ -1169,9 +1078,9 @@ olclient_verify_data_sig(olclient_signer_t *cert, char *data, char **signer)
 	ASSERT_TRUE(pkey = X509_get_pubkey(cert), err);
 	ASSERT_TRUE(pu_key = EVP_PKEY_get1_RSA(pkey), err);
 	ASSERT_TRUE(algo = (char *)mallocz(SHA_DIGEST_LENGTH), err);
-	ASSERT_TRUE(SHA1(data2, strlen(data2), algo), err);
+	ASSERT_TRUE(SHA1((unsigned char*)data2, strlen(data2), (unsigned char*)algo), err);
 	ASSERT_TRUE(data3 = ship_decode_base64(signature, strlen(signature), &len), err);
-	ASSERT_TRUE(RSA_verify(NID_sha1, algo, SHA_DIGEST_LENGTH, data3, len, pu_key), err);
+	ASSERT_TRUE(RSA_verify(NID_sha1, (unsigned char*)algo, SHA_DIGEST_LENGTH, (unsigned char*)data3, len, pu_key), err);
 	
 	/* store the signer into the signer_aor field */
 	freez(data3);
@@ -1222,13 +1131,13 @@ olclient_decrypt_for_someone(olclient_verifier_t *pr_key, char *value, char **re
 	/* extract the cipher key & iv ,and data */
 	key_and_iv64 = mallocz(key_and_iv64_len + 1);
 	data64 = mallocz(data64_len + 1);
-	v = value;
+	v = (unsigned char*)value;
 	memcpy(key_and_iv64, v, key_and_iv64_len);
 	v += key_and_iv64_len;
 	memcpy(data64, v, data64_len);
 	
 	/* decode & decrypt cipher key and iv */
-	ASSERT_TRUE(key_and_iv = (unsigned char *)ship_decode_base64(key_and_iv64, key_and_iv64_len, &k), err);	
+	ASSERT_TRUE(key_and_iv = (unsigned char*)ship_decode_base64((char*)key_and_iv64, key_and_iv64_len, &k), err);	
 	ASSERT_TRUE((k=ship_rsa_private_decrypt(pr_key, key_and_iv, &tmp))>0, err);
  
 	/* extract the cipher key */
@@ -1242,7 +1151,7 @@ olclient_decrypt_for_someone(olclient_verifier_t *pr_key, char *value, char **re
 	memcpy(iv, t, EVP_MAX_IV_LENGTH);
 
 	/* decrypte the data */
-	ASSERT_TRUE(*res_value = ship_decrypt64(CRYPT_ALGO, cipher_key, iv, data64), err);
+	ASSERT_TRUE(*res_value = (char*)ship_decrypt64(CRYPT_ALGO, cipher_key, iv, data64), err);
 	
 	ret = 0;	
 err: 
@@ -1264,19 +1173,19 @@ olclient_create_wrap_xml_record(char *key, char *data, int timeout)
 	xmlDocPtr doc= NULL;
 	xmlNodePtr root= NULL;
 	xmlNodePtr node= NULL;
-	xmlChar *buf = NULL;
+	char *buf = NULL;
 	int blen = 0;
 	char tmp[64];
 	
-	ASSERT_TRUE(doc = xmlNewDoc("1.0"), err);
-	ASSERT_TRUE(root = xmlNewNode(NULL, "record"), err);
+	ASSERT_TRUE(doc = xmlNewDoc((const xmlChar*)"1.0"), err);
+	ASSERT_TRUE(root = xmlNewNode(NULL, (const xmlChar*)"record"), err);
 	xmlDocSetRootElement(doc, root);
-	ASSERT_TRUE(xmlNewTextChild(root, NULL, "key", key), err);
-	ASSERT_TRUE(node = xmlNewTextChild(root, NULL, "data", NULL), err);
-	ASSERT_TRUE(node->children = xmlNewCDataBlock(doc, data, strlen(data)), err);
+	ASSERT_TRUE(xmlNewTextChild(root, NULL, (const xmlChar*)"key", (const xmlChar*)key), err);
+	ASSERT_TRUE(node = xmlNewTextChild(root, NULL, (const xmlChar*)"data", NULL), err);
+	ASSERT_TRUE(node->children = xmlNewCDataBlock(doc, (const xmlChar*)data, strlen(data)), err);
 	ship_format_time(timeout + time(0), tmp, sizeof(tmp));
-	ASSERT_TRUE(xmlNewTextChild(root, NULL, "expires", tmp), err);
-	xmlDocDumpFormatMemory(doc, &buf, &blen, 1);
+	ASSERT_TRUE(xmlNewTextChild(root, NULL, (const xmlChar*)"expires", (const xmlChar*)tmp), err);
+	xmlDocDumpFormatMemory(doc, (xmlChar **)&buf, &blen, 1);
  err:
 	if (doc) xmlFreeDoc(doc);
 	//xmlCleanupParser();
@@ -1299,23 +1208,23 @@ olclient_sign_xml_record(char *data, RSA *pr_key, X509 *xcert)
 	unsigned int siglen = 0;
 	char *ret = 0;
 	
-	ASSERT_TRUE(doc = xmlNewDoc("1.0"), err);
-	ASSERT_TRUE(doc->children = xmlNewDocNode(doc, NULL, OLCLIENT_PKG, NULL), err);
+	ASSERT_TRUE(doc = xmlNewDoc((const xmlChar *)"1.0"), err);
+	ASSERT_TRUE(doc->children = xmlNewDocNode(doc, NULL, (const xmlChar *)OLCLIENT_PKG, NULL), err);
 
-	ASSERT_TRUE(tree = xmlNewTextChild(doc->children, NULL, "data", NULL), err);
-	ASSERT_TRUE(tree->children = xmlNewCDataBlock(doc, data, strlen(data)), err);
+	ASSERT_TRUE(tree = xmlNewTextChild(doc->children, NULL, (const xmlChar *)"data", NULL), err);
+	ASSERT_TRUE(tree->children = xmlNewCDataBlock(doc, (const xmlChar *)data, strlen(data)), err);
 
 	/* signature */
 	if (pr_key) {
-		ASSERT_TRUE(tree = xmlNewTextChild(doc->children, NULL, "signature", NULL), err);
-		ASSERT_TRUE(xmlNewTextChild(tree, NULL, "algorithm", SIGN_ALGO), err);
+		ASSERT_TRUE(tree = xmlNewTextChild(doc->children, NULL, (const xmlChar *)"signature", NULL), err);
+		ASSERT_TRUE(xmlNewTextChild(tree, NULL, (const xmlChar *)"algorithm", (const xmlChar *)SIGN_ALGO), err);
 		
 		ASSERT_TRUE(digest = (char *)mallocz(SHA_DIGEST_LENGTH), err);
-		ASSERT_TRUE(SHA1(data, strlen(data), digest), err);
+		ASSERT_TRUE(SHA1((unsigned char *)data, strlen(data), (unsigned char *)digest), err);
 		ASSERT_TRUE(sign = (char *)mallocz(1024), err);	
-		ASSERT_TRUE(RSA_sign(NID_sha1, digest, SHA_DIGEST_LENGTH, sign, &siglen, pr_key), err);
+		ASSERT_TRUE(RSA_sign(NID_sha1, (unsigned char *)digest, SHA_DIGEST_LENGTH, (unsigned char *)sign, &siglen, pr_key), err);
 		ASSERT_TRUE(sign_64e = ship_encode_base64(sign, siglen), err);
-		ASSERT_TRUE(xmlNewTextChild(tree, NULL, "value", sign_64e), err);
+		ASSERT_TRUE(xmlNewTextChild(tree, NULL, (const xmlChar *)"value", (const xmlChar *)sign_64e), err);
 	}
 
 	/* certificate, if present! */
@@ -1324,7 +1233,7 @@ olclient_sign_xml_record(char *data, RSA *pr_key, X509 *xcert)
 		ASSERT_TRUE(PEM_write_bio_X509(bio, xcert), err);
 		ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &cert), err);
 		cert[bufsize] = 0;
-		ASSERT_TRUE(xmlNewTextChild(doc->children, NULL, "certificate", cert), err);
+		ASSERT_TRUE(xmlNewTextChild(doc->children, NULL, (const xmlChar *)"certificate", (const xmlChar *)cert), err);
 	}
 
 	xmlDocDumpFormatMemory(doc, &xmlbuf, &bufsize, 1);
@@ -1383,7 +1292,7 @@ olclient_encrypt_for_someone(char *key, char *data, buddy_t *receiver)
 	ASSERT_ZERO(ship_get_random (iv, EVP_MAX_IV_LENGTH), err);
 	
 	/* encrypt the data */
-	ASSERT_TRUE(encrypted_data64 = ship_encrypt64(CRYPT_ALGO, cipher_key, iv, data), err);
+	ASSERT_TRUE(encrypted_data64 = ship_encrypt64(CRYPT_ALGO, cipher_key, iv, (unsigned char *)data), err);
 	
 	/* concatenate cipher_key + iv */
 	ASSERT_TRUE(key_and_iv = mallocz(EVP_MAX_KEY_LENGTH + EVP_MAX_IV_LENGTH + 1), err);
@@ -1398,16 +1307,16 @@ olclient_encrypt_for_someone(char *key, char *data, buddy_t *receiver)
 	
 	/* encrypt the key and iv using a receiver's public key */
 	ASSERT_TRUE((len=ship_rsa_public_encrypt(pu_key, key_and_iv, (EVP_MAX_KEY_LENGTH + EVP_MAX_IV_LENGTH), &encrypted_key_and_iv))>0, err);
-	ASSERT_TRUE(encrypted_key_and_iv64 = (unsigned char*)ship_encode_base64(encrypted_key_and_iv, len), err);
+	ASSERT_TRUE(encrypted_key_and_iv64 = (unsigned char*)ship_encode_base64((char *)encrypted_key_and_iv, len), err);
 	
 	/* concatenate encryped key + encrypted data */
-	total_len = strlen(encrypted_key_and_iv64) + strlen(encrypted_data64) + 1;
+	total_len = strlen((char*)encrypted_key_and_iv64) + strlen((char*)encrypted_data64) + 1;
 	
 	ASSERT_TRUE(value = mallocz(total_len * sizeof(unsigned char)), err);
 	v = value;
-	memcpy(v, encrypted_key_and_iv64, strlen(encrypted_key_and_iv64));
-	v += strlen(encrypted_key_and_iv64);
-	memcpy(v, encrypted_data64, strlen(encrypted_data64));
+	memcpy(v, encrypted_key_and_iv64, strlen((char*)encrypted_key_and_iv64));
+	v += strlen((char*)encrypted_key_and_iv64);
+	memcpy(v, encrypted_data64, strlen((char*)encrypted_data64));
 
 	ret = value;
 	
@@ -1482,7 +1391,7 @@ olclient_storage_remove(char *key, char* secret)
 
 	LOG_DEBUG("removing entry for key '%s'\n", key);
 	ship_lock(entries);
-	while (e = ship_list_next(entries, &ptr)) {
+	while ((e = ship_list_next(entries, &ptr))) {
 		if (!strcmp(e->key, key) && 
 		    ((!e->secret && !secret) ||
 		     (e->secret && secret && !strcmp(e->secret, secret)))) {
@@ -1520,7 +1429,7 @@ olclient_storage_find_entries(char *key, ship_list_t *list)
 	time_t now;
 	ship_lock(entries);
 	now = time(0);
-	while (e = ship_list_next(entries, &ptr)) {
+	while ((e = ship_list_next(entries, &ptr))) {
 		if (now > (e->created + e->timeout)) {
 			ship_list_remove(entries, e);
 			olclient_storage_entry_free(e);

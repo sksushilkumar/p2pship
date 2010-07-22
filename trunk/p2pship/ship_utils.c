@@ -16,24 +16,29 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
-#include "ship_utils.h"
-#include "ship_debug.h"
+#define	_GNU_SOURCE /* for memmem */
+#define _XOPEN_SOURCE /* for strptime */
+
 #include <stdio.h>
 #include <stdarg.h>
 #include <sys/stat.h>
-#include "ident.h"
-#include <time.h>
-#include "processor_config.h"
 #include <pwd.h>
 #include <sys/stat.h>
 #include <glob.h>
 #include <regex.h>
+#include <ctype.h>
+#include <string.h>
+
+#include "processor_config.h"
+#include "ident.h"
+#include "ship_utils.h"
+#include "ship_debug.h"
+#include "services.h"
 
 extern char *p2pship_log_file;
 extern ship_list_t *getaddrinfolock;
 #define LOG_SIZE_LIMIT (100 * 1024)
 
-#include "services.h"
 
 /* this should be in services .. */
 service_type_t
@@ -113,7 +118,7 @@ ship_printf(int timed, int error, const char *template, ...)
 			freez(nn);
 		}
 
-		if (f = fopen(p2pship_log_file, "a")) {
+		if ((f = fopen(p2pship_log_file, "a"))) {
 			vfprintf(f, template, ap);
 			fclose(f);	
 		}
@@ -316,7 +321,7 @@ _ship_list_add(int _l, ship_list_t *list, void *data)
 		e = &((*e)->next);
 	}
 	
-	if ((*e) = mallocz(sizeof(ship_list_entry_t)))
+	if (((*e) = mallocz(sizeof(ship_list_entry_t))))
 		(*e)->data = data;
 	else {
 		PANIC("list_add() failed\n");
@@ -333,7 +338,7 @@ _ship_list_push(int _l, ship_list_t *list, void *data)
 		return;
 	if (_l) ship_lock(list);
 
-	if (e = mallocz(sizeof(ship_list_entry_t))) {
+	if ((e = mallocz(sizeof(ship_list_entry_t)))) {
 		e->data = data;
 		e->next = list->entries;
 		list->entries = e;
@@ -515,7 +520,7 @@ int
 ship_tokens_replace(char **tokens, char *str, int pos)
 {
 	char *ns;
-	if (ns = strdup(str)) {
+	if ((ns = strdup(str))) {
 		if (tokens[pos])
 			free(tokens[pos]);
 		tokens[pos] = ns;
@@ -605,7 +610,7 @@ ship_untokenize(char **tokens, int toklen, const char *token, const char *prefix
 	if (prefix)
 		len += strlen(prefix);
         
-	if (ret = (char*)mallocz(len)) {
+	if ((ret = (char*)mallocz(len))) {
 		if (prefix)
 			strcat(ret, prefix);
                 
@@ -682,7 +687,7 @@ trim(char *str)
 
 	if (!str) 
 		return str;
-	
+
 	while (str[s] != 0 && 
 	       (str[s] == ' ' || 
 		str[s] == '\n' || 
@@ -700,8 +705,11 @@ trim(char *str)
 
 	if (str[e+1])
 		str[e+1] = 0;
-	if (s)
-		memcpy(str, str+s, e-s+2);
+	if (s) {
+		e = -1;
+		do { e++; str[e] = str[e+s]; } while (str[e+s]);
+		//memcpy(str, str+s, e-s+2);
+	}
 	return str;
 }
 
@@ -789,7 +797,7 @@ char *
 combine_str(const char *str1, const char *str2)
 {
 	char *ret = 0;
-	if (ret = mallocz(strlen(str1) + strlen(str2) + 1)) {
+	if ((ret = mallocz(strlen(str1) + strlen(str2) + 1))) {
 		strcat(ret, str1);
 		strcat(ret, str2);
 	}
@@ -810,7 +818,7 @@ ship_ht2_free(ship_ht2_t *ht)
 	ship_ht_t *tmp = 0;
 	ship_lock(ht);
 	
-	while (tmp = ship_ht_pop(ht)) {
+	while ((tmp = ship_ht_pop(ht))) {
 		ship_ht_clear(tmp);
 		ship_list_free(tmp);
 	}
@@ -844,7 +852,7 @@ ship_ht2_get_string(ship_ht2_t *ht, char *key, char *key2)
 	void *ret = 0;
 	
 	ship_lock(ht);
-	if (tmp = ship_ht_get_string(ht, key)) {
+	if ((tmp = ship_ht_get_string(ht, key))) {
 		ret = ship_ht_get_string(tmp, key2);
 	}
 	ship_unlock(ht);
@@ -858,7 +866,7 @@ ship_ht2_remove_string(ship_ht2_t *ht, char *key, char *key2)
 	void *ret = 0;
 	
 	ship_lock(ht);
-	if (tmp = ship_ht_get_string(ht, key)) {
+	if ((tmp = ship_ht_get_string(ht, key))) {
 		ret = ship_ht_remove_string(tmp, key2);
 		if (!ship_ht_first(tmp)) {
 			tmp = ship_ht_remove_string(ht, key);
@@ -893,7 +901,7 @@ ship_ht2_keys(ship_ht2_t *ht, char *key)
 	ship_list_t *ret = 0;
 	
 	ship_lock(ht);
-	if (tmp = ship_ht_get_string(ht, key)) {
+	if ((tmp = ship_ht_get_string(ht, key))) {
 		ret = ship_ht_keys(tmp);
 	} else
 		ret = ship_list_new();
@@ -936,7 +944,7 @@ void *
 ship_ht_put_ptr(ship_ht_t *ht, void *key, void *val)
 {
 	char buf[64];
-	sprintf(buf, "ptr:%x", key);
+	sprintf(buf, "ptr:%x", (unsigned int)key);
 	return ship_ht_put_string(ht, buf, val);
 }
 
@@ -981,7 +989,7 @@ void *
 ship_ht_get_ptr(ship_ht_t *ht, const void *key)
 {
 	char buf[64];
-	sprintf(buf, "ptr:%x", key);
+	sprintf(buf, "ptr:%x", (unsigned int)key);
 	return ship_ht_get_string(ht, buf);
 }
 
@@ -1000,7 +1008,7 @@ ship_ht_get_string(ship_ht_t *ht, const char *key)
 	void *ptr = 0;
 
 	ship_lock(ht);
-	if (e = ship_ht_get_entry(ht, key)) {
+	if ((e = ship_ht_get_entry(ht, key))) {
 		ptr = e->value;
 	}
 	ship_unlock(ht);
@@ -1014,7 +1022,7 @@ ship_ht_pop(ship_ht_t *ht)
 	void *ptr = 0;
 
 	ship_lock(ht);
-	if (e = ship_list_pop(ht)) {
+	if ((e = ship_list_pop(ht))) {
 		ptr = e->value;
 		freez(e->key);
 		freez(e);
@@ -1027,7 +1035,7 @@ void *
 ship_ht_remove_ptr(ship_ht_t *ht, void *key)
 {
 	char buf[64];
-	sprintf(buf, "ptr:%x", key);
+	sprintf(buf, "ptr:%x", (unsigned int)key);
 	return ship_ht_remove_string(ht, buf);
 }
 
@@ -1063,7 +1071,7 @@ ship_ht_remove_string(ship_ht_t *ht, const char *key)
 	ship_ht_entry_t *e;
 	void *ptr = 0;
 	ship_lock(ht);
-	if (e = ship_ht_get_entry(ht, key)) {
+	if ((e = ship_ht_get_entry(ht, key))) {
 		ptr = e->value;
 		ship_list_remove(ht, e);
 		freez(e->key);
@@ -1079,7 +1087,7 @@ ship_ht_clear(ship_ht_t *ht)
 {
 	ship_ht_entry_t *e = NULL;
 	ship_lock(ht);
-	while (e = ship_list_pop(ht)) {
+	while ((e = ship_list_pop(ht))) {
 		freez(e->key);
 		freez(e);
 	}
@@ -1111,7 +1119,7 @@ ship_ht_empty_free(ship_ht_t *ht)
 {
 	ship_ht_entry_t *e = NULL;
 	ship_lock(ht);
-	while (e = ship_list_pop(ht)) {
+	while ((e = ship_list_pop(ht))) {
 		freez(e->key);
 		freez(e->value);
 		freez(e);
@@ -1124,7 +1132,7 @@ ship_ht_empty_free_with(ship_ht_t *ht, void (*func) (void *))
 {
 	ship_ht_entry_t *e = NULL;
 	ship_lock(ht);
-	while (e = ship_list_pop(ht)) {
+	while ((e = ship_list_pop(ht))) {
 		freez(e->key);
 		func(e->value);
 		freez(e);
@@ -1137,7 +1145,7 @@ ship_ht_values_add(ship_ht_t *ht, ship_list_t *ret)
 {
 	ship_ht_entry_t *e = NULL;
 	void *ptr = 0;
-	while (e = ship_list_next(ht, &ptr)) {
+	while ((e = ship_list_next(ht, &ptr))) {
 		ship_list_add(ret, e->value);
 	}
 	ship_unlock(ht);
@@ -1159,7 +1167,7 @@ ship_ht_keys_add(ship_ht_t *ht, ship_list_t *ret)
 	ship_ht_entry_t *e = NULL;
 	void *ptr = 0;
 	ship_lock(ht);
-	while (e = ship_list_next(ht, &ptr)) {
+	while ((e = ship_list_next(ht, &ptr))) {
 		ship_list_add(ret, strdup(e->key));
 	}
 	ship_unlock(ht);
@@ -1339,7 +1347,6 @@ int
 ship_format_time(time_t time, char* buf, size_t len)
 {
 	struct tm tm;
-	int ret = 0;
 	memset(&tm, 0, sizeof(struct tm));
 	
 	if (!localtime_r(&time, &tm))
@@ -1669,7 +1676,7 @@ ship_ensure_file(char *filename, char *initial_data)
 			
 			ASSERT_ZERO(ret, err);
 		}
-		if (f = fopen(filename, "w"))
+		if ((f = fopen(filename, "w")))
 			fwrite(initial_data, sizeof(char), strlen(initial_data), f);
 		else
 			ret = -2;
@@ -1762,10 +1769,10 @@ ship_getnodeset (xmlDocPtr doc, xmlChar *xpath)
 	xmlChar *realpath = NULL;
 	const char *prefix = "//";
 
-	if (strstr(xpath, prefix) != (char*)xpath) {
-		ASSERT_TRUE(realpath = (char*)malloc(strlen(prefix) + strlen(xpath) + 1), err);
-		strcpy(realpath, prefix);
-		strcat(realpath, xpath);
+	if (strstr((char*)xpath, prefix) != (char*)xpath) {
+		ASSERT_TRUE(realpath = (xmlChar*)malloc(strlen((char*)prefix) + strlen((char*)xpath) + 1), err);
+		strcpy((char*)realpath, (char*)prefix);
+		strcat((char*)realpath, (char*)xpath);
 	} else {
 		realpath = xpath;
 	}
@@ -1793,13 +1800,13 @@ ship_xml_get_xpath_string_req(xmlDocPtr doc, char *key, int req)
 	xmlNodeSetPtr nodeset = NULL;
 	xmlXPathObjectPtr result = NULL;
 	
-	ASSERT_TRUE(result = ship_getnodeset(doc, key), err);
+	ASSERT_TRUE(result = ship_getnodeset(doc, (xmlChar *)key), err);
 	nodeset = result->nodesetval;
 	if (req > 0 && nodeset->nodeNr != req) {
 		goto err;
 	}
 	
-	ret = xmlNodeListGetString(doc, nodeset->nodeTab[0]->xmlChildrenNode, 1);
+	ret = (char*)xmlNodeListGetString(doc, nodeset->nodeTab[0]->xmlChildrenNode, 1);
  err:
 	if (result)
 		xmlXPathFreeObject(result);
@@ -1823,7 +1830,7 @@ ship_xml_get_child_field(xmlNodePtr node, char *key)
 {
 	node = ship_xml_get_child(node, key);
 	if (node) {
-		return xmlNodeListGetString(node->doc, node->xmlChildrenNode, 1);
+		return (char*)xmlNodeListGetString(node->doc, node->xmlChildrenNode, 1);
 	}
 	return NULL;
 }
@@ -1833,7 +1840,7 @@ xmlNodePtr
 ship_xml_get_child(xmlNodePtr node, char *key)
 {
 	for (node = node->children; node; node = node->next) {
-		if (!strcmp(node->name, key)) {
+		if (!strcmp((char*)node->name, key)) {
 			return node;
 		}
 	}	
@@ -1843,18 +1850,16 @@ ship_xml_get_child(xmlNodePtr node, char *key)
 int
 ship_xml_get_child_addr_list(xmlNodePtr node, char *key, ship_list_t *addr_list)
 {
-	char *ret = NULL;
 	xmlNodePtr cur_node = NULL;
 	
 	for (cur_node = node->children; cur_node; cur_node = cur_node->next) {
-		if (!strcmp(cur_node->name, key)) {				
-			xmlNodePtr cur;
+		if (!strcmp((char*)cur_node->name, key)) {				
 			addr_t *tempaddr = (addr_t*)mallocz(sizeof(addr_t));
 			
 			if (!tempaddr)
 				continue;
 
-			xmlChar *str = xmlNodeListGetString(cur_node->doc, cur_node->xmlChildrenNode, 1);
+			char *str = (char*)xmlNodeListGetString(cur_node->doc, cur_node->xmlChildrenNode, 1);
 			if (!str || ident_addr_str_to_addr(str, tempaddr)) {
 				freez(tempaddr);
 				freez(str);

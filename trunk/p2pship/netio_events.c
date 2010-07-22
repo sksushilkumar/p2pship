@@ -23,6 +23,8 @@
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include "ident.h"
+#include "netio.h"
+#include "conn.h"
 
 static int i4_route = -1;
 static ship_list_t *oldips = 0;
@@ -86,8 +88,6 @@ netio_events_ip_changed()
 static void 
 netio_events_read(int s, char *data, ssize_t datalen)
 {
-	struct ifinfomsg msg;
-
 	/* check whether any addresses have actually changed! */
 	if (netio_events_ip_changed())
 		processor_event_generate("net_some_event", NULL, NULL);

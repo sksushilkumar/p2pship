@@ -23,5 +23,6 @@
 
 int netio_events_init(processor_config_t *config);
 void netio_events_close();
+void netio_events_register();
 
 #endif

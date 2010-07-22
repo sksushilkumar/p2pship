@@ -31,7 +31,7 @@
 #define BIND_HIP_TO_DEFAULT_HIT 1
 
 static ship_list_t *netio_sock_list;
-static ship_list_t *netio_sock_remove_list;
+//static ship_list_t *netio_sock_remove_list;
 static int netio_alive;
 
 STATIC_THREAD_DECL(netio_thread);
@@ -170,7 +170,6 @@ netio_close()
         }
         
         ship_list_free(netio_sock_list);
-        ship_list_free(netio_sock_remove_list);
 
 	if (generic_ipv4_socket != -1)
 		close(generic_ipv4_socket);
@@ -182,8 +181,6 @@ int
 netio_init(processor_config_t *config)
 {
         if (!(netio_sock_list = ship_list_new()))
-                goto err;
-        if (!(netio_sock_remove_list = ship_list_new()))
                 goto err;
 
         if (pipe(netio_l_pipe))
@@ -245,11 +242,11 @@ netio_close_socket(int s)
 
 	if (s == -1)
 		return;
-		
+
 	/* if we have this one on our read-list, then just mark for
 	   flushing */
 	ship_lock(netio_sock_list); {
-                while (e = ship_list_next(netio_sock_list, &ptr)) {
+                while ((e = ship_list_next(netio_sock_list, &ptr))) {
                         if (e->s != s)
 				continue;
 			
@@ -260,11 +257,9 @@ netio_close_socket(int s)
 					closeit = 0;
 				}
 			}
-			
+
 			if (!e->flush) {
-				ptr = last;
-				ship_list_remove(netio_sock_list, e);
-				ship_list_add(netio_sock_remove_list, e);
+				e->remove = 1;
 			}
 			ship_unlock(e->send_queue);
 			last = ptr;
@@ -281,21 +276,18 @@ int
 netio_remove_read(int s)
 {
         int ret = -1;
-	void *ptr, *last;
+	void *ptr;
         ship_lock(netio_sock_list); {
 		netio_sock_t *e = NULL;
-		ptr = 0; last = 0;
-		while (e = ship_list_next(netio_sock_list, &ptr)) {
+		ptr = 0;
+		while ((e = ship_list_next(netio_sock_list, &ptr))) {
 			ship_lock(e->send_queue);
 			if (e->s == s && 
 			    e->type !=  NETIO_SOCK_WRITE) {
-				ship_list_remove(netio_sock_list, e);
-				ship_list_add(netio_sock_remove_list, e);
+				e->remove = 1;
 				ret = 0;
-				ptr = last;
 			}
 			ship_unlock(e->send_queue);
-			last = ptr;
 		}
 	} ship_unlock(netio_sock_list);
         return ret;
@@ -540,7 +532,6 @@ netio_connto(struct sockaddr *sa, socklen_t size,
 {
         int ret = -1;
         netio_sock_t *e = NULL;
-        int option;
 	struct sockaddr *bsin = 0;
 	socklen_t bsin_len = 0;
 	addr_t addr;
@@ -600,8 +591,6 @@ int
 netio_packet_connto(struct sockaddr *sa, socklen_t size)
 {
         int ret = -1;
-        netio_sock_t *e = NULL;
-        int option;
 	addr_t addr;
 
 	ASSERT_ZERO(ident_addr_sa_to_addr(sa, size, &addr), err);
@@ -632,7 +621,7 @@ netio_packet_connto(struct sockaddr *sa, socklen_t size)
 }
 
 int 
-netio_send(int s, char *data, int datalen)
+netio_send(int s, const char *data, int datalen)
 {
         /* nio */
         int ret = -1;
@@ -646,14 +635,21 @@ netio_send(int s, char *data, int datalen)
 	}
 	
 	if (!e) {
-		if (e = netio_sock_new(NETIO_SOCK_WRITE, 0, 0))
-			netio_sock_add(e);
-		e->s = s;
+		struct sockaddr *addr = 0;
+		socklen_t addrlen = 0;
+		
+		/* check the status of this connection (slow..) */
+		if (!getpeername(s, addr, &addrlen)) {
+			if ((e = netio_sock_new(NETIO_SOCK_WRITE, 0, 0)))
+				netio_sock_add(e);
+			e->s = s;
+		}
 	} else
 		write(netio_l_pipe[1], "0", 1);
 	
 	if (e)
 		ship_lock(e->send_queue);
+
 	ship_unlock(netio_sock_list);
 
 	if (!e)
@@ -759,10 +755,7 @@ netio_packet_anon_send(char *data, int datalen, struct sockaddr* sa, socklen_t s
 {
         /* todo: nio */
 	int s = -1, ret = -1;
-	socklen_t sin_len = 0;
 	struct sockaddr *sin = 0;
-	char buf[128];
-	addr_t addr;
 	
 	s = netio_get_generic_packet_socket(sa, 1);
         if (s == -1)
@@ -770,7 +763,7 @@ netio_packet_anon_send(char *data, int datalen, struct sockaddr* sa, socklen_t s
 
 	/* this blocks sometimes (when bound to hit (or not?) .. */
 	ret = sendto(s, data, datalen, 0, sa, salen);
- err:
+ 
 	freez(sin);
 	return ret;
 }
@@ -779,7 +772,6 @@ int
 netio_read(int s, void (*callback) (int s, char *data, ssize_t datalen))
 {
         netio_sock_t *e = NULL;
-        int option;
 
         MAKE_NONBLOCK(s);
         
@@ -818,10 +810,10 @@ netio_loop(void *data)
         LOG_INFO("the nio loop has started\n");
         while (nl && netio_alive) {
                 /* the read / write fd_set */
-                int i, max;
+                int max;
                 char buf[NETIO_MAX_RECV_SIZE+1];
                 ssize_t r;
-                void *ptr,  *last;
+                void *ptr;
 		netio_sock_t *e = 0;
 
                 FD_ZERO(fd_read);
@@ -832,9 +824,9 @@ netio_loop(void *data)
                 max = netio_l_pipe[0]+1;
 
                 ship_lock(netio_sock_list);
-		ptr = 0; last = 0;
-		while (e = ship_list_next(netio_sock_list, &ptr)) {
-			if (!e->active)
+		ptr = 0;
+		while ((e = ship_list_next(netio_sock_list, &ptr))) {
+			if (!e->active || e->remove)
 				continue;
 
 			switch (e->type) {
@@ -847,11 +839,9 @@ netio_loop(void *data)
 					FD_SET(e->s, fd_write);
 					ship_unlock(e->send_queue);
 				} else if (e->flush) {
-					ship_list_remove(netio_sock_list, e);
-					ship_list_add(netio_sock_remove_list, e);
+					e->remove = 1;
 					shutdown(e->s, SHUT_RDWR);
 					close(e->s);
-					ptr = last;
 					ship_unlock(e->send_queue);
 					e = 0;
 				} else {
@@ -874,14 +864,54 @@ netio_loop(void *data)
 				
 			if (e && e->s+1 > max)
 				max = e->s+1;
-			last = ptr;
 		}
 		ship_unlock(netio_sock_list);
 		
                 retval = select(max, fd_read, fd_write, fd_ex, NULL);
 		if (retval == -1) {
 			LOG_WARN("got nio error: %d, %s\n", errno, strerror(errno));
+			/*
+			ship_lock(netio_sock_list);
+			ptr = 0; last = 0;
+			while (e = ship_list_next(netio_sock_list, &ptr)) {
+				struct sockaddr *addr = 0;
+				socklen_t addrlen = 0;
+				
+				if (!e->active || e->remove)
+					continue;
+
+				if (getpeername(e->s, addr, &addrlen))
+					LOG_HL("STUFF. NOT OK! %d\n", e->s);
+
+				switch (e->type) {
+				case NETIO_SOCK_READ:
+					LOG_WARN("had %d for read, closing %d, %08x\n", e->s, e->closing, e);
+					break;
+				case NETIO_SOCK_WRITE:
+					ship_lock(e->send_queue);
+					if (ship_list_first(e->send_queue))
+						LOG_WARN("had %d for write, closing %d, %08x\n", e->s, e->closing, e);
+					ship_unlock(e->send_queue);
+					break;
+				case NETIO_SOCK_ACCEPT:
+					LOG_WARN("had %d for accept, closing %d, %08x\n", e->s, e->closing, e);
+					break;
+				case NETIO_SOCK_CONNTO:
+					LOG_WARN("had %d for connto, closing %d, %08x\n", e->s, e->closing, e);
+					break;
+				case NETIO_SOCK_PACKET_READ:
+					LOG_WARN("had %d for packet read, closing %d, %08x\n", e->s, e->closing, e);
+					break;
+				}
+
+			}
+
+			ship_unlock(netio_sock_list);
+			// segfault
+			raise(SIGSEGV);
+			*/
 		}
+
                 if (retval > 0) {
                         void *ptr = NULL, *d = 0;
                         netio_sock_t *e = NULL;
@@ -893,12 +923,12 @@ netio_loop(void *data)
                         
                         /* loop through all unsynched, check which are selected */
                         ship_lock(netio_sock_list); {                                
-                                while (d = ship_list_next(netio_sock_list, &ptr)) {
+                                while ((d = ship_list_next(netio_sock_list, &ptr))) {
 					ship_list_add(nl, d);
                                 }
                         } ship_unlock(netio_sock_list);
 
-                        while (e = ship_list_pop(nl)) {
+                        while ((e = ship_list_pop(nl))) {
                                 switch (e->type) {
                                 case NETIO_SOCK_READ:
                                         if (FD_ISSET(e->s, fd_read)) {
@@ -916,7 +946,7 @@ netio_loop(void *data)
                                         if (FD_ISSET(e->s, fd_write)) {
                                                 void **arr = 0;
 						ship_lock(e->send_queue);
-						if (arr = ship_list_first(e->send_queue)) {
+						if ((arr = ship_list_first(e->send_queue))) {
 							int *datalen = arr[0];
 							int *datastart = arr[2];
 							char *data = arr[1];
@@ -1007,9 +1037,17 @@ netio_loop(void *data)
 
                 ship_lock(netio_sock_list); {
                         netio_sock_t *e = 0;
-                        while (e = (netio_sock_t *)ship_list_pop(netio_sock_remove_list)) {
-				netio_sock_free(e);
+                        void *ptr = 0, *last = 0;
+			
+                        while ((e = (netio_sock_t *)ship_list_next(netio_sock_list, &ptr))) {
+				if (e->remove) {
+					ship_list_remove(netio_sock_list, e);
+					netio_sock_free(e);
+					ptr = last;
+				}
+				last = ptr;
                         }
+
                 } ship_unlock(netio_sock_list);
         }
         
@@ -1109,7 +1147,7 @@ netio_ff_close_entry(netio_ff_t *ff)
 	close(ff->w_sock);
 #endif
 
-	while (outs = ship_list_pop(ff->input)) {
+	while ((outs = ship_list_pop(ff->input))) {
 		freez(outs[1]);
 		freez(outs[2]);
 		freez(outs);
@@ -1163,7 +1201,7 @@ netio_ff_close()
 	if (netio_ff_entries) {
 		netio_ff_t *ff = 0;
 		ship_lock(netio_ff_entries); {
-			while (ff = ship_list_pop(netio_ff_entries))
+			while ((ff = ship_list_pop(netio_ff_entries)))
 				netio_ff_close_entry(ff);
 		} ship_unlock(netio_ff_entries);
 		ship_list_free(netio_ff_entries);
@@ -1201,7 +1239,7 @@ netio_ff_add(int rec_socket, addr_t *addr, int *counter, int fragment_output)
 	
 	/* create a new entry, add to the list. mark as we need to
 	   update now */
-	if (ff = mallocz(sizeof(netio_ff_t))) {
+	if ((ff = mallocz(sizeof(netio_ff_t)))) {
 #ifdef BUFFER_OUTPUT
 		ASSERT_TRUE(ff->output = ship_list_new(), err);
 #endif
@@ -1251,7 +1289,7 @@ netio_ff_remove(int rec_socket)
 	ship_lock(netio_ff_entries);
 	
 	/* mark this only for removal */
-	while (ff = ship_list_next(netio_ff_entries, &ptr)) {
+	while ((ff = ship_list_next(netio_ff_entries, &ptr))) {
 		if (ff->r_sock == rec_socket)
 			ff->remove = 1;
 	}
@@ -1324,13 +1362,13 @@ netio_ff_loop(void *data)
 #ifdef BUFFER_OUTPUT
 	fd_set fd_write, fd_write_cp;
 #endif
-	int max;
+	int max = 0;
 	char *buf = 0;
 		
 	/* make the buffer a bit bigger so we can store fragments there .. */
 	netio_ff_update = 1;
 	if (!(buf = mallocz(NETIO_FF_MAX_RECV_SIZE+10)))
-		return;
+		return NULL;
 	
         LOG_INFO("the nio FF loop has started\n");
         while (netio_ff_alive) {
@@ -1345,7 +1383,7 @@ netio_ff_loop(void *data)
 			LOG_DEBUG("Modifying the FF nio select..\n");
 
 			/* remove those that need removing */
-			while (ff = ship_list_next(netio_ff_entries, &ptr)) {
+			while ((ff = ship_list_next(netio_ff_entries, &ptr))) {
 				if (ff->remove) {
 					ship_list_remove(netio_ff_entries, ff);
 					netio_ff_close_entry(ff);
@@ -1368,7 +1406,7 @@ netio_ff_loop(void *data)
 			/* for i in each, loop throgh & add to the array */
 			i = 0;
 			ptr = 0;
-			while (sockarr[i] = ship_list_next(netio_ff_entries, &ptr)) {
+			while ((sockarr[i] = ship_list_next(netio_ff_entries, &ptr))) {
 				FD_SET(sockarr[i]->r_sock, &fd_read);
 				if (sockarr[i]->r_sock+1 > max)
 					max = sockarr[i]->r_sock+1;
@@ -1429,7 +1467,7 @@ netio_ff_loop(void *data)
 							if (!buf[r+1]) {
 								if (ship_list_first(ff->input)) {
 									/* combine into one */
-									while (outs = ship_list_pop(ff->input)) {
+									while ((outs = ship_list_pop(ff->input))) {
 										int len = (*((int*)outs[0]));
 										if ((len + r) < NETIO_FF_MAX_RECV_SIZE) {
 											memcpy(buf+r, outs[1], len);
@@ -1531,6 +1569,7 @@ netio_ff_loop(void *data)
 	freez(sockarr);
 	freez(buf);
         LOG_INFO("the nio FF loop ends\n");
+	return NULL;
 }
 
 

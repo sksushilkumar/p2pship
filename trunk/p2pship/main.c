@@ -29,9 +29,33 @@
 #include "ship_utils.h"
 #include "ship_debug.h"
 #include "p2pship_version.h"
+#include "netio.h"
+#include "ui.h"
+#include "conn.h"
+#include "netio_events.h"
+#include "netio_http.h"
+#include "addrbook.h"
 
 #ifdef CONFIG_BROADCAST_ENABLED
 #include "ol_broadcast.h"
+#endif
+#ifdef CONFIG_PYTHON_ENABLED
+#include "pymod.h"
+#endif
+#ifdef CONFIG_HIP_ENABLED
+#include "hipapi.h"
+#endif
+#ifdef CONFIG_SIP_ENABLED
+#include "sipp.h"
+#endif
+#ifdef CONFIG_WEBCONF_ENABLED
+#include "webconf.h"
+#endif
+#ifdef CONFIG_EXTAPI_ENABLED
+#include "ext_api.h"
+#endif
+#ifdef CONFIG_WEBCACHE_ENABLED
+#include "webcache.h"
 #endif
 
 /* default log level */
@@ -45,7 +69,7 @@ print_usage()
 {
 	processor_config_t *config = 0;
 	p2pship_log_level = -1;
-	if (config = processor_config_new()) {
+	if ((config = processor_config_new())) {
 		if (processor_config_load_defaults(config)) {
 			USER_ERROR("Warning: Current configuration completely loaded\n");
 		}
@@ -186,7 +210,7 @@ main(int argc, char **argv)
 
 	xmlInitParser();
 	xmlInitThreads();
-	initGenericErrorDefaultFunc(xml_error_func);
+	initGenericErrorDefaultFunc((xmlGenericErrorFunc *)xml_error_func);
 
         /* the getopt values */
         static struct option long_options[] =

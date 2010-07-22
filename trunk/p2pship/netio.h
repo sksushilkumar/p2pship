@@ -26,6 +26,7 @@
 #include "ship_utils.h"
 #include "processor_config.h"
 #include <netinet/tcp.h>
+#include "ident_addr.h"
 
 enum {
         NETIO_SOCK_UNKNOWN = 0,
@@ -56,7 +57,8 @@ typedef struct netio_sock_s
         int s;
         int active;
 	int flush;
-	
+	int remove;
+
         struct sockaddr *sa;
         socklen_t addrlen;
 
@@ -73,21 +75,48 @@ typedef struct netio_sock_s
 
 
 int netio_init(processor_config_t *config);
+void netio_register();
+void netio_ff_register();
+void netio_man_register();
+void *netio_man_close_socket(int socket);
+int netio_man_connto(struct sockaddr *sa, socklen_t sa_len,
+		     void *conn_obj,
+		     void (*conn_cb) (int s, void *obj),
+		     void (*data_cb) (int s, void *obj, char *data, int datalen));
+
+void netio_close_socket(int s);
+int netio_ff_add(int rec_socket, addr_t *addr, int *counter, int fragment_output);
+void netio_ff_remove(int rec_socket);
+int netio_packet_anon_send(char *data, int datalen, struct sockaddr* sa, socklen_t salen);
 
 void netio_close();
 int netio_new_listener(struct sockaddr *sa, socklen_t size, void (*callback) (int s, struct sockaddr *sa, socklen_t addrlen, int ss));
-int netio_send(int s, char *data, int datalen);
+int netio_send(int s, const char *data, int datalen);
 int netio_packet_send(int s, char *data, int datalen, struct sockaddr *sa, socklen_t size);
+int netio_packet_anon_send(char *data, int datalen, struct sockaddr* sa, socklen_t salen);
 int netio_read(int s, void (*callback) (int s, char *data, ssize_t datalen));
+int netio_packet_read(int s,
+		      void (*callback) (int s, char *data, size_t len,
+					struct sockaddr *sa, socklen_t addrlen));
+
+int netio_new_unix_socket(char *unix_socket, mode_t mode,
+			  void (*callback) (int, struct sockaddr *, socklen_t, int));
 
 int netio_connto(struct sockaddr *sa, socklen_t size, void (*callback) (int s, struct sockaddr *sa, socklen_t addrlen));
 
 int netio_remove_read(int s);
 void netio_close_socket(int s);
+void netio_set_active(int socket, int active);
+
+int netio_new_packet_socket(struct sockaddr *sa, socklen_t size);
 
 int netio_new_packet_reader(struct sockaddr *sa, socklen_t size, 
 			    void (*callback) (int s, char *data, size_t len,
 					      struct sockaddr *sa, socklen_t addrlen));
+int netio_new_multicast_reader(char *mc_addr, 
+			       struct sockaddr *sa, socklen_t size,			   
+			       void (*callback) (int s, char *data, size_t len,
+						 struct sockaddr *sa, socklen_t addrlen));
      
 #endif
 

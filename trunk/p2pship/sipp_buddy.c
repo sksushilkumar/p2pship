@@ -20,6 +20,8 @@
 #include "processor_config.h"
 #include "ship_debug.h"
 #include "ident.h"
+#include "netio_http.h"
+#include "trustman.h"
 
 static void 
 sipp_buddy_pf_cb(char *url, int respcode, char *data, int data_len, void *pkg)
@@ -45,7 +47,7 @@ sipp_buddy_perform_buddylist_update(ident_t *from)
 	time(&now);
 	exp = now;
 
-	while (buddy = ship_list_next(from->buddy_list, &ptr)) {
+	while ((buddy = ship_list_next(from->buddy_list, &ptr))) {
 		int valid = buddy->created + buddy->expire;
 		if (valid > now) {
 			ASSERT_TRUE((x = append_str("<buddy><hash>", xml, &size, &len)) &&
@@ -126,7 +128,6 @@ static int
 __sipp_buddy_handle_subscribe(ident_t *from, char *to, int expire, char *callid)
 {
 	buddy_t* buddy = 0;
-	void *ptr = 0;
 	time_t now;
 	
 	LOG_DEBUG("Got subscribe for %s from %s, exp %d, callid %s\n",
@@ -152,7 +153,7 @@ int
 sipp_buddy_handle_subscribe(ident_t *from, char *to, int expire, char *callid)
 {
 	int ret = __sipp_buddy_handle_subscribe(from, to, expire, callid);
-	processor_run_async(ident_save_identities);
+	processor_run_async(ident_save_identities_async);
 	if (!ret)
 		return sipp_buddy_perform_buddylist_update(from);
 	return ret;
@@ -165,10 +166,10 @@ sipp_buddy_handle_subscribes(ident_t *from, char **to, int expire, char *callid)
 {
 	int i = 0, ret = 0;
 	buddy_t* buddy = 0;
-	void *ptr = 0, *last = 0;
+	void *ptr = 0;
 	
 	/* clear all old regs */
-	while (buddy = ship_list_next(from->buddy_list, &ptr)) {
+	while ((buddy = ship_list_next(from->buddy_list, &ptr))) {
 		buddy->expire = -1;
 	}
 		
@@ -177,7 +178,7 @@ sipp_buddy_handle_subscribes(ident_t *from, char **to, int expire, char *callid)
 		ret = __sipp_buddy_handle_subscribe(from, to[i++], expire, callid);
 	}
 	
-	processor_run_async(ident_save_identities);
+	processor_run_async(ident_save_identities_async);
 
 	if (!ret)
 		return sipp_buddy_perform_buddylist_update(from);

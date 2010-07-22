@@ -23,10 +23,13 @@
 #ifndef __CONN_H__
 #define __CONN_H__
 
+#include <sys/socket.h> 
+
 #include "processor_config.h"
 #include "processor.h"
 #include "ship_utils.h"
-#include <sys/socket.h> 
+#include "ident.h"
+#include "ident_addr.h"
 
 /* how many packets can be queued for one connection */
 #define CONN_IN_QUEUE_LIMIT 10
@@ -105,13 +108,40 @@ enum {
 #define CONN_SERVICE_SPLIT_HEADER_LEN (4+4+4+1)
 #define CONN_SERVICE_NORMAL_HEADER_LEN (1)
 
-
-static int conn_has_connection_to(char *sip_aor, ident_t *ident);
 int conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait);
 int conn_send_sip_to(char *sip_aor, ident_t *ident, char *buf, size_t len);
 int conn_init(processor_config_t *config);
+void conn_register();
 void conn_close();
 int conn_stosa(char *str, struct sockaddr **addr, socklen_t *len);
 int conn_get_publicip(addr_t *addr);
+int conn_validate_ifaces(char **ifaces, int c);
+int conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, const int af);
+int conn_getips(ship_list_t *ips, char **ifaces, int c, int port);
+int conn_queue_to_peer(char *to, char *from, 
+		       service_type_t service,
+		       char *data, int data_len,
+		       void *ptr, void (*callback) (char *to, char *from, service_type_t service,
+						    char *data, int data_len, void *ptr,
+						    int code));
+int conn_resend_reg_pkg(ident_t *ident);
+int conn_fill_reg_package(reg_package_t *pkg);
+int conn_can_connect_to(reg_package_t *pkg);
+int conn_getips(ship_list_t *ips, char **ifaces, int c, int port);
+int conn_get_lo(addr_t *addr);
+
+int conn_send_mp_to(char *sip_aor, ident_t *ident,
+		    char *source_addr, int source_port,
+		    char *target_addr, int target_port,
+		    char *callid,
+		    char *buf, size_t len);
+
+
+#ifdef CONFIG_HIP_ENABLED	
+int conn_create_peer_hit_locator_mapping(char *sip_aor, addr_t *hit);
+int conn_connection_uses_hip(char *remote_aor, char *local_aor);
+#endif
+
+void conn_get_connected_peers(char *sip_aor, ship_list_t *ret);
 
 #endif

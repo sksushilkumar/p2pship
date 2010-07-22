@@ -27,6 +27,10 @@
 #include "ext_api.h"
 #include "conn.h"
 #include "p2pship_version.h"
+#include "olclient.h"
+#ifdef CONFIG_WEBCACHE_ENABLED
+#include "webcache.h"
+#endif
 
 /* activate when testing the web-cache. this will make it do p2p when
 it has the content in its own cache. */
@@ -55,11 +59,11 @@ static int
 http_unescape_aor_at(char *tmp)
 {
 	char *tmp2 = 0;
-	int l = 0, i;
+	int l = 0;
 
-	if (tmp2 = strstr(tmp, ".at.")) {
+	if ((tmp2 = strstr(tmp, ".at."))) {
 		l = 4;
-	} else if (tmp2 = strstr(tmp, "..")) {
+	} else if ((tmp2 = strstr(tmp, ".."))) {
 		l = 2;
 	}
 	
@@ -78,17 +82,17 @@ static void
 __extapi_get_cb(char *key, char *data, char *signer, void *param, int status)
 {
 	netio_http_conn_t *conn = 0;
-	if (conn = netio_http_get_conn_by_socket((int)param)) {
+	if ((conn = netio_http_get_conn_by_socket((int)param))) {
 		char buf[32], *curr, *entry; 
 		int ce = 0; 
 
-		if (curr = netio_http_get_attr(conn, "current_entry")) { 
+		if ((curr = netio_http_get_attr(conn, "current_entry"))) { 
 			ce = atoi(curr); 
 		}
 		sprintf(buf, "%d", ce+1);
 		netio_http_set_attr(conn, "current_entry", buf); 
 		
-		if (entry = netio_http_conn_get_param(conn, "entry")) {	
+		if ((entry = netio_http_conn_get_param(conn, "entry"))) {	
 			if ((ce == atoi(entry)) &&
 			    data) {
 				status = 0;
@@ -205,7 +209,7 @@ extapi_http_data_return(extapi_http_req_t *req, char *data, int odatalen)
 	int strl = 0, datalen = odatalen;
 	
 	/* send the data immediately */
-	LOG_DEBUG("We got data from http request, %d bytes\n", datalen);
+	LOG_DEBUG("We got data to return to the http request, %d bytes\n", datalen);
 	if (datalen < 0)
 		datalen = 0;
 	
@@ -254,7 +258,7 @@ extapi_data_received_http(char *data, int data_len, ident_t *ident,
 	char *tracking_id, *content, *tmp = 0;
 	netio_http_conn_t* conn = 0;
 	int port = service_subid(service_type);
-	int len = 0, s = -1;
+	int s = -1;
 	addr_t *addr = ident_get_service_addr(ident, service_type);
 	void *ptrarr = ident_get_service_data(ident, service_type);
 	struct sockaddr *sa = 0;
@@ -293,7 +297,7 @@ extapi_data_received_http(char *data, int data_len, ident_t *ident,
 
 		/* create the request holder */
 		ASSERT_TRUE(req = mallocz(sizeof(extapi_http_req_t)), err); // arr.. these are just passed around
-		sprintf(req->id, "%08x%08x", req, ship_systemtimemillis());
+		sprintf(req->id, "%08x%08x", (unsigned int)req, (unsigned int)ship_systemtimemillis());
 		ship_ht_put_string(extapi_http_reqs, req->id, req);
 		ASSERT_ZERO(netio_http_serialize(conn, &req->request, &req->request_len), err);
 		ASSERT_TRUE(req->tracking_id = strdup(tracking_id), err);
@@ -356,7 +360,7 @@ static int
 extapi_data_received_httpresponse(char *data, int data_len, ident_t *ident, 
 				  char *source, service_type_t service_type)
 {
-	char *tracking_id, *content = 0, *msg = 0;
+	char *tracking_id = 0, *content = 0;
 	netio_http_conn_t *oldconn = 0;
 	int len = 0, piece = 0;
 	
@@ -380,7 +384,7 @@ extapi_data_received_httpresponse(char *data, int data_len, ident_t *ident,
 	/* do something like this .. */
 	netio_http_packet_orderer_put(tracking_id, piece, content, len);
 	len = 1; /* so we dont close it yet */
-	if (oldconn = netio_http_get_conn_by_id(tracking_id)) {
+	if ((oldconn = netio_http_get_conn_by_id(tracking_id))) {
 		while (!netio_http_packet_orderer_pop_next(tracking_id, &piece, &content, &len)) {
 			extapi_return_and_record(oldconn, NULL, content, len);
 			freez(content);
@@ -409,8 +413,6 @@ extapi_http_sent(char *to, char *from, service_type_t service,
 		 char *data, int data_len, void *ptr,
 		 int code)
 {
-	char *tid = ptr;
-	
 	/* if error, then return error to the client as well .. */
 	if (code) {
 		netio_http_conn_t *conn = netio_http_get_conn_by_id(ptr);
@@ -429,6 +431,12 @@ static void
 extapi_return_and_record(netio_http_conn_t *conn, char *url, char *data, int datalen)
 {	
 	if (data && datalen > -1) {
+		
+		// todo: we should parse the data. check that we have gotten all.
+		
+		// we should then check whether it is our turn to start pumping out data
+
+
 		netio_send(conn->socket, data, datalen);
 #ifdef CONFIG_WEBCACHE_ENABLED
 		webcache_record(conn->tracking_id, url, data, datalen);
@@ -495,15 +503,14 @@ extapi_handle_http_forward_data_cb(int s, void *obj, char *data, int datalen)
 {
 	extapi_http_forward_req_t *ptr = obj;
 	netio_http_conn_t *conn = 0;
-	
+
 	if (datalen < 0) {
-		if (!ptr->len 
+		// could not connect!
 #ifdef CONFIG_WEBCACHE_ENABLED
-		    && !webcache_p2p_lookup(ptr->url, ptr, extapi_p2p_cache_data_cb)
-#endif
-		    ) {
+		if (!ptr->len && !webcache_p2p_lookup(ptr->url, ptr, extapi_p2p_cache_data_cb)) {
 			return;
 		}
+#endif
 	} else
 		ptr->len = 1;
 
@@ -512,9 +519,12 @@ extapi_handle_http_forward_data_cb(int s, void *obj, char *data, int datalen)
  err:
 	if (conn) {
 		if (datalen < 1) {
+			// no more data!
 			if (!ptr->len) {
 				extapi_http_proxy_response(conn, 400, "Error", "Could not connect");
 			}
+
+			// arr. we should NOT close unless we really have answered all the requests!
 			netio_http_conn_close(conn);
 			conn = 0;
 		} else
@@ -551,7 +561,6 @@ extapi_handle_http_forward(netio_http_conn_t *conn, char *user, int port)
 	struct sockaddr *sa = 0;
 	socklen_t sa_len;
 	extapi_http_forward_req_t *ptr = 0;
-	char *tmp;
 	char *buf = 0;
 	int len;
 	
@@ -607,6 +616,7 @@ extapi_handle_http_forward(netio_http_conn_t *conn, char *user, int port)
 	
 	addr.port = port;
 	ASSERT_ZERO(ident_addr_addr_to_sa(&addr, &sa, &sa_len), err);
+
 	ASSERT_TRUE(netio_man_connto(sa, sa_len, ptr, extapi_handle_http_forward_conn_cb,
 				     extapi_handle_http_forward_data_cb) != -1, err);
 	
@@ -670,7 +680,7 @@ httpproxy_process_req(netio_http_conn_t *conn, void *pkg)
 	char *tmp = 0, *path = 0, *user = 0, *tmp2 = 0;
 	int port = 80;
 	
-	LOG_DEBUG("got req for %s\n", conn->url);
+	LOG_DEBUG("got req for %s on socket %d\n", conn->url, conn->socket);
 		
 	/* hm, if method == CONNECT, what then? highjack the socket,
 	   put it into a forwarder */
@@ -685,7 +695,7 @@ httpproxy_process_req(netio_http_conn_t *conn, void *pkg)
 		/* conn to the host! */
 		ASSERT_ZERO(ident_addr_str_to_sa(conn->url,
 						 &sa, &sa_len), err);
-		if (id = strdup(conn->tracking_id))
+		if ((id = strdup(conn->tracking_id)))
 			s = netio_man_connto(sa, sa_len, id,
 					     _httpproxy_tunnel_cb,
 					     _httpproxy_tunnel_data_cb);
@@ -714,7 +724,7 @@ httpproxy_process_req(netio_http_conn_t *conn, void *pkg)
 	}
 	
 	/* parse possible port number */
-	if (tmp2 = strchr(tmp, ':')) {
+	if ((tmp2 = strchr(tmp, ':'))) {
 		port = atoi(tmp2+1);
 		tmp2[0] = 0;
 	}
@@ -800,7 +810,7 @@ extapi_handle_forward_with_auth(netio_http_conn_t *conn, char *to, int port)
 	char *auth = 0;
 	int ret = -1;
 
-	if (auth = netio_http_get_header(conn, "Proxy-Authorization")) {
+	if ((auth = netio_http_get_header(conn, "Proxy-Authorization"))) {
 		int len = 0;
 		
 		/* skip the 'Basic ' */
@@ -812,7 +822,7 @@ extapi_handle_forward_with_auth(netio_http_conn_t *conn, char *to, int port)
 			char *passwd = 0;
 						
 			auth[len] = 0;
-			if (passwd = strchr(auth, ':')) {
+			if ((passwd = strchr(auth, ':'))) {
 				passwd[0] = 0;
 				passwd++;
 			}
@@ -870,7 +880,7 @@ extapi_process_req(netio_http_conn_t *conn, void *pkg)
 		if (!key) {
 			netio_http_respond_str(conn, 400, "Bad request", "Bad request");
 		} else {
-			ASSERT_ZERO(olclient_get(key, conn->socket, __extapi_get_cb), err);
+			ASSERT_ZERO(olclient_get(key, (void*)conn->socket, __extapi_get_cb), err);
 			ret = 1;
 		}
 	} else if (str_startswith(conn->url, "/put")) {
@@ -997,9 +1007,8 @@ extapi_process_req(netio_http_conn_t *conn, void *pkg)
 		if (!aor || !ttl || !url) {
 			netio_http_respond_str(conn, 400, "Bad request", "Bad request");
 		} else {
-			ident_t *ident = 0;
 			addr_t addr;
-			int ret;
+			int ret = 0;
 			
 			ASSERT_ZERO(ident_addr_str_to_addr_lookup(url, &addr), httpr_err);			
 			ret = extapi_register_p2phttp_handler(aor, dport, &addr, expire, NULL, NULL);			
@@ -1184,7 +1193,7 @@ extapi_process_req(netio_http_conn_t *conn, void *pkg)
 
 
 /* this gets called when an config has been updated */
-static int
+static void
 extapi_cb_config_update(processor_config_t *config, char *k, char *v)
 {
 	int ret = -1;
@@ -1217,10 +1226,10 @@ extapi_cb_config_update(processor_config_t *config, char *k, char *v)
 		ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_HTTPPROXY_REVEAL_ORIGINAL, &reveal_original_request), err);
 	}
 #endif
-		ret = 0;
-	err:
-		return ret;
-	}
+	return;
+ err:
+	PANIC();
+}
 
 /* starts up the extapi interface */
 int
@@ -1264,7 +1273,7 @@ extapi_close()
 
 	if (extapi_http_reqs) {
 		extapi_http_req_t *req = NULL;
-		while (req = ship_ht_pop(extapi_http_reqs))
+		while ((req = ship_ht_pop(extapi_http_reqs)))
 			extapi_free_http_req(req);
 	}
 #endif

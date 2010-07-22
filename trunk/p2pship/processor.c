@@ -24,10 +24,16 @@
 #include <arpa/inet.h>
 
 #include "processor.h"
+#ifdef CONFIG_SIP_ENABLED
 #include "sipp.h"
+#endif
 #include "ship_debug.h"
 #include "ship_utils.h"
 #include "ident.h"
+
+#ifdef CONFIG_PYTHON_ENABLED
+#include "pymod.h"
+#endif
 
 /* the configuration for the current .. */
 static processor_config_t *pconfig;
@@ -116,7 +122,7 @@ processor_tasks_new(int (*func) (void *data, processor_task_t **wait, int wait_f
         if (!processor_alive)
                 return NULL;
 
-        if (qt = (processor_task_t*)mallocz(sizeof(processor_task_t))) {
+        if ((qt = (processor_task_t*)mallocz(sizeof(processor_task_t)))) {
 		LOG_VDEBUG("created task %08x\n", qt);
                 qt->func = func;
                 qt->data = data;
@@ -133,7 +139,7 @@ processor_tasks_add(int (*func) (void *data, processor_task_t **wait, int wait_f
 		    void (*callback) (void *qt, int code))
 {
         processor_task_t *qt;
-        if (qt = processor_tasks_new(func, data, callback)) {
+        if ((qt = processor_tasks_new(func, data, callback))) {
                 SYNCHRONIZE_SIGNAL(processor_tasks_lock, processor_tasks_cond, 
 				   ship_list_add(processor_tasks, qt) );
 		LOG_VDEBUG("added task %08x to active list\n", qt);
@@ -200,7 +206,7 @@ processor_task_t *processor_tasks_add_timed(int (*func) (void *data, processor_t
 					    int msecs)
 {
         processor_task_t *qt;
-        if (qt = processor_tasks_new(func, data, callback)) {
+        if ((qt = processor_tasks_new(func, data, callback))) {
 		qt->timeout = msecs;
                 SYNCHRONIZE_SIGNAL(processor_tasks_lock, processor_tasks_cond, 
                                    ship_list_add(queued_tasks, qt));
@@ -216,7 +222,7 @@ processor_queue_add(int (*func) (void *data, processor_task_t **wait, int wait_f
                     void (*callback) (void *qt, int code))
 {
         processor_task_t *qt;
-        if (qt = processor_tasks_new(func, data, callback)) {
+        if ((qt = processor_tasks_new(func, data, callback))) {
                 qt->wait_for = wait;
                 SYNCHRONIZE_SIGNAL(processor_tasks_lock, processor_tasks_cond,
                                    ship_list_add(queued_tasks, qt));
@@ -241,14 +247,14 @@ processor_create_wait()
 void 
 processor_signal_wait(processor_task_t *wait, int status)
 {
-        int i, f = 0;
+        int f = 0;
 	void *ptr = 0, *last = 0;
 	processor_task_t *tqt;
 	if (!processor_tasks_lock || !wait)
 		return;
 
         SYNCHRONIZE(processor_tasks_lock, {
-		while (tqt = ship_list_next(queued_tasks, &ptr)) {
+			while ((tqt = ship_list_next(queued_tasks, &ptr))) {
                         if (tqt == wait){
                                 ship_list_remove(queued_tasks, tqt);
 				if (!f) {
@@ -335,7 +341,7 @@ processor_get_module_from(const char *name, ship_list_t *list)
 {
 	void *ptr = 0;
 	processor_module_t *mod = 0;
-	while (mod = ship_list_next(list, &ptr)) {
+	while ((mod = ship_list_next(list, &ptr))) {
 		if (!strcmp(mod->name, name))
 			return mod;
 	}
@@ -343,7 +349,7 @@ processor_get_module_from(const char *name, ship_list_t *list)
 }
 
 /* registers a new module */
-int 
+void
 processor_register(processor_module_t *module)
 {
 	ship_list_add(modules, module);
@@ -372,7 +378,7 @@ processor_init_module(const char *name, processor_config_t *config)
 	
 	ASSERT_TRUE(mod = processor_get_module_from(name, modules), err);
 	ship_list_add(queue, mod);
-	while (mod = ship_list_pop(queue)) {
+	while ((mod = ship_list_pop(queue))) {
 		int dep = 0;
 		
 		/* check deps */
@@ -417,7 +423,7 @@ processor_init_modules(processor_config_t *config)
 {
 	void *ptr = 0;
 	processor_module_t *mod;
-	while (mod = ship_list_next(modules, &ptr)) {
+	while ((mod = ship_list_next(modules, &ptr))) {
 		int ret = processor_init_module(mod->name, config);
 		if (ret)
 			return ret;
@@ -500,7 +506,7 @@ processor_kill_workers(const char *type)
         if (processor_workers) {
 		processor_worker_t *w;
 		void *ptr = 0, *last = 0;
-		while (w = ship_list_next(processor_workers, &ptr)) {
+		while ((w = ship_list_next(processor_workers, &ptr))) {
 			if (str_startswith(w->name, type)) {
 				ship_list_remove(processor_workers, w);
 				processor_kill_worker(w);
@@ -571,7 +577,6 @@ processor_close()
 
 	/* free up the eventing stuff */
 	if (event_receivers) {
-		void *ptr = 0;
 		while (ship_list_first(event_receivers))
 			processor_event_free(ship_list_pop(event_receivers));
 		ship_list_free(event_receivers);
@@ -588,8 +593,6 @@ processor_close()
 static void
 processor_thread_run(processor_worker_t* data)
 {
-        char *name  = data->name;
-
         while (processor_alive) {
                 processor_task_t *qt = 0;
                 int i;
@@ -666,13 +669,12 @@ processor_thread_run(processor_worker_t* data)
 			
                         LOG_VDEBUG("event processed with return value %d\n", qt->status_code);
                         if (qt->status_code == 1) {
-				int done_already = 0;
 				processor_task_t *tqt = 0;
 				
 				/* check if the task this is waiting for has already completed */
 				ship_lock(completed_tasks);
 				if (qt->wait_for) {
-					if (tqt = ship_list_find(completed_tasks, qt->wait_for)) {
+					if ((tqt = ship_list_find(completed_tasks, qt->wait_for))) {
 						qt->wait_for_code = tqt->status_code;
 					} else {
 						/* check nr.2: check also that the task is a valid one! */
@@ -781,7 +783,7 @@ int
 processor_run()
 {
         int i, ret = -1;
-	struct processor_worker_s main = { .thread = 0, .name = "main-0" };
+	struct processor_worker_s main_w = { .thread = 0, .name = "main-0" };
 
 	USER_ERROR("proxy initialized ok\n");
         
@@ -810,9 +812,9 @@ processor_run()
 	if (processor_config_is_true(processor_get_config(), P2PSHIP_CONF_START_SHELL))
 		pymod_shell();
 	else
-		processor_thread_run(&main);
+		processor_thread_run(&main_w);
 #else
-	processor_thread_run(&main);
+	processor_thread_run(&main_w);
 #endif
 	ret = 0;
  err:
@@ -992,6 +994,8 @@ processor_to_run(void *data)
  	if (validity_missed) {
 		processor_tasks_add(processor_to_cleanup_dead, current_thread, NULL);
  	}
+	
+	return NULL;
 }
 
 /* initializes a new thread for some unstuckable set of tasks */

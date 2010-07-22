@@ -16,11 +16,21 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+
+#define _GNU_SOURCE
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "processor_config.h"
 #include "ui.h"
 #include "ident.h"
 #include "processor.h"
 
+int
+ui_stdin_query_operation(const char *operation, 
+			 const char* true_op, const char *false_op);
 
 int
 ui_stdin_query_import_contacts(ship_list_t *list)
@@ -29,7 +39,7 @@ ui_stdin_query_import_contacts(ship_list_t *list)
 	contact_t *c = 0;
 	
 	USER_PRINT("Import these contacts:\n");
-	while (c = ship_list_next(list, &ptr)) {
+	while ((c = ship_list_next(list, &ptr))) {
 		USER_PRINT("\t%s <%s>: %s\n", c->name, c->sip_aor);
 	}
 	return ui_stdin_query_operation("import", "yes", "no");
@@ -58,7 +68,7 @@ int
 ui_stdin_query_operation(const char *operation, 
 			 const char* true_op, const char *false_op)
 {
-	int len = 64;
+	size_t len = 64;
 	char *buf = NULL;
 	char *q = mallocz(strlen(operation) + strlen(true_op) + strlen(false_op) + 20);
 
@@ -95,12 +105,14 @@ int
 ui_stdin_print_import_result(char *buf)
 {
 	USER_PRINT(buf);
+	return 0;
 }
 
 int
 ui_stdin_print_error(char *buf)
 {
 	USER_PRINT(buf);
+	return 0;
 }
 
 int
@@ -112,7 +124,7 @@ ui_stdin_query_simple(char *header, char *body, char *true_op, char *false_op)
 int
 ui_stdin_query_three(char *header, char *body, char *one_op, char *two_op, char *three_op)
 {
-	int len = 64;
+	size_t len = 64;
 	char *buf = NULL;
 	char *q = mallocz(strlen(body) + strlen(one_op) + strlen(two_op) + strlen(three_op) + 20);
 

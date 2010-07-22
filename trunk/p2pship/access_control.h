@@ -23,6 +23,8 @@
 #include <osip2/osip.h>
 #include <osipparser2/sdp_message.h>
 #include "ship_utils.h"
+#include "processor_config.h"
+#include "sipp.h"
 
 /* the verdicts */
 #define AC_VERDICT_NONE 0
@@ -64,5 +66,13 @@ int ac_send_stats(char *remote, char *local,
 #else
 #define ac_send_stats(remote, local, time, callid, event) 1
 #endif
+
+void ac_lists_save();
+int ac_packetfilter_local(sipp_request_t *req, 
+			  void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict));
+int ac_packetfilter_remote(char *local_aor, char *remote_aor, osip_event_t *evt, 
+			   void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict));
+int ac_init(processor_config_t *config);
+void ac_close();
 
 #endif

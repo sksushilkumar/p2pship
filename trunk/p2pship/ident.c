@@ -16,12 +16,16 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <sys/stat.h>
+
 #include "ident.h"
 #include "ship_utils.h"
 #include "processor.h"
 #include "ship_debug.h"
-#include <sys/stat.h>
 #include "conn.h"
+#include "olclient.h"
+#include "addrbook.h"
+#include "ui.h"
 
 /* the pp packets */
 #define PP_MSG_ACK 1
@@ -37,7 +41,6 @@ static int public_put = 0;
 /* the service handlers */
 static ship_ht_t *ident_service_handlers = 0;
 
-static ship_list_t *ident_get_file_list(char *dir_name, char *extn, ship_list_t* file_list);
 static void ident_clear_idents();
 time_t ident_registration_timeleft(ident_t *ident);
 static void ident_mark_foreign_regs_for_update();
@@ -85,7 +88,7 @@ static struct service_s bloombuddy_service =
 };
 #endif
 
-static int
+static void
 ident_cb_config_update(processor_config_t *config, char *k, char *v)
 {
 	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED, &indent_allow_untrusted), err);
@@ -101,11 +104,10 @@ ident_cb_config_update(processor_config_t *config, char *k, char *v)
 	/* re-register all if ua mode change */
 	ASSERT_ZERO(processor_config_get_enum(config, P2PSHIP_CONF_IDENT_UA_MODE, &sipp_ua_mode), err);
 	if (k && !strcmp(k, P2PSHIP_CONF_IDENT_UA_MODE))
-		ident_reregister_all();
-	
-	return 0;
+		ident_reregister_all();	
+	return;
  err:
-	return -1;
+	PANIC("Could not get the needed configuration values!\n");
 }
 
 
@@ -128,7 +130,7 @@ ident_cb_events(char *event, void *data, void *eventdata)
 int
 ident_module_init(processor_config_t *config)
 {
-	int ret = -1, number;
+	int ret = -1;
 	
         LOG_INFO("Initing the identity module\n");
 
@@ -136,7 +138,7 @@ ident_module_init(processor_config_t *config)
 	OpenSSL_add_all_ciphers();
 
 	ASSERT_TRUE(default_services = ship_ht_new(), err);
-	ASSERT_ZERO(ident_cb_config_update(config, NULL, NULL), err);
+	ident_cb_config_update(config, NULL, NULL);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED, ident_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_ALLOW_UNKNOWN_REGISTRATIONS, ident_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_REQUIRE_AUTHENTICATION, ident_cb_config_update);
@@ -154,6 +156,10 @@ ident_module_init(processor_config_t *config)
 
 	/* register the secret-negatiation protocol handler */
 	ident_register_default_service(SERVICE_TYPE_PRIVACYPAIRING, &privacy_pairing_service);
+
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+	ident_register_default_service(SERVICE_TYPE_BLOOMBUDDIES, &bloombuddy_service);
+#endif
 	
 	ASSERT_TRUE(ident_service_handlers = ship_ht_new(), err);
 	ret = 0;
@@ -172,7 +178,7 @@ ident_pp_send_message(char *from, char *to,
 	if (param)
 		blen += strlen(param) + 1;
 	
-	if (buf = mallocz(blen)) {
+	if ((buf = mallocz(blen))) {
 		LOG_DEBUG("sending pp packet %s -> %s, type %d, param: %s..\n", from, to, msg_type, param);
 
 		ship_inroll(msg_type, buf, 2);
@@ -194,8 +200,8 @@ ident_pp_start_negotiation(ident_t *ident, buddy_t *peer)
 	int i;
 	
 	freez(peer->shared_secret);
-	if (sugg = mallocz(11)) {
-		ship_get_random(sugg, 10);
+	if ((sugg = mallocz(11))) {
+		ship_get_random((unsigned char *)sugg, 10);
 		
 		/* convert those bytes into something readable.. */
 		for (i = 0; i < 10; i++)
@@ -256,6 +262,7 @@ ident_handle_bloombuddy_message(char *data, int data_len,
 	processor_run_async((void (*)(void))ident_save_identities);
  err:
 	ship_bloom_free(bloom);
+	return 0;
 }
 #endif
 
@@ -387,7 +394,7 @@ ident_autoreg_save_do(void *data, processor_task_t **wait, int wait_for_code)
 	LOG_DEBUG("Saving autoreg identites\n");
 
 	ship_lock(identities);
-	while (ident = ship_list_next(identities, &ptr)) {
+	while ((ident = ship_list_next(identities, &ptr))) {
 		char tbuf[32];
 		ident_service_t *s;
 		void *p2 = 0;
@@ -399,7 +406,7 @@ ident_autoreg_save_do(void *data, processor_task_t **wait, int wait_for_code)
 		ASSERT_TRUE((tmp = append_str(",", buf, &size, &len)) && (buf = tmp), err);
 
 		/* these should be specified per-service: */
-		while (s = ship_ht_next(ident->services, &p2)) {
+		while ((s = ship_ht_next(ident->services, &p2))) {
 			if (s->service_handler_id) {
 				sprintf(tbuf, "%d,", s->service_type);
 				ASSERT_TRUE((tmp = append_str(tbuf, buf, &size, &len)) && (buf = tmp), err);
@@ -413,7 +420,7 @@ ident_autoreg_save_do(void *data, processor_task_t **wait, int wait_for_code)
 				ASSERT_TRUE((tmp = append_str(",", buf, &size, &len)) && (buf = tmp), err);
 				sprintf(tbuf, "%d,", s->expire);
 				ASSERT_TRUE((tmp = append_str(tbuf, buf, &size, &len)) && (buf = tmp), err);
-				sprintf(tbuf, "%d,", s->reg_time);
+				sprintf(tbuf, "%d,", (int)s->reg_time);
 				ASSERT_TRUE((tmp = append_str(tbuf, buf, &size, &len)) && (buf = tmp), err);
 			}
 		}
@@ -476,7 +483,7 @@ _ident_autoreg_load_cb(void *data, int lc, char *key, char *value, char *line)
 				s->reg_time = atoi(tokens[c++]);
 				
 				s2 = ship_ht_remove_int(ident->services, s->service_type);
-				ident_service_close(s2);
+				ident_service_close(s2, ident);
 				ship_ht_put_int(ident->services, s->service_type, s);
 				
 				time(&now);
@@ -507,13 +514,6 @@ ident_autoreg_load()
 	ret = 0;
  err:
 	return ret;
-}
-
-/* retrieves the ident-file name */
-static char *
-ident_get_ident_file()
-{
-	return idents_file;
 }
 
 /* loads the identities */
@@ -567,6 +567,12 @@ ident_get_cas()
 }
 
 /* saves the identities */
+void
+ident_save_identities_async()
+{
+	ident_save_identities();
+}
+
 int
 ident_save_identities()
 {
@@ -584,7 +590,7 @@ ident_save_identities()
 	ship_lock(cas);
 
 	/* remove all deleted identities, reset flags */
-	while (ca = ship_list_next(cas, &ptr)) {
+	while ((ca = ship_list_next(cas, &ptr))) {
 		if (ca->modified == MODIF_DELETED) {
 			ship_list_remove(cas, ca);
 			ship_lock(ca);
@@ -597,7 +603,7 @@ ident_save_identities()
 	}
 	ptr = 0;
 	last = 0;
-	while (ident = ship_list_next(identities, &ptr)) {
+	while ((ident = ship_list_next(identities, &ptr))) {
 		ship_lock(ident);
 		if (ident->modified == MODIF_DELETED) {
 			ship_unlock(ident);
@@ -655,14 +661,13 @@ ident_module_close()
 static void
 ident_clear_idents()
 {
-	ident_t *ident;
 	ca_t *ca;
 	
 	ship_obj_list_clear(identities);
 
 	if (cas) {
 		ship_lock(cas);
-		while (ca = ship_list_pop(cas)) {
+		while ((ca = ship_list_pop(cas))) {
 			ship_lock(ca);
 			ship_unlock(ca);
 			ident_ca_free(ca);
@@ -716,7 +721,7 @@ ident_get_issuer_ca(X509 *cert)
 {
 	char *key;
 	ca_t *ret = 0;
-	if (key = ident_data_x509_get_issuer_digest(cert))
+	if ((key = ident_data_x509_get_issuer_digest(cert)))
 		ret = ident_find_ca_by_digest(key);
 	freez(key);
 	return ret;
@@ -747,7 +752,7 @@ ident_set_status(char *aor, char *status)
 	
 	LOG_DEBUG("setting status for %s to %s\n", aor, status);
 	ship_lock(identities);
-	while (ident = ship_list_next(identities, &ptr)) {
+	while ((ident = ship_list_next(identities, &ptr))) {
 		ship_lock(ident);
 		if (!aor || !strcmp(aor, ident->sip_aor)) {
 			freez(ident->status);
@@ -764,8 +769,7 @@ ident_set_status(char *aor, char *status)
 		}
 		ship_unlock(ident);
 	}
- err:
-	ship_unlock(identities);
+ 	ship_unlock(identities);
 }
 
 /* gets / gets the status */
@@ -787,7 +791,6 @@ ident_get_status(char *aor)
 		ship_unlock(ident);
 	}
 	
- err:
 	ship_unlock(identities);
 	return status;
 }
@@ -923,7 +926,6 @@ ident_update_service_registration(ident_t *ident, service_type_t service_type,
 			LOG_WARN("ignoring service removal for %s, service type %u\n", ident->sip_aor, service_type);
 		}
 	} else {
-		int timeleft;
 		time_t now;
 
 		LOG_INFO("Should update registration for %s (exp %d)\n", 
@@ -1087,7 +1089,7 @@ ident_registration_timeleft(ident_t *ident)
 
 	now = time(0);
 	timeleft = 0;
-	while (s = ship_ht_next(ident->services, &ptr)) {
+	while ((s = ship_ht_next(ident->services, &ptr))) {
 		int tl = s->reg_time + s->expire - now;
 		if (tl > timeleft)
 			timeleft = tl;
@@ -1157,7 +1159,7 @@ ident_get_service_data(ident_t *ident, service_type_t service_type)
 	if (!ident)
 		return NULL;
 	
-	if (s = ship_ht_get_int(ident->services, service_type))
+	if ((s = ship_ht_get_int(ident->services, service_type)))
 		return s->pkg;
 	else
 		return NULL;
@@ -1186,11 +1188,11 @@ ident_update_registration_do(void *data, processor_task_t **wait, int wait_for_c
 	if (!timeleft) {
 		unsigned char *hmac_key64 = NULL;
 		
-		while (buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr)) {
+		while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
 			if (buddy->shared_secret) {
 				hmac_key64 = ship_hmac_sha1_base64(ident->sip_aor, buddy->shared_secret);	
 				if (hmac_key64) {
-					olclient_remove(hmac_key64, NULL, NULL);
+					olclient_remove((char *)hmac_key64, NULL);
 					free(hmac_key64);
 				}
 			}
@@ -1198,13 +1200,13 @@ ident_update_registration_do(void *data, processor_task_t **wait, int wait_for_c
 		
 		/* do this even though we are in paranoid.. ? */
 		if (public_put) {
-			olclient_remove(ident->sip_aor, NULL, NULL);
+			olclient_remove(ident->sip_aor, NULL);
 			public_put = 0;
 		}
 	} else {
 		ASSERT_ZERO(ident_create_new_reg(ident), err);
 
-		while (buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr)) {
+		while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
 			if (buddy->shared_secret && buddy->cert) {
 				olclient_put_anonymous_signed_for_someone_with_secret(ident->sip_aor, ident->reg->cached_xml, 
 										      ident, buddy, buddy->shared_secret, timeleft, 
@@ -1219,7 +1221,7 @@ ident_update_registration_do(void *data, processor_task_t **wait, int wait_for_c
 				     processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
 			LOG_DEBUG("public reg for %s done\n", ident->sip_aor);
 		} else if (public_put) {
-			olclient_remove(ident->sip_aor, NULL, NULL);
+			olclient_remove(ident->sip_aor, NULL);
 			public_put = 0;
 		}
 	}
@@ -1253,7 +1255,7 @@ ident_reregister_all()
 	ident_t *temp_ident = 0;
 	
 	ship_lock(identities);
-		while (temp_ident = ship_list_next(identities,  &ptr)){
+	while ((temp_ident = ship_list_next(identities,  &ptr))){
 			ship_lock(temp_ident);
 
 			/* update if it seems that we have *any* services that might be
@@ -1264,6 +1266,7 @@ ident_reregister_all()
 			ship_unlock(temp_ident);
 		}
 	ship_unlock(identities);
+	return 0;
 }
 
 /* this function resets the foreign reg package cache. should be
@@ -1281,13 +1284,13 @@ ident_reset_foreign_regs()
 static void 
 ident_mark_foreign_regs_for_update()
 {
-	LOG_DEBUG("Marking peer registration cache for update..\n");
-	ship_lock(foreign_idents);
 	void *ptr = 0;
 	reg_package_t *r;
-	while (r = (reg_package_t *)ship_list_next(foreign_idents, &ptr)) {
+
+	LOG_DEBUG("Marking peer registration cache for update..\n");
+	ship_lock(foreign_idents);
+	while ((r = (reg_package_t *)ship_list_next(foreign_idents, &ptr)))
 		r->need_update = 1;
-	}
 	ship_unlock(foreign_idents);
 }
 
@@ -1314,7 +1317,7 @@ ident_update_buddy_cert(void *aor, processor_task_t **wait, int wait_for_code)
 
 	/* ok.. */
 	ship_lock(identities);
-	while (ident = ship_list_next(identities, &ptr)) {
+	while ((ident = ship_list_next(identities, &ptr))) {
 		buddy_t *buddy = 0;
 		
 		ship_lock(ident);
@@ -1332,7 +1335,7 @@ ident_update_buddy_cert(void *aor, processor_task_t **wait, int wait_for_code)
 			}
 			
 			/* always replace the cert.. */
-			if (c2 = X509_dup(cert)) {
+			if ((c2 = X509_dup(cert))) {
 				LOG_DEBUG("replacing the certificate for %s's buddy %s\n", ident->sip_aor, aor);
 				if (buddy->cert)
 					X509_free(buddy->cert);
@@ -1427,7 +1430,7 @@ ident_import_foreign_reg(reg_package_t *reg)
 	int import = 1;
 	
 	if (!ignore_cert_validity) {
-		time_t start, end, now;
+		time_t now;
 		now = time(NULL);
 		
 		/* still valid? (the reg package) */
@@ -1577,8 +1580,12 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
 	    !conn_can_connect_to(*pkg)
 	    ) {
 		processor_task_t *val = processor_create_wait();
-                
+
 		if (*pkg) {
+			LOG_WARN("Could not use registration packet: %s %s\n",
+				 ((*pkg)->need_update? "it needs update":""),
+				 (conn_can_connect_to(*pkg)? "":"no usable connection address!"));
+
 			ship_unlock(*pkg);
 			(*pkg) = 0;
 		}
@@ -1587,7 +1594,6 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
                         ret = -4;
 		} else {   
 			buddy_t *remote_user = NULL;
-			void *ptr = 0;
                      
 			(*wait) = val;
 
@@ -1638,7 +1644,7 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
 	return ret; 
 }
 
-static ship_list_t *
+ship_list_t *
 ident_get_file_list(char *dir_name, char *extn, ship_list_t* file_list)
 {
 	/* this structure is used for storing the name of each entry in turn. */
@@ -1714,7 +1720,6 @@ ident_remove_ca(char *name)
 int
 ident_remove_ident(char *name)
 {
-	ident_t *ident;
 	int count = 0;
 	int ret = -1;
 
@@ -1780,7 +1785,6 @@ ident_import_mem(char *data, int datalen, int query, int modif)
 	int ret = -1;
 	ca_t *ca = NULL;	
 	contact_t *contact = NULL;	
-	ident_t *ident = NULL;
 	int icount = 0, ccount = 0, concount = 0;
 	
 	ASSERT_TRUE(newi = ship_list_new(), err);
@@ -1863,13 +1867,13 @@ ident_import_mem(char *data, int datalen, int query, int modif)
 	ship_obj_list_free(newi);
 
 	if (newc) {
-		while (ca = ship_list_pop(newc))
+		while ((ca = ship_list_pop(newc)))
 			ident_ca_free(ca);
 		ship_list_free(newc);
 	}
 
 	if (newco) {
-		while (contact = ship_list_pop(newco))
+		while ((contact = ship_list_pop(newco)))
 			ident_contact_free(contact);
 		ship_list_free(newco);
 	}
@@ -1884,7 +1888,6 @@ ident_import_ident_cas(ship_list_t *newi, ship_list_t *newc, int query, int modi
 {
 	int ret = -1;
 	ca_t *ca = NULL;	
-	void *ptr = NULL;
 	char *str = NULL;
 	ident_t *ident = NULL;
 	char *q;
@@ -1892,12 +1895,12 @@ ident_import_ident_cas(ship_list_t *newi, ship_list_t *newc, int query, int modi
 
 	/* go through certs */
 	ship_lock(cas);
-	while (ca = ship_list_pop(newc)) {
+	while ((ca = ship_list_pop(newc))) {
 		ca_t *oca;
 		
 		LOG_INFO("Certificate: %s\n", ca->name);
 		ASSERT_TRUE(str = ident_data_x509_get_serial(ca->cert), err);
-		if (oca = ident_find_ca_by_serial(str)) {
+		if ((oca = ident_find_ca_by_serial(str))) {
 			ship_unlock(oca);
 
 			USER_ERROR("Certificate already exists\n");
@@ -1911,7 +1914,7 @@ ident_import_ident_cas(ship_list_t *newi, ship_list_t *newc, int query, int modi
 		} else {
 			freez(str);
 			ASSERT_TRUE(str = ident_data_x509_get_subject_digest(ca->cert), err);
-			if (oca = ident_find_ca_by_serial(str)) {
+			if ((oca = ident_find_ca_by_serial(str))) {
 				LOG_INFO("Certificate for the same issuer already exists:\n");
 				ship_unlock(oca);
 			}
@@ -1944,12 +1947,12 @@ ident_import_ident_cas(ship_list_t *newi, ship_list_t *newc, int query, int modi
 
 	/* go through idents */
 	ship_lock(identities);
-	while (ident = ship_list_pop(newi)) {
+	while ((ident = ship_list_pop(newi))) {
 		ident_t *oident;
 		
 		/* find by sip aor */
 		LOG_INFO("Identity: %s <%s>\n", ident->username, ident->sip_aor);
-		if (oident = ident_find_by_aor(ident->sip_aor)) {
+		if ((oident = ident_find_by_aor(ident->sip_aor))) {
 			LOG_INFO("Identity for SIP AOR already exists:\n");
 			ship_unlock(oident); /* we have lock on identities already */
 			LOG_INFO("%s <%s>\n", oident->username, oident->sip_aor);

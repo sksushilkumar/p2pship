@@ -26,17 +26,11 @@
  * @author joakim.koskela@hiit.fi
  */
 
-#include <string.h>
-#include "hipapi.h"
-#include "ship_debug.h"
-#include "processor.h"
-#include "ident.h"
-#include "conn.h"
 #include <pthread.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <fcntl.h>
-#include "netio.h"
+#include <string.h>
 #include <net/if.h>
 #include <netdb.h>
 #include <sys/types.h>
@@ -51,6 +45,16 @@
 #include <linux/netlink.h> 
 #include <linux/rtnetlink.h>
 #include <net/if.h>
+
+#include "hipapi.h"
+#include "ship_debug.h"
+#include "processor.h"
+#include "ident.h"
+#include "conn.h"
+#include "netio.h"
+#include "sipp_mp.h"
+#include "trustman.h"
+#include "ship_utils.h"
 
 #define ship_lock_conn(conn) { ship_lock(conn); ship_restrict_locks(conn, identities); ship_restrict_locks(conn, conn_all_conn); }
 
@@ -88,11 +92,10 @@ static socklen_t ka_salen = 0;
 static void conn_cb_socket_got(int s, struct sockaddr *sa, socklen_t addrlen, int ss);
 static int conn_send_conn(conn_connection_t *conn, char *buf, int len, int type);
 static int conn_sendto(char *sip_aor, ident_t *ident, char *buf, size_t len, int type);
-static int conn_local_sendto(ident_t *ident, char *payload, int pkglen);
 static void conn_process_data_done(void *rdata, int code);
 static int conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code);
-int conn_getips(ship_list_t *ips, char **ifaces, int c, int port);
 static int conn_periodic();
+static int conn_has_connection_to(char *sip_aor, ident_t *ident);
 
 
 /* @sync none
@@ -100,7 +103,7 @@ static int conn_periodic();
  * should not be called directly, but rather through conn_conn_close!
  * 
  */
-void
+static void
 conn_connection_free(conn_connection_t *conn)
 {
 	/* close the connection */
@@ -120,9 +123,9 @@ conn_connection_free(conn_connection_t *conn)
 		
 	if (conn->fragments) {
 		ship_ht_t *parts = 0;
-		while (parts = ship_ht_pop(conn->fragments)) {
+		while ((parts = ship_ht_pop(conn->fragments))) {
 			void **arr;
-			while (arr = ship_ht_pop(parts))
+			while ((arr = ship_ht_pop(parts)))
 				freez_arr(arr, 2);
 			ship_ht_free(parts);
 		}
@@ -133,7 +136,7 @@ conn_connection_free(conn_connection_t *conn)
 
 /* @sync none
  * creates a new, empty connection struct, state CLOSED, no socket. */
-int
+static int
 conn_connection_init(conn_connection_t *ret, void *param)
 {
         conn_connection_t *c = (conn_connection_t *)param;
@@ -249,7 +252,6 @@ conn_connection_uses_hip(char *remote_aor, char *local_aor)
 		if (hipapi_addr_is_hit(&addr))
 			ret = 1;
 	}
- err:
 	ship_obj_unlockref(conn);
 	return ret;
 }
@@ -262,10 +264,9 @@ conn_close_bindings()
         /* listener */
         if (conn_lis_sockets) {                
 		int *s = 0;
-		addr_t *addr = 0;
 		ship_lock(conn_lis_sockets);
 			
-		while (s = ship_list_pop(conn_lis_sockets)) {
+		while ((s = ship_list_pop(conn_lis_sockets))) {
 			netio_close_socket(*s);
 			freez(s);
 		}
@@ -318,7 +319,7 @@ conn_rebind()
 	}
 	
 	/* start loop.. try always first the original port */
-	while (addr = ship_list_pop(ips)) {
+	while ((addr = ship_list_pop(ips))) {
 		char *str = 0;
 		int pos = 0;
 		
@@ -401,7 +402,7 @@ conn_cb_events(char *event, void *data, void *eventdata)
 	conn_rebind();
 }
 
-static int
+static void
 conn_cb_config_update(processor_config_t *config, char *k, char *v)
 {
 #ifdef CONFIG_HIP_ENABLED	
@@ -410,9 +411,9 @@ conn_cb_config_update(processor_config_t *config, char *k, char *v)
 #endif
 	ASSERT_ZERO(processor_config_get_int(config, P2PSHIP_CONF_CONN_KEEPALIVE,
 					     &conn_keepalive), err);
-	return 0;
+	return;
  err:
-	return -1;
+	PANIC("Error getting configuration values");
 }
 
 /* @sync none
@@ -420,11 +421,7 @@ conn_cb_config_update(processor_config_t *config, char *k, char *v)
 int
 conn_init(processor_config_t *config)
 {
-        int flags;
-        int ret = 0;
 	char *inifs;
-	char *tmp;
-	int i=0, p=0;
 
         LOG_INFO("initing the conn module\n");
 
@@ -512,11 +509,12 @@ conn_cb_data_got(int s, char *data, ssize_t datalen)
 
         /* find which peer this was & process data */
 
+
 	//forts;
 	// can it be that the socket hasn't been put into the socket
 	// stack yet when this might be called? got a 'between unknowns!!'
         conn = conn_find_connection_by_socket(s);
-        if (datalen < 0 || !conn) {
+        if (datalen < 1 || !conn) {
                 if (conn) {
 			LOG_DEBUG("socket %d from %s => %s closed\n", s, conn->local_aor, conn->sip_aor);
 			conn_conn_close(conn);
@@ -611,7 +609,7 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
                 /* combine buffers to one large */
                 datalen = 0;
 		ptr = 0;
-		while (lenbuf = ship_list_next(conn->in_queue, &ptr))
+		while ((lenbuf = ship_list_next(conn->in_queue, &ptr)))
 			datalen += lenbuf->len;
 		
 		if (datalen < 3) {
@@ -622,7 +620,7 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 		freez(buf);
 		ASSERT_TRUE(buf = mallocz(datalen+1), err);
 		datalen = 0;
-		while (lenbuf = ship_list_pop(conn->in_queue)) {
+		while ((lenbuf = ship_list_pop(conn->in_queue))) {
 			memcpy(buf+datalen, lenbuf->data, lenbuf->len);
 			datalen += lenbuf->len;
 			ship_lenbuf_free(lenbuf);
@@ -707,11 +705,10 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 	conn->ident = NULL;
         if (!ret) {
                 netio_set_active(conn->socket, 1);
-		ship_unlock(conn);
         } else {
                 conn_conn_close(conn);
-		ship_obj_unlockref(conn);
 	}
+	ship_unlock(conn); // unreffing is in _done!
         return ret;
 }
 
@@ -734,7 +731,7 @@ conn_ensure_unique_conn_lock(conn_connection_t *conn)
 {
 	conn_connection_t *rc = NULL;
 	void *ptr = 0, *last = 0;
-	int i, ret = -1;
+	int ret = -1;
 	
 	/* if quitting or a loopback connection */
         if (!conn_all_conn || !strcmp(conn->local_aor, conn->sip_aor))
@@ -750,7 +747,7 @@ conn_ensure_unique_conn_lock(conn_connection_t *conn)
 	/* ensure that this conn is still valid */
 	if (conn->state != STATE_CLOSING) {
 		ret = 0;
-		while (rc = ship_list_next(conn_all_conn, &ptr)) {
+		while ((rc = ship_list_next(conn_all_conn, &ptr))) {
 			if (rc != conn && 
 			    rc->sip_aor && !strcmp(conn->sip_aor, rc->sip_aor) &&
 			    rc->local_aor && !strcmp(conn->local_aor, rc->local_aor)) {
@@ -898,7 +895,7 @@ conn_resend_reg_pkg(ident_t *ident)
 	ASSERT_TRUE(data = ident_get_regxml(ident), err);
         if (conn_all_conn) {
 		ship_lock(conn_all_conn);
-		while (c = ship_list_next(conn_all_conn, &ptr)) {
+		while ((c = ship_list_next(conn_all_conn, &ptr))) {
 			ship_lock_conn(c);
 			if (c->local_aor && !strcmp(ident->sip_aor, c->local_aor))
 				conn_send_conn(c, data, strlen(data), PKG_REG);
@@ -918,15 +915,6 @@ static int
 conn_process_pkg_sip(char *payload, int pkglen, conn_connection_t *conn)
 {
 	return conn_process_pkg_service(payload, pkglen, SERVICE_TYPE_SIP, conn);
-}
-
-/* .. argh .. except that the conn needs to be closed if returning an error ... 
-   .. but the conn could be ref'd and kept with this stuff.. 
-*/
-static int
-conn_process_issue_data_received(service_t *service, char *buf, int len, ident_t *to, char *from, service_type_t service_type)
-{
-	return service->data_received(buf, len, to, from, service_type);
 }
 
 /* handles a generic service package */
@@ -1007,19 +995,19 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 								char *totbuf = 0;
 								int totlen = 0;
 								
-								while (arr = ship_ht_next(parts, &ptr)) {
+								while ((arr = ship_ht_next(parts, &ptr))) {
 									totlen += *((int*)arr[0]);
 								}
 								LOG_VDEBUG("Got all parts: for id %d: %d, total length %d\n", id, tot, totlen);
 								
-								if (totbuf = mallocz(totlen + 1)) {
+								if ((totbuf = mallocz(totlen + 1))) {
 									int i;
 									ptr = 0;
 									totlen = 0;
 									
 									/* go through the parts in order */
 									for (i=0; i < tot; i++) {
-										if (arr = ship_ht_get_int(parts, i)) {
+										if ((arr = ship_ht_get_int(parts, i))) {
 											memcpy(totbuf + totlen, arr[1], *((int*)arr[0]));
 											totlen += *((int*)arr[0]);
 										}
@@ -1034,7 +1022,7 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 
 							if (parts) {
 								ship_ht_remove_int(conn->fragments, id);
-								while (arr = ship_ht_pop(parts))
+								while ((arr = ship_ht_pop(parts)))
 									freez_arr(arr, 2);
 								ship_ht_free(parts);
 							}
@@ -1138,7 +1126,6 @@ static void
 conn_cb_socket_got(int s, struct sockaddr *sa, socklen_t addrlen, int ss)
 {
         conn_connection_t *conn = NULL;
-        struct sockaddr_in *sin, *sim6;
 	addr_t addr;
 
 	if (!ident_addr_sa_to_addr(sa, addrlen, &addr)) {
@@ -1151,7 +1138,7 @@ conn_cb_socket_got(int s, struct sockaddr *sa, socklen_t addrlen, int ss)
 		bzero(&c, sizeof(c));
 		c.sa = sa;
 		c.addrlen = addrlen;
-                if (conn = (conn_connection_t *)ship_obj_new(TYPE_conn_connection, &c)) {
+                if ((conn = (conn_connection_t *)ship_obj_new(TYPE_conn_connection, &c))) {
 			conn->socket = s;
 			conn->state = STATE_INIT;
 			time(&conn->last_content);
@@ -1260,7 +1247,7 @@ conn_send_mp_to(char *sip_aor, ident_t *ident,
                 fullpkg[pos++] = buf[i++];
         }
 
-        if (i = conn_sendto(sip_aor, ident, fullpkg, totlen, PKG_MP)) {
+        if ((i = conn_sendto(sip_aor, ident, fullpkg, totlen, PKG_MP))) {
 		freez(fullpkg);
 	}
         return i;
@@ -1305,10 +1292,10 @@ conn_sendto_raw(char *sip_aor, char *local_aor, char *buf, size_t len, int type)
         int ret = -1;
         conn_connection_t *conn;        
         
-	LOG_VDEBUG("sending %d bytes to %s from %s over HIP\n", len, sip_aor, local_aor);
+	LOG_DEBUG("sending %d bytes to %s from %s over HIP\n", len, sip_aor, local_aor);
         conn = conn_find_connection_by_aor(sip_aor, local_aor);
         if (conn && conn->state == STATE_CONNECTED) {
-                if (ret = conn_send_conn(conn, buf, len, type)) {
+                if ((ret = conn_send_conn(conn, buf, len, type))) {
                         conn_conn_close(conn);
                 }
         }
@@ -1378,10 +1365,10 @@ conn_periodic()
 
 	LOG_VDEBUG("checking connections.. \n");
 	if (!conn_all_conn)
-		return;
+		return 0;
 	
         ship_lock(conn_all_conn);
-	while (conn = ship_list_next(conn_all_conn, &ptr)) {
+	while ((conn = ship_list_next(conn_all_conn, &ptr))) {
 		int close = 0;
 		int useful, heard, sent;
 		
@@ -1469,9 +1456,19 @@ conn_has_connection_to(char *sip_aor, ident_t *ident)
 
         conn = conn_find_connection_by_aor(sip_aor, ident->sip_aor);
         if (conn && conn->state == STATE_CONNECTED) {
-                ret = 1;
+		time_t now;
+		struct sockaddr *addr = 0;
+		socklen_t addrlen = 0;
+		int heard;
+		
+		time(&now);
+		heard = now - conn->last_heard;
+		if (heard < 20 && !getpeername(conn->socket, addr, &addrlen))
+			ret = 1;
+		else
+			conn_conn_close(conn);
         }
-        ship_obj_unlockref(conn);
+	ship_obj_unlockref(conn);
         return ret;
 }
 
@@ -1485,11 +1482,11 @@ conn_get_connected_peers(char *sip_aor, ship_list_t *ret)
 	
         if (conn_all_conn) {
 		ship_lock(conn_all_conn);
-		while (c = ship_list_next(conn_all_conn, &ptr)) {
+		while ((c = ship_list_next(conn_all_conn, &ptr))) {
 			ship_lock_conn(c);
 			if (!sip_aor ||
-			    (c->local_aor && !strcmp(sip_aor, c->local_aor)) &&
-			    c->sip_aor) {
+			    ((c->local_aor && !strcmp(sip_aor, c->local_aor)) &&
+			     c->sip_aor)) {
 				char *t = strdup(c->sip_aor);
 				ship_list_add(ret, t);
 			}
@@ -1521,7 +1518,6 @@ conn_queue_fragment(char *to, char *from,
 {
 	void **arr = 0;
 	int ret = -1, i;
-	int odata_len = data_len;
 
 	ASSERT_TRUE(arr = mallocz(7 * sizeof(void*)), err);
 	ASSERT_TRUE(arr[0] = strdup(to), err);
@@ -1629,7 +1625,6 @@ conn_queue_to_peer_done(void *data, int code)
 	void (*callback) (char *to, char *from, service_type_t service,
 			  char *data, int data_len, void *ptr,
 			  int code) = arr[6];
-	int i;
 
 	/* callback */
 	if (callback)
@@ -1698,7 +1693,7 @@ conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait)
         /* yes, this needs to be synced as we dont want > 1 simulataneously trying this! */
         ship_lock(conn_all_conn); {
 
-                if (conn = conn_find_connection_by_aor(sip_aor, ident->sip_aor)) {
+                if ((conn = conn_find_connection_by_aor(sip_aor, ident->sip_aor))) {
                         if (conn->wait) {
                                 LOG_DEBUG("waiting for existing wait..\n");
                                 (*wait) = conn->wait;
@@ -1709,7 +1704,7 @@ conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait)
 			bzero(&c, sizeof(c));
 			c.sip_aor = sip_aor;
 			c.ident = ident;
-                        if (conn = (conn_connection_t *)ship_obj_new(TYPE_conn_connection, &c)) {
+                        if ((conn = (conn_connection_t *)ship_obj_new(TYPE_conn_connection, &c))) {
 				ship_obj_list_add(conn_all_conn, conn);
 				ship_lock_conn(conn);
 			} else
@@ -1793,7 +1788,6 @@ conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_cod
                         ret = 0;
                 } else if (!(ret = ident_lookup_registration(conn->ident, conn->sip_aor, &pkg, wait))) {
                         addr_t *addr = 0;
-                        char *port;
                         struct sockaddr *sa = 0;
                         socklen_t salen;
                         
@@ -1895,7 +1889,7 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
 	}
 
         /* store sa */
-        if (conn = conn_find_connection_by_socket(s)) {
+        if ((conn = conn_find_connection_by_socket(s))) {
 		ship_wait("handing established conn");
 
 		/* mark the end time of the connect! */
@@ -1917,7 +1911,7 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
 				
 				/* first, send reg package, then send target. */
 				ship_unlock(conn);
-				if (ident = ident_find_by_aor(conn->local_aor))
+				if ((ident = ident_find_by_aor(conn->local_aor)))
 					reg_str = ident_get_regxml(conn->ident);
 				ship_obj_unlockref(ident);
 				ship_lock(conn);
@@ -1970,8 +1964,6 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
 int
 conn_fill_reg_package(reg_package_t *pkg)
 {
-	int i;
-	int add_port_to_ip = 1;
 	addr_t *addr = 0;
 	void *ptr = 0, *last = 0;
 
@@ -1982,7 +1974,7 @@ conn_fill_reg_package(reg_package_t *pkg)
 
 	/* add the actual ip addresses of the ones we are listening to */
 	ship_lock(conn_lis_sockets);
-	while (addr = ship_list_next(conn_lis_socket_addrs, &ptr)) {
+	while ((addr = ship_list_next(conn_lis_socket_addrs, &ptr))) {
 		addr_t *tmp = mallocz(sizeof(addr_t));
 		if (tmp) {
 			memcpy(tmp, addr, sizeof(addr_t));
@@ -1999,7 +1991,7 @@ conn_fill_reg_package(reg_package_t *pkg)
 	   which array they are, but lets do it anyway ..*/
 	ptr = 0;
 	last = 0;
-	while (addr = ship_list_next(pkg->ip_addr_list, &ptr)) {
+	while ((addr = ship_list_next(pkg->ip_addr_list, &ptr))) {
 		if (hipapi_addr_is_hit(addr)) {
 			ptr = last;
 			ship_list_remove(pkg->ip_addr_list, addr);
@@ -2032,27 +2024,6 @@ conn_validate_ifaces(char **ifaces, int c)
 		}
 	}
 	return ret;
-}
-
-static int
-conn_if_matches(const int index, const char *name)
-{
-	char bb[IF_NAMESIZE];
-	if_indextoname(index, bb);
-
-	if (!strcmp(name, bb) ||
-	    !strcmp(name, "all") ||
-	    (!strcmp(name, "ext") &&
-	     /* add more here as needed.. */
-	     (str_startswith(bb, "eth") ||
-	      str_startswith(bb, "ath") ||
-	      str_startswith(bb, "ppp") ||
-	      str_startswith(bb, "wlan") ||
-	      str_startswith(bb, "teredo")
-	      ))) {
-		return 1;
-	}
-	return 0;
 }
 
 static int
@@ -2106,7 +2077,6 @@ conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, const 
 	
 	int i;
         int s = -1;
-        struct sockaddr_nl addr;
 	
 	s = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 	ASSERT_TRUE(s != -1, err);
@@ -2143,8 +2113,6 @@ conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, const 
 				
 			while (RTA_OK(rta, rtasize)) {
 				char *rtadata = RTA_DATA(rta);
-				size_t rtapayload = RTA_PAYLOAD(rta);
-				int w;
 
 				switch (rta->rta_type) {
 				case IFA_ADDRESS: {
@@ -2155,17 +2123,18 @@ conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, const 
 						
 					if (ifa->ifa_family == AF_INET6) {
 						memcpy(&sin6.sin6_addr, rtadata, sizeof(sin6.sin6_addr));
+						sin6.sin6_family = ifa->ifa_family;
 						sa = (struct sockaddr *)&sin6;
 						sa_len = sizeof(sin6);
 					} else if (ifa->ifa_family == AF_INET) {
 						memcpy(&sin.sin_addr, rtadata, sizeof(sin.sin_addr));
+						sin.sin_family = ifa->ifa_family;
 						sa = (struct sockaddr *)&sin;
 						sa_len = sizeof(sin);
 					}
 						
 					if (sa) {
 						addr_t *addr = mallocz(sizeof(addr_t));
-						sa->sa_family = ifa->ifa_family;
 						if (addr && !ident_addr_sa_to_addr(sa, sa_len, addr)) {
 							ship_list_add(ips, addr);
 							addr->port = port;

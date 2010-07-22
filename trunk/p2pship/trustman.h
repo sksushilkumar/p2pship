@@ -20,6 +20,7 @@
 #define __TRUSTMAN_H__
 
 #include "ship_utils.h"
+#include "processor_config.h"
 
 /* This represents all we know about a relationship with another person */
 typedef struct trustparams_s {
@@ -46,11 +47,23 @@ typedef struct trustparams_s {
 	time_t expires;
 } trustparams_t;
 
-static trustparams_t *trustman_get_trustparams(char *from_aor, char *to_aor);
 trustparams_t *trustman_get_valid_trustparams(char *from_aor, char *to_aor);
 trustparams_t *trustman_get_create_trustparams(char *from_aor, char *to_aor);
 
 /* returns the address of the pathfinder */
 char *trustman_get_pathfinder();
+
+void trustman_close();
+int trustman_init(processor_config_t *config);
+int trustman_handle_trustparams(char *from_aor, char *to_aor, char *payload, int pkglen);
+int trustman_mark_current_trust_sent(char *from_aor, char *to_aor);
+
+int trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from_aor, char *to_aor, 
+									  char *params, int param_len,
+									  void *data), 
+			       void *data);
+
+char *trustman_get_pathfinder();
+int trustman_mark_send_trust_to(char *from_aor, char *to_aor);
 
 #endif
