@@ -20,4 +20,4 @@ Other directions of development:
 Archive:
 
   * Extended HTTP support (7/10), _integrated; see [P2PHTTP]_
-  * Scripting support for plugins, integrated; see [PRE Python runtime]
+  * Scripting support for plugins, _integrated; see [PRE Python runtime]:
