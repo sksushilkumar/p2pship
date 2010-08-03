@@ -1,0 +1,30 @@
+#summary The updated connectivity framework
+
+= Introduction =
+
+Due to the system's history as a HIP-oriented application, the connectivity subsystem was designed to use HIP-protected sockets for exchanging data. Along the way plain TCP sockets were added for testing purposes, but the basic model remained the same; a stream-based socket which is authenticated on connect through which packets are exchanged.
+
+The purpose of the updated connectivity framework is to make this modular and more flexible. The connection types (currently HIP and plain-TCP) will be put into _transport handler_ modules which abstract the actual work to a nice, clean interface.
+
+Packets related to the channel authentication will be left to the inner workings of the specific transport handlers that need it. Instead, the connectivity subsystem will only see an interface for querying:
+
+ * Whether we have a working connection to a specific peer
+ * A call to establish a connection to a specific peer
+ * A call to transmit a service packet (application data) to a peer
+ * The general type of the connection
+
+The _type_ of connection will be (atleast) slow and fast. Fast being directly connected, such as HIP or SSL sockets, where slow can be DTN, overlay routed. Other, security-related types (secure, authenticated but unencrypted etc) might be added in the future. When sending data to a peer, the caller will specify how the packet is preferred to be delivered. For instance, sending a call invitation could go through a slow connection unless we already have a fast connection from before.
+
+Examples of different possible transport handlers:
+ 
+ * Different overlay routing
+ * Cloud-storage and routing
+ * DTN (the official IETF version)
+ * 'Homebrewed'-DTN; through memorysticks, email or similar
+ * XMPP or other global message exchange systems
+ * TLS/SSL/DTLS
+ * Native PubSub systems
+
+
+
+
