@@ -48,3 +48,7 @@ Transports:
  * [P2PHTTP Using the peer-to-peer HTTP interface]
  * [WebCache Using the web cache]
  * [PRE Configuring and using the Python run-time environment]
+
+== Applications, use-cases, related projects ==
+
+ * [P2PSNS Setting up and testing the peer-to-peer hybrid social network site]
