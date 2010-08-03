@@ -52,3 +52,7 @@ Transports:
 == Applications, use-cases, related projects ==
 
  * [P2PSNS Setting up and testing the peer-to-peer hybrid social network site]
+
+== Development directions ==
+
+_See the page for [UpcomingFeatures planned features]_
