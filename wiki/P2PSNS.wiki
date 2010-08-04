@@ -1,0 +1,23 @@
+#summary Using the P2P social networking site
+
+= Introduction =
+
+The P2P Social networking site was created to test some of the advanced HTTP features enabled by the [P2PHTTP p2p http subsystem] as well as the [PRE scripting engine].
+
+It is a simple php/mysql social networking site, enabling you to create social connections (friends), share updates on your _wall_ as well as content (images, video etc). It uses the p2pship p2p http to access the site, which means that you will be identified based on your p2pship identity, not a traditional web login.
+
+Furthermore, the content you share is always kept by yourself locally. It is never transmitted to the web site, giving you better control over whom it is shared to. When a friend of yours tries to access the content, the P2P social site provides only a link to the content which points to your p2pship identity. You are then able to control whom you actually provide the content to.
+
+= Configuring =
+
+The use-case assumes that you have successfully installed and configured the p2pship proxy with your own p2pship identity. Please see [Compiling here], [Configuration here], [IdentityManagement here] and [P2PHTTP here] for more information.
+
+Furthermore, the site requires a dedicated identity for the social web site.
+
+== Installing the Social networking site ==
+
+== Configuring the SNS ==
+
+== Configuring clients ==
+
+= Use =
