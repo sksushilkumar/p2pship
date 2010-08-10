@@ -1,4 +1,5 @@
 #summary User manual for using the p2pship system.
+#labels Featured,Phase-Design
 
 = Introduction =
 
