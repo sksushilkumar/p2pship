@@ -41,7 +41,7 @@ The configuration (settings.conf) options relevant for the Python subsystem are:
 
 *GTK*
 
-Using GTK within the Python runtime is not recommended. The GTK engine requires a dedicated thread which does not go well when combined with the c-based native system. Apparently, even though the native system would be compiled with a GTK main loop ({{{./configure --enable-gtk}}} or an option automatically enabling it (meamo)), Python-side GTK does not seem to work properly with it (results in various faults).
+Using GTK within the Python runtime is not recommended. The GTK engine requires a dedicated thread which does not go well when combined with the c-based native system. Apparently, even though the native system would be compiled with a GTK main loop (`./configure --enable-gtk` or an option automatically enabling it [`--enable-meamo`]), Python-side GTK does not seem to work properly with it (results in various faults).
 
 Disabling native-GTK support and using it only from the Python run-time (starting the GTK loop there) might work, but is prone to errors as there should only be one GTK loop for each process, and each Python script runs within the same process. Beware.
 
