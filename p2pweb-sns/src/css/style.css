@@ -1,0 +1,146 @@
+
+
+input { 
+        border: 1px solid black;
+}
+
+textarea {  
+                   border: 1px solid black;
+}
+
+body { 
+       font-family: helvetica;
+ }
+
+#logindiv { 
+            border: 1px black solid;
+            padding: 5px;
+            text-align: center;
+            display: inline-block;
+}
+
+.warn { 
+        margin: 10px;
+        padding: 5px;
+        display: inline-block;
+        border: 1px red solid;
+        font-family: helvtica; 
+        color: red;
+}
+
+div.tabs {  
+           text-align: left;
+}
+
+ul.tabs { 
+           border: 1px solid;
+           padding: 6 0 6 0;
+           background: #d0d0e0;
+           }
+
+li.tabs {
+           padding: 5px;
+           margin: 0px;
+           display: inline;
+           /* border: 1px solid; */
+           background: #a0a0b0;
+ }
+
+li.tabs:hover {
+                 background: #f0f0e0;
+                 cursor: pointer;
+                 color: black;
+}
+
+#main { 
+        width: 100%;
+}
+
+#menutd { 
+        vertical-align: top;
+        height: 100%;
+ }
+
+#menu {  
+/*        border: 1px solid black; */
+/*         float: left;
+        display: block; */
+        width: 200px;
+        /* width: 100%; */
+        vertical-align: top;
+        background: #EBECFF;
+        height: 100%;
+        padding: 3px;
+}
+
+#contenttd { 
+        vertical-align: top;
+        height: 100%;
+}
+
+#content {  
+/*         border: 1px solid black; */
+/*        float: right; */
+/*        display: inline; */
+        /* width: 100%; */
+        padding: 3px;
+        vertical-align: top;
+        background: #EBECFF;
+        height: 100%;
+}
+
+td { 
+/*     border: 1px blue solid;  */
+     /* text-align: top; */
+     text-align: center;
+}
+
+.wallmsg {  
+           background: #F9FBFF;
+           margin: 5px;
+           text-align: left;
+           padding: 3px;
+           vertical-align: top;
+}
+
+.wallmsg_time {  
+               display: inline;
+}
+
+.wallmsg_auth {  
+                font-style: italic;
+                font-weight: bold;
+               display: inline;
+}
+
+.wallmsg_msg {  
+               display: block;
+}
+
+.friend {  
+          cursor: pointer;
+}
+
+.wallmsg textarea {  
+                    width: 100%;
+}
+
+.ctitle { 
+          font-weight: bold;
+          text-align: left;
+          width: 100%;
+}
+
+.cdesc {  
+         text-align: left;
+         font-style: italic;
+}
+
+.notif {  
+
+}
+
+div.notif:hover {  
+        cursor: pointer;
+        text-decoration: underline;
+}
