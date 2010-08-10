@@ -4,6 +4,11 @@
 import p2pship
 import md5
 
+appid = "42f09180-a39a-11df-aeee-001c259d03e9"
+# get the default identity for this
+ident = Ident()
+#aor = "@"
+
 class ContentServer(FileServerHandler):
 
     def notify(self, title, message, popup = True):
@@ -31,7 +36,7 @@ class ContentServer(FileServerHandler):
         if res:
             request.respond(200, "ok", "ID:"+request.params['type']+"0003343")
         else:
-            request.respond(400, "fail", "horribly..")
+            request.respond(400, "fail", "")
         
     def get(self, request):
         print "Got a content request for " + request.url
@@ -41,28 +46,47 @@ class ContentServer(FileServerHandler):
             file_type = request.get_param("type")
             suff = None
             if file_type == "image":
-                print "jee, requesting images"
-                suff = ["*.jpg", "*.jpeg", "*.png", "*.gif", "Image files"]
+                suff = [ ["*.jpg", "*.jpeg", "*.png", "*.gif", "Image files"] ]
                 
-            # easygui!
             name = None
             title = "Request to share"
             msg = request.headers['X-P2P-From'] + " is requesting you to share content of type "+str(file_type)+ ". Do you want to do that?"
             if ccbox(msg, title):
                 name = fileopenbox(msg="Choose file", title="Choose a file to share", default='~/*', filetypes=suff)
-                # get name, description?
-            if name is not None:
 
+            if name is not None:
                 cid = md5.new(name).hexdigest()
                 self.key_map[cid] = name
                 request.respond(200, "ok", "id:"+cid)
+
+                # set up the access rights
+                buddies = []
+                for b in ident.buddies.values():
+                    buddies.append( b.aor )
+                sel = multchoicebox("Please select the peers with which you want to share this content",
+                                    "Select peers", buddies);
+                self.access_map[cid] = sel
+
+                # todo: publish the data to the overlay?
+                
             else:
                 request.respond(400, "Sorry", "Not sharing")
      
         elif request.url == "/get":
             cid = request.get_param("id", "")
             preview = request.get_param("preview")
-            if self.key_map.has_key(cid) and ccbox(request.headers['X-P2P-From'] + " wants to have a look at your stuff. allow?", "Allow access?"):
+            ac = self.access_map.get(cid, [])
+            allow = False
+            try:
+                i = ac.index(request.headers['X-P2P-From'])
+                allow = True
+            except Exception, ex:
+                pass
+            
+            if self.key_map.has_key(cid) and (allow or ccbox(request.headers['X-P2P-From'] + " wants to have a look at your stuff. allow?", "Allow access?")):
+                if not allow:
+                    ac.append(request.headers['X-P2P-From'])
+                    self.access_map[cid] = ac
                 self.serve_file(request, self.key_map[cid])
             else:
                 request.respond(404, "Not Found", "Not found")
@@ -72,7 +96,6 @@ class ContentServer(FileServerHandler):
             msg = request.get_param("msg", "")
             if msg != "":
                 buttonbox(msg, "Message from " + requester, ("Ok", ))
-                #msgbox(msg)
                 request.respond(200, "Ok", "Ok")
             else:
                 request.respond(400, "Error", "Error")
@@ -93,15 +116,11 @@ class ContentServer(FileServerHandler):
         else:
             request.respond(404, "not found", "")
 
-
-    key_map = {}
-
-
-# aor = p2pship.default_ident().aor
-aor = "hafnium@jookos.org"
+    key_map = PersistentDict(appid, "files")
+    access_map = PersistentDict(appid, "access")
 
 p2pship.set_name("p2phttp content server")
-http_address = aor + ":80"
+http_address = ident.aor + ":80"
 conf_key = "p2phttp_content_server"
 
 # create if not already exists
