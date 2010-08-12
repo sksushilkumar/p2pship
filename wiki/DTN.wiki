@@ -27,6 +27,7 @@ Steps needed:
  * ~~Modularize the connection parameters in the registration packets~~ (complete)
  * Create common wrapper-functions for stream transports based on the current logic
  * Move HIP & TCP connection into their own handlers
+ * Cleanup conn.c from obsolete code & features
  * Create common wrapper functions for packet-based transports; encrypting data packets, decrypting
  * Create more, packet-based, transport handlers. Overylays and such.
 
@@ -39,5 +40,3 @@ Examples of different possible transport handlers:
  * XMPP or other global message exchange systems
  * TLS/SSL/DTLS
  * Native PubSub systems
-
-
