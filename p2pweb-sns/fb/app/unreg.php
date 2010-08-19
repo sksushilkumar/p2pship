@@ -16,11 +16,14 @@
 <h3>ShipSharing</h3>
 
 <p>
- ShipSharing is an experimental facebook application which allows you to share content over facebook in a
-privacy-preserving manner. You images, videos or other content will never be exposed to unauthorized parties,
-including even the facebook site.
+ShipSharing is an experimental facebook application which allows you to share content over facebook in a
+privacy-preserving manner. Your images, videos or other content will never be exposed to unauthorized parties,
+including even the facebook site itself, without your explicit permission.
 <p>
-Sharing is done peer-to-peer using the <a href='http://code.google.com/p/p2pship'>p2pship</a> system. Please
+Although facebook is used as a platform for sharing content, ShipSharing is not bound to or dependent on it. This means that
+	 even though your facebook account (or facebook itself) would be compromized, or the privacy policies would suddently 
+change, the content shared through this application
+will still be safe. Sharing is done peer-to-peer using the <a href='http://code.google.com/p/p2pship'>p2pship</a> system. Please
 visit <a href='http://code.google.com/p/p2pship'>the p2pship project page</a> for the software and instructions on use.
 
 <p>
