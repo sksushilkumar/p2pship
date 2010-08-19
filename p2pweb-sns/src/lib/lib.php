@@ -1,8 +1,8 @@
 <?php
 
 /* settings */
-$p2pident = "socialize@jookos.org";
-//$p2pident = "vetar2@jookos.org";
+//$p2pident = "socialize@jookos.org";
+$p2pident = "vetar2@jookos.org";
 $localpath = "/jookos/p2pweb/";
 $extapi_url = "localhost:9061";
 $p2pproxy = 'localhost:9070';

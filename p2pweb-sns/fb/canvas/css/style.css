@@ -1,0 +1,161 @@
+/*
+h1 {
+    display: inline;
+}
+*/
+
+#warn {
+        margin: 10px;
+        padding: 5px;
+        display: inline-block;
+        border: 2px red solid;
+        color: red;
+}
+
+table.img { 
+
+            display: inline;
+            width: 100px;
+ }
+
+div.img { 
+
+            display: inline;
+            width: 100px;
+}
+
+table.friends {  
+           /* display: inline; */
+                margin: 1px;
+}
+
+div.friends {  
+              /* float: left; */
+              /* background: #F0F0F0; */
+              border-right: 1px  #CCCCCC solid; /* #F0F0F0 solid; */
+              padding-right: 5px;
+	      height: 100%
+}
+
+td.friends {  
+              /* border: 1px  #CCCCCC solid; /* #F0F0F0 solid; */
+              padding-right: 5px;
+	      /* height: 100% */
+              text-align: left;
+}
+
+div.subcontent {  
+              /* float: right; */
+                 padding-left: 5px;
+}
+
+a.friends {  
+            cursor: pointer;
+}
+
+table.friends:hover {  
+                border: 1px #333333 solid;
+                margin: 0px;
+}
+
+table.friends {  
+                margin: 1px;
+}
+
+#content { 
+           display: inline;
+           /* margin: 10px; */
+}
+
+.ctitle { 
+font-weight:bold;margin:0;font-size:11px;
+}
+
+.cdesc {  
+color:gray; font-size:9px;
+}
+
+#addde, #addin {  
+        width: 300px;
+        /* border: 1px solid black; */
+}
+
+
+/* from facebook */
+body { 
+       font-family:"lucida grande",tahoma,verdana,arial,sans-serif; 
+       color: #333333; 
+       font-size:11px; 
+}
+
+td { 
+       font-family:"lucida grande",tahoma,verdana,arial,sans-serif; 
+       color: #333333; 
+       font-size:11px; 
+}
+
+/*
+p { 
+    font-family:"lucida grande",tahoma,verdana,arial,sans-serif; 
+    font-size:11px; 
+    color: #333333;
+}
+*/
+
+.some_div h3 { 
+  border-bottom:1px solid #CCCCCC; 
+  font-size:13px; 
+  font-weight:bold; 
+  color: #999999; 
+  padding-top: 15px; 
+  display:block; 
+  margin:0; 
+} 
+
+.some_div .upd_on { 
+color: gray; 
+margin: 0 0 0px 5px; 
+font-size:10px; 
+font-weight:normal; 
+padding:0; 
+text-align: right; } 
+
+input.search { background:white url(facebook.com/images/magglass.png) no-repeat scroll 3px 4px; padding-left:17px; } input, textarea, select { border:1px solid #BDC7D8; font-family:"lucida grande",tahoma,verdana,arial,sans-serif; font-size:11px; padding:3px; } input:focus, textarea:focus, select:focus {border-color:#687FB0} .field {border:1px solid #bdc7d8; padding:2px} .field:focus {border-color:#687FB0} textarea.field {width:98.5%;height:100px} button { padding:1px 3px 1px 4px; font-size:1em; cursor:pointer; background:#3b5998; color:#fff; border:1px solid #0e1f5b; border-left-color:#D9DFEA; border-top-color:#D9DFEA; } button.next, button.cancel { background:#ddd; color:#111; border:1px solid #666; border-left-color:#ddd; border-top-color:#ddd } 
+
+
+
+
+.ftabs { border-bottom:1px solid #CCCCCC; padding:0 10px 0 8px; height: 25px; } 
+.ftabs a.first { border-left:1px solid #CCCCCC; margin-left:0; } 
+.ftabs #ftabs a { background:#F0F0F0 none repeat scroll 0 0; border-left:1px solid #E5E5E5; border-right:1px solid #CCCCCC; border-top:1px solid #CCCCCC; color:#666666; display:block; float:left; margin-top:1px; padding:4px 8px; position:relative; cursor: pointer; } 
+
+.ftabs #ftabs a.active { background:#FFFFFF none repeat scroll 0 0; border-bottom:1px solid #FFFFFF; border-left:1px solid #CCCCCC; color:#333333; margin-bottom:-1px; margin-left:-1px; margin-top:0; padding-bottom:4px; padding-top:5px; } 
+.ftabs #ftabs a.last { border-right:1px solid #CCCCCC; } 
+.ftabs #friends_loading { display:none; float:right; margin:7px 16px 0 0; } 
+.ftabs #ftabs a:hover { background:#fff;color:#444;text-decoration:none; } 
+.ftabs #ftabs a:focus{outline:0px;} 
+
+
+
+
+
+
+
+
+
+
+
+
+blockquote { 
+background:transparent url(http://www.facebook.com/images/start_quote_small.gif) no-repeat scroll -1px 0; 
+color:#0F17FF; 
+line-height:14px; 
+margin:14px 0; 
+padding:0 0 0 16px; } 
+
+blockquote span { 
+background:transparent url(http://www.facebook.com/images/end_quote_small.gif) no-repeat scroll right bottom; 
+padding:0 15px 0 0; } 
+
+.forum table { width:200px; } .forum table tr { background-color:#FFFFFF; } .forum table tr.odd { background-color:#F0F0FF; } .forum table td { padding:3px 3px 3px 9px; } .forum table .subheader { color:gray; font-size:9px; } .forum table h4 { font-weight:bold;margin:0;font-size:11px; } 
+

@@ -49,7 +49,7 @@ class DbConnection
     while ($i < count($args) && ($pos = strpos($line, $subst, $pos))) {
       $sub = "";
       $sublen = 0;
-      if ($line[$pos+1] == 'i') {
+      if (strlen($line) > $pos+1 && $line[$pos+1] == 'i') {
 	$sublen = strlen($subst)+1;
 	if (is_numeric($args[$i])) {
 	  $sub = $args[$i] . "";

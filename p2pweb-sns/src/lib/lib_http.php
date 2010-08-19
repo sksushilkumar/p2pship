@@ -17,9 +17,9 @@ function create_url($base, $params = null)
 }
 
 /* returns an url to myself through p2p */
-function p2p_url($url) {
+function p2p_url($url, $params = null) {
 	global $urlpre;
-	return $urlpre . $url;
+	return $urlpre . create_url($url, $params);
 }
 
 /* class for handling the responses */

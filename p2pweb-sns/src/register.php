@@ -14,6 +14,7 @@ if (isset($_REQUEST['id'])) {
 			       $_REQUEST['passwd']);
 	if ($u != null) {
 		echo "ok. " . $u->name . ", you are registered.";
+		echo "<p>Now, <a href=login.php>login</a>";
 	} else {
 		echo "oops. something bad happened";
 	}

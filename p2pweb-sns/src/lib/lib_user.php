@@ -1,5 +1,279 @@
 <?php
 
+require_once('db.php');
+
+/* boject cache */
+$_obj_cache = array();
+
+/* generic db class object */
+class DbObj {
+
+	public $_table;
+	
+	public function __construct($table, $data = FALSE) {
+		$this->_table = $table;
+		if ($data)
+			foreach ($data as $k => $v)
+				$this->$k = $v;
+	}
+	
+	/* removes an entry */
+	public function remove() {
+		$c = get_db_conn();
+		$c->insert("delete from " . $this->_table . " where id=?i", $this->id);
+	}
+
+	/* saves changes */
+	public function save() {
+		$c = get_db_conn();
+		$r = $c->select("describe " . $this->_table);
+		
+		$args = array();
+		$sql = "";
+		foreach ($r as $v) {
+			$name = $v['Field'];
+			$type = $v['Type'];
+			if ($name == 'id')
+				continue;
+			if (!isset($this->$name))
+				continue;
+			if (strlen($sql) > 0)
+				$sql .= ", ";
+			$sql .= $name . " = ?";
+			if (!(strpos($type, "int") === FALSE))
+				$sql .= "i";
+			$args[] = $this->$name;
+		}
+		$sql = "update " . $this->_table . " set " . $sql . " where id=?i";
+		$args[] = $this->id;
+		$q = $c->create_sql(array_merge(array($sql), $args));
+		$c->sql_query_raw($q);
+	}
+	
+
+	public function reset_cache() {
+		global $_obj_cache;
+		$_obj_cache = array();
+	}
+
+	public function get_cached($id) {
+		global $_obj_cache;
+		$key = $id . "_" . get_class($this);
+
+		if (array_key_exists($key, $_obj_cache)) {
+			return $_obj_cache[$key];
+		} else {
+			return null;
+		}
+	}
+
+	public function cache(&$obj) {
+		global $_obj_cache;
+		$key = $obj->id . "_" . get_class($this);
+		$_obj_cache[$key] = &$obj;
+	}
+	/*
+	public function by_value($arr) {
+		$c = get_db_conn();
+		$w = "";
+		foreach ($arr as $k => $v) {
+			if (strlen($w) > 0)
+				$w .= " and";
+			$w .= 
+		}
+			
+		return $this->by_id($c->select_value("select id from " . $this->_table . " where fb_id = ?", $id));
+	}
+	*/
+
+	public function by_value($k, $v) {
+		$c = get_db_conn();
+		return $this->by_id($c->select_value("select id from " . $this->_table . " where $k = ?", $v));
+	}
+
+	public function by_id($id) {
+		$c = get_db_conn();
+		$cn = get_class($this);
+		
+		if (!($ret = $this->get_cached($id))) {
+			$ret = new $cn($c->select_line("select * from " . $this->_table . " where id = ?i", $id));
+			$this->cache($ret);
+		}
+		return $ret;
+	}
+
+	public function all() {
+		/* don't know how to get the class name on static funcs. this needs an instance .. */
+		$c = get_db_conn();
+		$ret = array();
+		foreach ($c->select('select id from ' . $this->_table) as $l)
+			$ret[] = $this->by_id($l['id']);
+		return $ret;
+	}
+
+	public function create($arr) {
+		$c = get_db_conn();
+		$r = $c->select("describe " . $this->_table);
+		
+		$args = array();
+		$sql = "";
+		$sql2 = "";
+		foreach ($r as $v) {
+			$name = $v['Field'];
+			$type = $v['Type'];
+			if ($name == 'id')
+				continue;
+			if (!isset($arr[$name]))
+				continue;
+			if (strlen($sql) > 0) {
+				$sql .= ", ";
+				$sql2 .= ", ";
+			}
+			$sql .= $name;
+			$sql2 .= "?";
+			if (!(strpos($type, "int") === FALSE))
+				$sql2 .= "i";
+			$args[] = $arr[$name];
+		}
+		$sql = "insert into " . $this->_table . " (" . $sql . ") values (" . $sql2 . ")";
+		$q = $c->create_sql(array_merge(array($sql), $args));
+		$c->sql_query_raw($q);
+
+		return $this->by_id($c->last_id());
+	}
+}
+
+
+class Log
+{
+	public function add($fbid, $event) {
+		$c = get_db_conn();
+		$c->insert('insert into fb_log (log_date, log_event, log_user) values (now(), ?, ?)',
+			   $event, $fbid);
+	}
+}
+
+
+class FbUser extends DbObj
+{
+	public $id;
+	public $fb_id;
+	public $user_id;
+	public $name;
+	public $active;
+	public $friends;
+	public $session;
+
+	// ..
+	public $user;
+
+	public function __construct($line = null) {
+		parent::__construct('fb_users', $line);
+		if (isset($this->user_id)) {
+			$this->user = new User();
+			$this->user = $this->user->by_id($this->user_id);
+		}
+	}
+	
+	public function get_friends_content($limit = 100) {
+		/* .. hm.. */
+		
+		// this is dangerous!
+		$c = get_db_conn();
+		$lines = $c->select("select * from content where user_id in (select u.id from users u, fb_users f where f.fb_id in (".$this->friends.") and f.user_id = u.id) order by added desc limit " . $limit);
+
+		$ret = array();
+		if ($lines) {
+			foreach ($lines as $line) 
+				$ret[] = new Content($line);
+		}
+		
+
+	}
+
+	public function get_content() {
+		if (isset($this->user))
+			return $this->user->get_content();
+		return array();
+
+		/* testing;
+		if (!isset($this->content)) {
+		
+		$this->content = array();
+		$r = rand(-10, 20);
+		$r2 = rand(0, 1);
+		if ($r > 0 && $r2 = 1) {
+			while ($r > 0) {
+				$this->content[] = new Content(array("added" => strftime("%Y-%m-%d %H:%M:%S", time() - rand(0,3600*24*14))));
+				$r--;
+			}
+			
+		}
+		}
+		return $this->content;
+		*/
+	}
+
+	public function by_fbid($id, $create = true) {
+		$c = get_db_conn();
+		$uid = $c->select_value("select id from " . $this->_table . " where fb_id = ?", $id);
+		if (!$uid)
+			return $this->create(array('fb_id' => $id));
+		else
+			return $this->by_id($uid);
+	}
+	
+	public function by_session($session) {
+		$c = get_db_conn();
+		return $this->by_id($c->select_value("select id from " . $this->_table . " where session = ?", $session));
+	}
+
+	public function fb_update($token) {
+
+		$me = file_get_contents("https://graph.facebook.com/me?access_token=" . urlencode($token));
+		
+		$arr = json_decode($me);
+		$this->name = $arr->name;
+
+		$friends = file_get_contents("https://graph.facebook.com/me/friends?access_token=" . urlencode($token));
+		$arr = json_decode($friends);
+		
+		$this->friends = "";
+		foreach ($arr->data as $friend) {
+			$f = $this->by_fbid($friend->id);
+			$f->name = $friend->name;
+			$f->save();
+			$this->friends .= $friend->id . ",";
+		}
+	}
+
+	public function set_p2pid($id) {
+		$u = new User();
+		$u = $u->by_p2pid($id);
+		if ($u) {
+			$this->user_id = $u->id;
+			$this->user = $u;
+			$this->save();
+		}
+	}
+
+	public function get_friends($content_sharing_only = false) {
+		$ret = array();
+		foreach (explode(",", $this->friends) as $fid) {
+			$f = $this->by_fbid($fid);
+			if ($content_sharing_only) {
+				$c = $f->get_content();
+				if (count($c) == 0)
+					break;
+			}
+			$ret[] = $f;
+		}
+		$ret[] = $this;
+		return $ret;
+	}
+}
+
+
 /* user class .. */
 class User {
 
@@ -101,6 +375,16 @@ class User {
 
 		$c = get_db_conn();
 		$arr = $c->select_line("select * from users where p2pid=? and password=md5(?)", $login, $passwd);
+		if ($arr != null)
+			return new User($arr);
+		else
+			return null;
+	}
+
+	public function by_p2pid($login) {
+
+		$c = get_db_conn();
+		$arr = $c->select_line("select * from users where p2pid=?", $login);
 		if ($arr != null)
 			return new User($arr);
 		else
@@ -237,17 +521,11 @@ class User {
 
 
 	public function get_content() {
-
 		$c = get_db_conn();
-		$arr = $c->select("select * from content where user_id=?i", $this->id);
+		$arr = $c->select("select * from content where user_id=?i order by added desc", $this->id);
 		$ret = array();
-		foreach ($arr as $line) {
-			$ret[] = new Content($line['id'],
-					     create_p2purl($this->p2pid, "/get", array("id" => $line['cid'])),
-					     $line['name'],
-					     $line['description'],
-					     $line['type']);
-		}
+		foreach ($arr as $line)
+			$ret[] = new Content($line);
 		return $ret;
 		/*
 		return array(new Content("Golden gate", 
@@ -285,24 +563,26 @@ class User {
 	/* add content */
 	public function add_content($id, $name, $description, $type) {
 		$c = get_db_conn();
-		$c->insert("insert into content (user_id, cid, name, description, type) values (?i, ?, ?, ?, ?)", $this->id, $id, $name, $description, $type);
+		$c->insert("insert into content (user_id, cid, name, description, type, added) values (?i, ?, ?, ?, ?, now())", $this->id, $id, $name, $description, $type);
 	}
 }
 
-class Content {
+class Content extends DbObj {
 	
 	var $url;
 	var $name;
 	var $description;
 	var $type;
 	var $id;
-
-	public function __construct($id, $url, $name, $description, $type) {
-		$this->id = $id;
-		$this->url = $url;
-		$this->name = $name;
-		$this->description = $description;
-		$this->type = $type;
+	var $added;
+	var $user_id;
+	
+	public function __construct($line = null) {
+		parent::__construct('content', $line);
+		if ($line && isset($this->user_id)) {
+			$this->user = User::by_id($this->user_id);
+			$this->url = create_p2purl($this->user->p2pid, "/get", array("id" => $line['cid']));
+		}
 	}
 }
 
