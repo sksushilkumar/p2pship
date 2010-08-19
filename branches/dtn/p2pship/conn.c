@@ -1604,13 +1604,13 @@ conn_periodic()
 	if (!conn_all_conn)
 		return 0;
 	
+	time(&now);
         ship_lock(conn_all_conn);
 	while ((conn = ship_list_next(conn_all_conn, &ptr))) {
 		int close = 0;
 		int useful, heard, sent;
 		
 		ship_obj_lockref(conn);
-		time(&now);
 		useful = now - conn->last_content;
 		heard = now - conn->last_heard;
 		sent = now - conn->last_sent;

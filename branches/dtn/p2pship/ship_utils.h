@@ -54,7 +54,7 @@
 //#define REF_DEBUG2
 
 /* lock debugging - print info when deadlocks & -waits are detected */
-#define LOCK_DEBUG
+//#define LOCK_DEBUG
 //#define LOCK_TRACE
 
 
