@@ -8,6 +8,10 @@ It is a simple php/mysql social networking site, enabling you to create social c
 
 Furthermore, the content you share is always kept by yourself locally. It is never transmitted to the web site, giving you better control over whom it is shared to. When a friend of yours tries to access the content, the P2P social site provides only a link to the content which points to your p2pship identity. You are then able to control whom you actually provide the content to.
 
+*Update:*
+
+A facebook-app version of the site was receintly forked. It uses the same logic as the stand-alone site, except for utilizing the facebook user ids and relationships. Each p2pship identity is tied to an facebook account. Content shared is thus associated with the facebook identity as well. Please see [P2PSNS#Facebook below] for more information.
+
 == Logic ==
 
 The SNS is built as a php site which has access the p2pship network. This site is accessed using the p2pship proxy's HTTP proxy feature, which enables the client to render pages containing both legacy (publicly available on the Internet) content and p2p shared content. 
@@ -53,3 +57,16 @@ Clients should have the [PRE Python runtime] enabled and the {{{content_server.p
 Using the p2pship HTTP proxy, visit the page {{{http://<host>/<path-to-src>/home.php}}}. You should see a login prompt where the name of your identity has been pre-filled in the login-input.
 
 If not, check your configuration.
+
+= Facebook =
+
+Please see the facebook developer's site for information on deploying facebook applications.
+
+Short checklist for deploying your own instance:
+
+ * Initialize the environment (database, apache, p2pship proxy) as described above
+ * Point the facebook canvas url to the `canvas/` folder of the source
+ * Make sure the `lib/` symbolic link actually points to the p2psns library
+ * Point the facebook post auth/remove to the `postauth.php`and `postremove.php` files.
+
+An instance of the application is currently running at http://apps.facebook.com/shipsharing.
