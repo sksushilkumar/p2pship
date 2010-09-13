@@ -47,7 +47,6 @@ Transports:
  * [WebConfig Setting up and using the web configuration interface]
  * [SIP Using SIP applications with the proxy]
  * [P2PHTTP Using the peer-to-peer HTTP interface]
- * [WebCache Using the web cache]
  * [PRE Configuring and using the Python run-time environment]
 
 == Applications, use-cases, related projects ==
