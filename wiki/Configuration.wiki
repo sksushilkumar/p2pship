@@ -118,7 +118,7 @@ _todo_
 || {{{httpproxy}}} || The HTTP client proxy address || {{{addr}}} || The HTTP client proxy address || {{{N/A}}} ||
 || {{{httpproxy_reveal_original}}} || Reveal original HTTP url when making proxy requests || {{{bool}}} || Reveal original HTTP url when making proxy requests || {{{N/A}}} ||
 
-== WebCache ==
+== Webcache ==
 
 || {{{webcache_filelimit}}} || Webcache file size limit || {{{int}}} || Webcache file size limit || {{{N/A}}} ||
 || {{{webcache_limit}}} || Webcache disk usage limit || {{{int}}} || Webcache disk usage limit || {{{N/A}}} ||
