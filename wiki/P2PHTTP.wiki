@@ -120,7 +120,7 @@ X-P2P-To         - The target identity's aor
 
 == Additional external API calls ==
 
-In addition to the features provided for the p2p http connectivity, the ext api interface provides the following functionalities:
+In addition to the features provided for the p2p http connectivity, the ext api interface provides the following functionalities (all urls are relative to `http://<extapi>`:
 
 === Overlay storage ===
 
