@@ -41,9 +41,9 @@ python2.5 ./coffee-sipper.py
 
 The application uses SIP messaging for accepting commands.
 
-*/msg <message>* - send a message to display on the front
+*/msg _message_* - send a message to display on the front
 
-*/motd <message>* - changes the message of the day (top-most message displayed for the rest of the day)
+*/motd _message_* - changes the message of the day (top-most message displayed for the rest of the day)
 
 */req* - Issues an request for someone to make coffee. The UI button will change its appearance and a notification will be sent to the requester immediately someone makes a new pot.
 
