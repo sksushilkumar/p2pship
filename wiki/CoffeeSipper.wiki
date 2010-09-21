@@ -15,7 +15,7 @@ A couple of shortcuts have been made to keep the project from growing out of con
 
 Secondly, the video streaming is very specific. It uses the same format as the N810 native video calls, ignoring any requests for other formats. To improve the stability of the application, the streaming is actually done using a command-line utility in a separate process (easier to kill, crash does not affect the main application).
 
-It is able to stream to multiple sources at once (more than one is able to view the video stream at once). This is done by streaming the video data to a multiplexing proxy in the application.
+It is able to stream to multiple sources at once (more than one is able to view the video stream at once). This is done by streaming the video data to a multiplexing proxy in the application. Furthermore, it only sends a video feed for a maximum of 10 seconds to a single client at a time.
 
 = Installation and use =
 
