@@ -30,7 +30,7 @@ apt-get install python2.5-sdk gstreamer-utils
 
 == Setup ==
 
-Copy the source code to the tablet.
+Copy the source code to the tablet. The source can be found in the repository in the `testbed_apps/coffeesipper/` directory.
 
 Run it as
 {{{
@@ -53,4 +53,4 @@ The application uses SIP messaging for accepting commands.
 
 */help* - Returns a help page
 
-*/color <color>* - Changes the color of the user's messages. In HTML format, e.g. '/color #ff00ff'
+*/color _color_* - Changes the color of the user's messages. In HTML format, e.g. '/color #ff00ff'
