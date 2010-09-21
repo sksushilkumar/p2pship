@@ -54,3 +54,15 @@ The application uses SIP messaging for accepting commands.
 */help* - Returns a help page
 
 */color _color_* - Changes the color of the user's messages. In HTML format, e.g. '/color #ff00ff'
+
+= Screen shots =
+
+All our ADs/usability experts just happened to be on vacation at the same time ..
+
+http://trustinet.hiit.fi/p2pship/cs1.png
+
+The screen shown on the tablet. MOTD on top, button on bottom.
+
+http://trustinet.hiit.fi/p2pship/cs2.png
+
+An example frame from the video feed of our current setup.
