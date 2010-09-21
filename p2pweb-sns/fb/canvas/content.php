@@ -1,4 +1,5 @@
 <?php
+
 require_once('../inc.php');
 
 $user = get_facebook_user();
@@ -11,7 +12,6 @@ function unspace($str) {
 
 function dform($d) {
 	return strftime("%a %e %b %Y, %H:%M", strtotime($d));
-	//return "format " . $d;
 }
 
 function print_contents($contents, $name, $ismy = false) {
@@ -53,7 +53,9 @@ function print_content($c, $ismy = false) {
 
 
 $action = $_REQUEST['page'];
-$id = $_REQUEST['id'];
+$id = -1;
+if (isset($_REQUEST['id']))
+	$id = $_REQUEST['id'];
 
 /****************************/
 if ($action == "latest") {

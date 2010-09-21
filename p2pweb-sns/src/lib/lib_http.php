@@ -125,3 +125,32 @@ function fetch_data($url)
 	curl_setopt_array($ch, $ops);
 	return http_response::exec($ch);
 }
+
+function post_data($url, $data)
+{
+	$ch = curl_init();
+	$ops = array(CURLOPT_URL => $url,
+		     /*
+		     CURLOPT_CONNECTTIMEOUT => 0,
+		     //CURLOPT_HTTPPROXYTUNNEL => 1,
+		     CURLOPT_PROXYUSERPWD => $p2pident . ":",
+		     CURLOPT_PROXY => $p2pproxy, 
+		     CURLOPT_RETURNTRANSFER => true, 
+		     CURLOPT_CUSTOMREQUEST => 'POST',*/
+		     CURLOPT_POST => 1,
+		     CURLOPT_POSTFIELDS => $data);
+	
+	curl_setopt_array($ch, $ops);
+	return http_response::exec($ch);
+}
+
+function do_post_data($url, $data)
+{
+	$params = array('http' => array('method' => 'POST',
+					'content' => $data));
+	$ctx = stream_context_create($params);
+	$fp = @fopen($url, 'rb', false, $ctx);
+	if (!$fp) 
+		return null;
+	return @stream_get_contents($fp);
+}

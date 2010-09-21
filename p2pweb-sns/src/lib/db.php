@@ -115,7 +115,7 @@ class DbConnection
 	  $startt = time();
 	  $ret = mysql_query($line);
 	  $durt = time() - $startt;
-	  error_log("sql($durt): " . $line);
+	  //error_log("sql($durt): " . $line);
 	  return $ret;
   }
 	
