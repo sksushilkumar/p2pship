@@ -389,15 +389,13 @@ extapi_data_received_httpresponse(char *data, int data_len, ident_t *ident,
  err:
 	/* do something like this .. */
 	netio_http_packet_orderer_put(tracking_id, piece, content, len);
-	len = 1; /* so we dont close it yet */
 	if ((oldconn = netio_http_get_conn_by_id(tracking_id))) {
 		while (!netio_http_packet_orderer_pop_next(tracking_id, &piece, &content, &len)) {
 			extapi_return_and_record(oldconn, NULL, content, len);
 			freez(content);
 		}
-	}
 
-	if (oldconn) {
+		/* if the last packet was zero, take it as a que to close */
 		if (len < 1) {
 			netio_http_conn_close(oldconn);
 		} else {
@@ -689,7 +687,6 @@ httpproxy_process_req(netio_http_conn_t *conn, void *pkg)
 	int port = 80;
 	
 	LOG_DEBUG("got req for %s on socket %d\n", conn->url, conn->socket);
-		
 	/* hm, if method == CONNECT, what then? highjack the socket,
 	   put it into a forwarder */
 	if (!strcmp(conn->method, "CONNECT")) {

@@ -1087,6 +1087,8 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 		// cut off stuff meant for the next request!
 		netio_http_cut_overrun(conn, &data, &datalen);
 		ret = __netio_http_process_req(conn);
+		if (datalen == 0)
+			break;
 
 		/* forts; todo: this is pretty dangerous if some
 		   handler decides to close the http conn before
@@ -1105,6 +1107,7 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 
 		// don't do this; just start a new conn! and transfer the ownership of socket!
 		// netio_conn_reset(conn);
+
 		ship_unlock(conn);
 
 		ASSERT_TRUE(new_conn = netio_http_conn_new(s), err);

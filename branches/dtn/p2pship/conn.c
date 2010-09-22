@@ -2164,9 +2164,7 @@ conn_send_do(void *data, processor_task_t **wait,
 {
         int ret = -2;
 	conn_packet_t *p = (conn_packet_t *)data;
-#ifndef NEW_CONNS
-	//ident_t *ident = 0;
-#else
+#ifdef NEW_CONNS
 	conn_transport_handler_t *conn = 0;
 	void *ptr = 0;
 
@@ -2241,24 +2239,15 @@ conn_send_do(void *data, processor_task_t **wait,
 	ret = 1;
 #else
 	ret = 0;
-	if (!conn_has_connection_to(p->to, p->ident, p->flags)) { /* dtn: check connection type as well! */
+	if (!conn_has_connection_to(p->to, p->ident, p->flags)) {
 		/* try only once! */
 		if (!(*wait)) {
-			
-			/* dtn: choose one of the connection types according to policies and
-			   the requirements of the packet to be sent */
-
-			/* dtn: save 'state' in the data array above */
-
 			ret = conn_open_connection_to(p->to, p->ident, wait, p->flags);
 		} else
 			ret = -1;
 	}
 	
 	if (!ret) {
-		
-		/* dtn: create the connection-checking state thing here on the first loop through */
-		
 		if (conn_has_connection_to(p->to, p->ident, p->flags)) {
 			ret = conn_send_service_package_to(p);
 		} else {
