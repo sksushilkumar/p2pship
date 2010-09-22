@@ -4,6 +4,7 @@ import urllib
 import json
 
 p2pship_web="localhost:9080"
+p2pship_api="localhost:9081"
 
 
 def get_default_ident():
@@ -20,6 +21,11 @@ def get_default_ident():
             if js[ident][7] == "default":
                 return ident
     return ""
+
+def register_http(service_addr, p2p_addr):
+    f = urllib.urlopen("http://%s/http_register?dport=%d&aor=%s&ttl=-1&url=%s:%d" % (p2pship_api, p2p_addr[1], p2p_addr[0], service_addr[0], service_addr[1]))
+    s = f.read()
+    f.close()
 
 
 if __name__ == "__main__":

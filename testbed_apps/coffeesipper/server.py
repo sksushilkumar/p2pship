@@ -6,92 +6,6 @@
 import os, sys, signal, time
 import select, socket, SocketServer, urlparse, re, asyncore, sys
 import threading
-from server import *
-
-class StreamHandler:
-
-    def __init__(self, controlport, myaport, myvport):
-        self.streams = []
-        self.pid = None
-        self.aport = myaport
-        self.vport = myvport
-        self.cport = controlport
-        
-    def check_dead(self):
-        now = time.time()
-        newstreams = []
-        for s in self.streams:
-            if s[1] < now:
-                print "killing off one stream"
-                self.serv.update = True
-                if s[5] is not None:
-                    s[5](s[6])
-            else:
-                newstreams.append(s)
-        self.streams = newstreams
-        if self.pid is not None and len(self.streams) == 0:
-            print "killing streaming"
-            os.kill(self.pid, signal.SIGTERM)
-            self.pid = None
-
-    def stream(self, host, aport, vport, duration, callback = None, obj = None):
-        self.streams.append((None, time.time() + duration, host, aport, vport, callback, obj))
-        self.serv.update = True
-        if self.pid is None:
-            self.pid = self.start_stream('localhost', self.aport, self.vport)
-
-    def snapshot(self, filename, width=640, height=480):
-        if self.pid is None:
-            cmd = "gst-launch v4l2src num-buffers=1 ! ffmpegcolorspace ! video/x-raw-yuv,width=%d,height=%d,framerate=8/1 ! jpegenc ! filesink location=%s" % (width, height, filename)
-            os.spawnvp(os.P_NOWAIT, 'gst-launch', cmd.split(" "))
-            return True
-        else:
-            return False
-        
-    def start_stream(self, host, aport, vport):
-        print "starting stream to " + host + ":" + str(aport) + ":" + str(vport)
-        #return os.spawnvp(os.P_NOWAIT, 'gst-launch', ('gst-launch v4l2src ! video/x-raw-yuv,width=176,height=144,framerate=(fraction)15/1 ! hantro4200enc stream-type=1 profile-and-level=1001 ! video/x-h263,framerate=(fraction)15/1 ! rtph263ppay mtu=1438 ! udpsink host='+host+' port='+str(vport)+' dsppcmsrc ! queue ! audio/x-raw-int,channels=1,rate=8000 ! mulawenc ! rtppcmupay mtu=1438 ! udpsink host='+host+' port='+str(aport)).split(" "))
-
-        # note: the reason why this wasn't working:
-        #  - seems that the audio was the one causing trouble. by disabling it (currently just streaming it off to dev/null)
-        #    the video started working ok. great! (remove the aport+10 to have it stream to the right port!)
-
-        # note: 176x144 and 352x288 seem both to work ok. The bigger consuming around 50-70% of cpu though..
-
-        fr="15/1"
-        #cmd = 'gst-launch v4l2src ! video/x-raw-yuv,width=176,height=144,framerate=(fraction)%s ! hantro4200enc ! rtph263ppay ! udpsink host=%s port=%s dsppcmsrc ! queue ! audio/x-raw-int,channels=1,rate=8000 ! mulawenc ! rtppcmupay ! udpsink host=%s port=%s' % (fr, host, str(vport), host, str(aport+10))
-        cmd = 'gst-launch v4l2src ! video/x-raw-yuv,width=352,height=288,framerate=(fraction)%s ! hantro4200enc ! rtph263ppay ! udpsink host=%s port=%s dsppcmsrc ! queue ! audio/x-raw-int,channels=1,rate=8000 ! mulawenc ! rtppcmupay ! udpsink host=%s port=%s' % (fr, host, str(vport), host, str(aport+10))
-        print "command:\n" + cmd
-        return os.spawnvp(os.P_NOWAIT, 'gst-launch', cmd.split(" "))
-                                                      
-    def get_hosts(self):
-        print "returning new hosts list!"
-        ret = []
-        for s in self.streams:
-            ret.append(((s[2], s[3]), (s[2], s[4])))
-        return ret
-
-    def handle(self, data, socket, client_address):
-        # protocol: 'targetip;aport;vport;duration'
-        # if target is omitted, sending ip is used
-        # if duration is omitted, 10sec is used
-        
-        data = data.strip()
-        m = re.match('([0-9.]*);([0-9]+);([0-9]+);([0-9]*)', data)
-        if m:
-            (addr, aport, vport, dur) = (m.group(1), m.group(2), m.group(3), m.group(4))
-            if len(addr) == 0:
-                addr = client_address[0]
-            if len(dur) == 0:
-                dur = 10
-            self.stream(addr, int(aport), int(vport), int(dur))
-            socket.sendto("ok", client_address)
-        else:
-            print "invalid message from %s:" % client_address[0]
-            print data
-            socket.sendto("error: " + data, client_address)
-
-
 
 class ServerHandler:
     """
@@ -231,16 +145,4 @@ class ServerHandler:
                 sh.check_dead()
             time.sleep(1)
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print "please specify port to listen to"
-    else:
-        sport, aport, vport = int(sys.argv[1]), int(sys.argv[1])+2, int(sys.argv[1])+4
-        stream_handler = StreamHandler(sport, aport, vport)
-        serv = ServerHandler()
-        serv.add_streamer(stream_handler)
-        serv.start()
-        while True:
-            #stream_handler.check_dead()
-            time.sleep(1)
 
