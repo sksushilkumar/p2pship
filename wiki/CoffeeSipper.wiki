@@ -9,6 +9,8 @@ The application is based on SIP - the video feed is actually just a normal SIP v
 
 In addition to the video feed, the application uses SIP instant messaging (IM) to communicate with users (notifications on when coffee is being brewed etc). If features a full-screen UI which displays greetings sent by users, the freshness of the coffee (when it was made) as well as a button which is meant to be pressed each time someone decides to brew a pot.
 
+Recently a HTTP interface was added as well. The application takes snapshots at a specific interval (60s. by default) and deposits the picture in a folder served over P2PHTTP (port 5000 by default).
+
 = Operation details =
 
 A couple of shortcuts have been made to keep the project from growing out of control. Firstly, the SIP "stack" used is a very simple homegrown SIP message processor. Although it does try to adhere to the SIP standard, only the features needed by us has been implemented: basic call (INVITE/BYE/CANCEL/ACK) tracking, registration and MESSAGE support. You can try to use it with a standard SIP server, but it may act up (due to things like OPTIONS, 3xx responses, PUBLISH/SUBSCRIBEs etc).
@@ -31,6 +33,8 @@ apt-get install python2.5-sdk gstreamer-utils
 == Setup ==
 
 Copy the source code to the tablet. The source can be found in the repository in the `testbed_apps/coffeesipper/` directory.
+
+Add also the `http/` directory. This is the root folder for the P2P HTTP served content, and is where the `snapshot.jpg` snapshots are placed.
 
 Run it as
 {{{
