@@ -43,7 +43,7 @@ class StreamHandler:
     def snapshot(self, filename, width=640, height=480):
         if self.pid is None:
             cmd = "gst-launch v4l2src num-buffers=1 ! ffmpegcolorspace ! video/x-raw-yuv,width=%d,height=%d,framerate=8/1 ! jpegenc ! filesink location=%s" % (width, height, filename)
-            os.spawnvp(os.P_NOWAIT, 'gst-launch', cmd.split(" "))
+            os.spawnvp(os.P_WAIT, 'gst-launch', cmd.split(" "))
             return True
         else:
             return False
