@@ -1584,6 +1584,7 @@ ident_cb_lookup_registration(char *key, char *buf, char *signer, void *param, in
 			status = -1;
 
 		/* mark the end time of the lookup! */
+		LOG_DEBUG("ended lookup for %s as imported: %d and status: %d\n", key, imported, status);
 		STATS_LOG("ended lookup for %s\n", key);
 #ifdef CONFIG_SIP_ENABLED
 #ifdef DO_STATS
@@ -1760,6 +1761,7 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
 			}
 			
 			if (ret != 1) {
+				LOG_DEBUG("Something went wrong when initializing the lookup!\n", remote_aor);
 				processor_signal_wait(val, -2);
 				ret = -2;
 			}

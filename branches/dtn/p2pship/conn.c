@@ -2370,6 +2370,7 @@ conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_cod
 	ident = ident_find_by_aor(conn->local_aor);
 	ship_lock_conn(conn);
 	conn->ident = ident;
+	LOG_DEBUG("Running with wait: %08x and code: %d..\n");
 	if (!(*wait) || wait_for_code == 0) {
                 int hadwait = 0;
 
