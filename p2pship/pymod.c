@@ -1,3 +1,21 @@
+/*
+  p2pship - A peer-to-peer framework for various applications
+  Copyright (C) 2007-2010  Helsinki Institute for Information Technology
+  
+  This program is free software; you can redistribute it and/or
+  modify it under the terms of the GNU General Public License
+  as published by the Free Software Foundation; either version 2
+  of the License, or (at your option) any later version.
+  
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+*/
 /**
  * pymod.c
  *
@@ -514,6 +532,25 @@ p2pship_config_set_update(PyObject *self, PyObject *args)
 	return NULL;
 }
 
+static PyObject *
+p2pship_get_data_dir(PyObject *self, PyObject *args)
+{
+	char *value = 0;
+	PyObject *ret = NULL;
+	
+	if (!(value = processor_config_string(processor_get_config(), P2PSHIP_CONF_DATA_DIR))) {
+		PyErr_SetString(PyExc_StandardError, "Error");
+		goto err;
+	}
+	
+	if (!(ret = Py_BuildValue("s", value))) {
+		PyErr_SetString(PyExc_MemoryError, "Memory depleted");
+		goto err;
+	}
+ err:
+	return ret;
+}
+
 /**
  *
  * the service handling, packet transmission
@@ -654,7 +691,9 @@ p2pship_service_send(PyObject *self, PyObject *args)
 	if (!PyArg_ParseTuple(args, "ssis:service_send", &to, &from, &t, &data))
 		goto err;
 	
-	if (conn_queue_to_peer(to, from, t, data, strlen(data), NULL, NULL)) {
+	/* dtn: todo: other sends so we can set flags etc */
+
+	if (conn_send_default(to, from, t, data, strlen(data), NULL, NULL)) {
 		LOG_WARN("Could not send type %i packet from %s to %s\n", 
 			 t, from, to);
 		PyErr_SetString(PyExc_EnvironmentError, "Error sending!");
@@ -898,7 +937,7 @@ p2pship_http_register(PyObject *self, PyObject *args)
 			pos = strchr(tmp, ':');
 		if (pos) {
 			pos[0] = 0;
-			s = extapi_register_p2phttp_handler(tmp, atoi(&pos[1]), NULL, 3600,
+			s = extapi_register_p2phttp_handler(tmp, atoi(&pos[1]), NULL, -1,
 							    pymod_http_process_req2, h);
 			if (s/100 != 2)
 				s = -1;
@@ -1182,12 +1221,258 @@ p2pship_alive(PyObject *self, PyObject *args)
 	return Py_BuildValue("b", pymod_alive);
 }
 
+/**
+ *
+ * small, inefficient persistent storage
+ *
+ */
+static PyObject *
+p2pship_db_get(PyObject *self, PyObject *args)
+{
+	const char *appid = 0, *table = 0, *key = 0;
+	PyObject *ret = NULL;
+
+	if (!PyArg_ParseTuple(args, "sss", &appid, &table, &key))
+		goto err;
+	
+	LOG_HL("should get %s/%s: %s\n", appid, table, key);
+
+	Py_INCREF(Py_None);
+	ret = Py_None;
+ err:
+	return ret;
+}	
+
+static PyObject *
+p2pship_db_set(PyObject *self, PyObject *args)
+{
+	const char *appid = 0, *table = 0, *key = 0, *value = 0;
+	PyObject *ret = NULL;
+
+	if (!PyArg_ParseTuple(args, "ssss", &appid, &table, &key, &value))
+		goto err;
+	
+	LOG_HL("should set %s/%s: %s to %s\n", appid, table, key, value);
+
+	Py_INCREF(Py_None);
+	ret = Py_None;
+ err:
+	return ret;
+}	
+
+static PyObject *
+p2pship_db_del(PyObject *self, PyObject *args)
+{
+	const char *appid = 0, *table = 0, *key = 0;
+	PyObject *ret = NULL;
+
+	if (!PyArg_ParseTuple(args, "sss", &appid, &table, &key))
+		goto err;
+	
+	LOG_HL("should del %s/%s: %s\n", appid, table, key);
+
+	Py_INCREF(Py_None);
+	ret = Py_None;
+ err:
+	return ret;
+}	
+
+static PyObject *
+p2pship_db_get_keys(PyObject *self, PyObject *args)
+{
+	const char *appid = 0, *table = 0;
+	PyObject *ret = NULL;
+
+	if (!PyArg_ParseTuple(args, "ss", &appid, &table))
+		goto err;
+	
+	LOG_HL("should get keys for %s/%s\n", appid, table);
+
+	Py_INCREF(Py_None);
+	ret = Py_None;
+ err:
+	return ret;
+}	
+
+static PyObject *
+p2pship_db_get_values(PyObject *self, PyObject *args)
+{
+	const char *appid = 0, *table = 0;
+	PyObject *ret = NULL;
+
+	if (!PyArg_ParseTuple(args, "ss", &appid, &table))
+		goto err;
+	
+	LOG_HL("should get values for %s/%s\n", appid, table);
+
+	Py_INCREF(Py_None);
+	ret = Py_None;
+ err:
+	return ret;
+}	
+
+/*
+ * identities
+ *
+ */
+
+static PyObject *
+p2pship_get_idents(PyObject *self, PyObject *args)
+{
+	PyObject *ret = NULL, *str = 0;
+	ship_obj_list_t *idents = 0;
+	void *ptr = 0;
+	ident_t *ident = 0;
+	
+	ASSERT_TRUE(idents = ident_get_identities(), err);
+	ship_lock(idents);
+	ASSERT_TRUE(ret = PyList_New(0), err);
+
+	while ((ident = ship_list_next(idents, &ptr))) {
+		ASSERT_TRUE(str = PyString_FromString(ident->sip_aor), err);
+		ASSERT_ZERO(PyList_Append(ret, str), err);
+		Py_XDECREF(str);
+	}
+	goto end;
+ err:
+	Py_XDECREF(str);
+	Py_XDECREF(ret);
+	Py_INCREF(Py_None);
+	ret = Py_None;
+ end:
+	ship_unlock(idents);
+	return ret;
+}	
+
+/* returns an identity object. if aor = null, then the default one */
+static PyObject *
+p2pship_get_ident(PyObject *self, PyObject *args)
+{
+	const char *aor = 0;
+	PyObject *ret = NULL, *str = NULL, *bud = NULL, *buds = NULL;
+	ident_t *ident = 0;
+	BIO *bio = NULL;
+	char *cert = NULL;
+	int bufsize;
+	void *ptr = 0;
+	buddy_t *buddy = 0;
+
+	if (!PyArg_ParseTuple(args, "|s", &aor))
+		goto err;
+	
+	if (!aor || strlen(aor) == 0) {
+		ASSERT_TRUE(ident = ident_get_default_ident(), err);
+	} else {
+		ASSERT_TRUE(ident = ident_find_by_aor(aor), err);
+	}
+	
+	ASSERT_TRUE(ret = PyDict_New(), err);
+	ASSERT_TRUE(str = PyString_FromString(zdefault(ident->sip_aor, "")), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "aor", str), err);
+	Py_XDECREF(str);
+
+	ASSERT_TRUE(str = PyString_FromString(zdefault(ident->username, "")), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "name", str), err);
+	Py_XDECREF(str);
+	
+	ASSERT_TRUE(str = PyString_FromString(zdefault(ident->password, "")), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "password", str), err);
+	Py_XDECREF(str);
+	
+	ASSERT_TRUE(str = PyString_FromString(zdefault(ident->status, "")), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "status", str), err);
+	Py_XDECREF(str);
+	str = NULL;
+
+	/* cert */
+	ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+	ASSERT_TRUE(PEM_write_bio_X509(bio, ident->cert), err);
+	ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &cert), err);
+	cert[bufsize] = 0;
+
+	ASSERT_TRUE(str = PyString_FromString(cert), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "cert", str), err);
+	Py_XDECREF(str);
+	str = NULL;
+
+	/* key */
+	BIO_free(bio);
+	ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+	ASSERT_TRUE(PEM_write_bio_RSAPrivateKey(bio, ident->private_key, NULL, NULL, 0, NULL, NULL), err);
+	ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &cert), err);
+	cert[bufsize] = 0;
+
+	ASSERT_TRUE(str = PyString_FromString(cert), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "key", str), err);
+	Py_XDECREF(str);
+	str = NULL;
+	
+	/* buddies */
+	ASSERT_TRUE(buds = PyList_New(0), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "buddies", buds), err);
+	while ((buddy = ship_list_next(ident->buddy_list, &ptr))) {
+		ASSERT_TRUE(bud = PyDict_New(), err);
+
+		ASSERT_TRUE(str = PyString_FromString(zdefault(buddy->sip_aor, "")), err);
+		ASSERT_ZERO(PyDict_SetItemString(bud, "aor", str), err);
+		Py_XDECREF(str);
+
+		ASSERT_TRUE(str = PyString_FromString(zdefault(buddy->name, "")), err);
+		ASSERT_ZERO(PyDict_SetItemString(bud, "name", str), err);
+		Py_XDECREF(str);
+
+		ASSERT_TRUE(str = PyString_FromString(zdefault(buddy->shared_secret, "")), err);
+		ASSERT_ZERO(PyDict_SetItemString(bud, "secret", str), err);
+		Py_XDECREF(str);
+		str = NULL;
+
+		if (buddy->cert) {
+			BIO_free(bio);
+			ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+			ASSERT_TRUE(PEM_write_bio_X509(bio, buddy->cert), err);
+			ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &cert), err);
+			cert[bufsize] = 0;
+			
+			ASSERT_TRUE(str = PyString_FromString(cert), err);
+			ASSERT_ZERO(PyDict_SetItemString(bud, "cert", str), err);
+			Py_XDECREF(str);
+			str = NULL;
+		}
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+		if (buddy->is_friend)
+			str = Py_True;
+		else
+			str = Py_False;
+		ASSERT_ZERO(PyDict_SetItemString(bud, "friend", str), err);
+#endif		
+
+		ASSERT_ZERO(PyList_Append(buds, bud), err);
+		Py_XDECREF(bud);
+	}
+	Py_XDECREF(buds);
+	goto end;
+ err:
+	Py_XDECREF(str);
+ 	Py_XDECREF(ret);
+ 	Py_XDECREF(bud);
+ 	Py_XDECREF(buds);
+	Py_INCREF(Py_None);
+	ret = Py_None;
+ end:
+	if (bio) BIO_free(bio);
+	ship_obj_unlockref(ident);
+	return ret;
+}	
+
+
+
 /* init the extensions */
 static PyMethodDef p2pshipMethods[] = {
     {"get_json",  p2pship_get_json, METH_VARARGS, "Retrieves configuration data in json format."},
     {"alive",  p2pship_alive, METH_NOARGS, "Checks whether the procy is still running."},
     {"register_ol_handler",  (PyCFunction)p2pship_register_ol_handler, METH_VARARGS | METH_KEYWORDS, "Registers an overlay handler."},
     {"ol_data_got",  p2pship_ol_data_got, METH_VARARGS, "Receives data from the overlay handler."},
+    {"get_data_dir",  p2pship_get_data_dir, METH_VARARGS, "Gets the default data directory."},
 
     {"register_ipc_handler",  p2pship_register_ipc_handler, METH_VARARGS, "Registers an IPC handler."},
     {"call_ipc_handler",  p2pship_call_ipc_handler, METH_VARARGS, "Calls an IPC handler."},
@@ -1214,6 +1499,16 @@ static PyMethodDef p2pshipMethods[] = {
     {"service_update_registration",  p2pship_service_update_registration, METH_VARARGS, "Registers a service handler."},
     {"service_send",  p2pship_service_send, METH_VARARGS, "Sends a service packet."},
     {"send_packet",  p2pship_send_packet, METH_VARARGS, "Sends a 'RAW' protocol packet."},
+
+    {"db_get",  p2pship_db_get, METH_VARARGS, "Gets a persistent value."},
+    {"db_set",  p2pship_db_set, METH_VARARGS, "Sets a persistent value."},
+    {"db_del",  p2pship_db_del, METH_VARARGS, "Dels a persistent value."},
+    {"db_get_keys",  p2pship_db_get_keys, METH_VARARGS, "Gets the keys for the persistent values."},
+    {"db_get_values",  p2pship_db_get_values, METH_VARARGS, "Gets the values for the persistent values."},
+
+    // identity handling
+    {"get_idents",  p2pship_get_idents, METH_VARARGS, "Returns a list of the local identitie's aors."},
+    {"get_ident",  p2pship_get_ident, METH_VARARGS, "Returns an identity object."},
 
     {NULL, NULL, 0, NULL}        /* Sentinel */
 };

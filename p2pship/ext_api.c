@@ -227,10 +227,14 @@ extapi_http_data_return(extapi_http_req_t *req, char *data, int odatalen)
 	STATS_LOG("http_receive_data;%s;%s;%d;%d;%d;%d\n",
 		  req->to_aor, req->from_aor, 0, odatalen, strl+datalen, 0);
 
+	/* dtn: here we should have the stream connection */
+
 	memcpy(tmp + strl, data, datalen);
-	ASSERT_ZERO(conn_queue_to_peer(req->from_aor, req->to_aor,
-				       SERVICE_TYPE_HTTPRESPONSE,
-				       tmp, strl + datalen, NULL, NULL),
+
+	/* dtn: ..or use the ack's response data! */
+	ASSERT_ZERO(conn_send_default(req->from_aor, req->to_aor,
+				      SERVICE_TYPE_HTTPRESPONSE,
+				      tmp, strl + datalen, NULL, NULL),
 		    err);
  err:
 	freez(tmp);
@@ -331,9 +335,11 @@ extapi_data_received_http(char *data, int data_len, ident_t *ident,
 	ASSERT_TRUE(tmp = mallocz(128 + strlen(tracking_id)), end);
 	strcpy(tmp, tracking_id);
 	strcat(tmp, "\nHTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<h1>Not found, sorry!</h1>\r\n");
-	conn_queue_to_peer(source, ident->sip_aor, 
-			   SERVICE_TYPE_HTTPRESPONSE,
-			   tmp, strlen(tmp), NULL, NULL);	
+
+	/* dtn: use ack's response data! */
+	conn_send_default(source, ident->sip_aor, 
+			  SERVICE_TYPE_HTTPRESPONSE,
+			  tmp, strlen(tmp), NULL, NULL);	
  end:
 	extapi_free_http_req(req);
 	netio_http_conn_close(conn);
@@ -383,15 +389,13 @@ extapi_data_received_httpresponse(char *data, int data_len, ident_t *ident,
  err:
 	/* do something like this .. */
 	netio_http_packet_orderer_put(tracking_id, piece, content, len);
-	len = 1; /* so we dont close it yet */
 	if ((oldconn = netio_http_get_conn_by_id(tracking_id))) {
 		while (!netio_http_packet_orderer_pop_next(tracking_id, &piece, &content, &len)) {
 			extapi_return_and_record(oldconn, NULL, content, len);
 			freez(content);
 		}
-	}
 
-	if (oldconn) {
+		/* if the last packet was zero, take it as a que to close */
 		if (len < 1) {
 			netio_http_conn_close(oldconn);
 		} else {
@@ -410,8 +414,7 @@ static struct service_s extapi_httpresponse_service =
 
 static void 
 extapi_http_sent(char *to, char *from, service_type_t service,
-		 char *data, int data_len, void *ptr,
-		 int code)
+		 int code, char *return_data, int data_len, void *ptr)
 {
 	/* if error, then return error to the client as well .. */
 	if (code) {
@@ -470,6 +473,7 @@ typedef struct extapi_http_forward_req_s {
 } extapi_http_forward_req_t;
 
 
+#ifdef CONFIG_WEBCACHE_ENABLED
 /* the callback for the p2p cache lookup */
 static void
 extapi_p2p_cache_data_cb(char *url, void *obj, char *data, int datalen)
@@ -497,6 +501,7 @@ extapi_p2p_cache_data_cb(char *url, void *obj, char *data, int datalen)
 		freez(ptr);
 	}
 }
+#endif
 
 static void 
 extapi_handle_http_forward_data_cb(int s, void *obj, char *data, int datalen)
@@ -562,8 +567,9 @@ extapi_handle_http_forward(netio_http_conn_t *conn, char *user, int port)
 	socklen_t sa_len;
 	extapi_http_forward_req_t *ptr = 0;
 	char *buf = 0;
+#ifdef CONFIG_WEBCACHE_ENABLED
 	int len;
-	
+#endif	
 	ASSERT_TRUE(ptr = mallocz(sizeof(extapi_http_forward_req_t)), err);
 	ASSERT_ZERO(netio_http_serialize(conn, &ptr->data, &ptr->len), err);
 	ASSERT_TRUE(ptr->tracking_id = strdup(conn->tracking_id), err);
@@ -681,7 +687,6 @@ httpproxy_process_req(netio_http_conn_t *conn, void *pkg)
 	int port = 80;
 	
 	LOG_DEBUG("got req for %s on socket %d\n", conn->url, conn->socket);
-		
 	/* hm, if method == CONNECT, what then? highjack the socket,
 	   put it into a forwarder */
 	if (!strcmp(conn->method, "CONNECT")) {
@@ -787,9 +792,10 @@ extapi_handle_forward(netio_http_conn_t *conn, char *to, int port, char *from, c
 		  to, from, 0, len, l2, 0);
 
 	ASSERT_TRUE(tmp = strdup(conn->tracking_id), err);
-	ASSERT_ZERO(conn_queue_to_peer(to, from, 
-				       service_create_id(SERVICE_TYPE_HTTP, port),
-				       newbuf, l2, tmp, extapi_http_sent), 
+	/* dtn: skip this tracking id stuff and use the ack responses! */
+	ASSERT_ZERO(conn_send_slow(to, from, 
+				   service_create_id(SERVICE_TYPE_HTTP, port),
+				   newbuf, l2, tmp, extapi_http_sent), 
 		    err);
 
 	/* create the response queueing mechanism */
@@ -966,9 +972,9 @@ extapi_process_req(netio_http_conn_t *conn, void *pkg)
 		if (!to || !from || !data || !service) {
 			netio_http_respond_str(conn, 400, "Bad request", "Bad request");
 		} else {
-			if (conn_queue_to_peer(to, from, service_type,
-					       data->data, data->data_len,
-					       NULL, NULL)) {
+			if (conn_send_default(to, from, service_type,
+					      data->data, data->data_len,
+					      NULL, NULL)) {
 				LOG_WARN("Sending raw packet, service %d failed\n", service_type);
 				netio_http_respond_str(conn, 500, "Server Error", "Server error, could not send");
 			} else {

@@ -91,7 +91,7 @@ enum {
 #endif
 
 #define PANIC(fmt, args...) {\
-    USER_ERROR("[PANIC] %s: " fmt, __FUNCTION__, ##args);\
+    USER_ERROR("[PANIC] %s: " fmt "\nAborting due to panic\n", __FUNCTION__, ##args);\
     exit(1);}
 
 #define ASSERT_TRUE(val, lab, arg...) \
@@ -103,4 +103,10 @@ enum {
 
 int ship_debug_dump_json(char **msg);
     
+#ifdef LOCK_DEBUG
+void debug2_close();
+inline void __NON_INSTRUMENT_FUNCTION__ debug2_wait(char *str, int thread, char *file, const char *function, int line);
+inline void __NON_INSTRUMENT_FUNCTION__ debug2_complete(int thread, char *file, const char *function, int line);
+#endif
+
 #endif

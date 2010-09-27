@@ -217,12 +217,14 @@ AC_ARG_ENABLE(maemo,
              [ac_cv_use_maemo=$enableval \
 	      ac_cv_use_dbus=$enableval \ 
 	      ac_cv_use_maemoui=$enableval \ 
-	      ac_cv_use_libebook=$enableval \
 	      ac_cv_use_mc=$enableval \
-	      ac_cv_use_abs=$enableval \
 	      ac_cv_use_maemoexts=$enableval], [ac_cv_use_maemo=no])
 AC_CACHE_CHECK([whether to use maemo],
                [ac_cv_use_maemo], [ac_cv_use_maemo=no])
+
+# took these away:
+#	      ac_cv_use_libebook=$enableval \
+#	      ac_cv_use_abs=$enableval \
 
 # dus, again
 AC_CACHE_CHECK([whether to use dbus],
@@ -356,7 +358,8 @@ PKG_CHECK_MODULES(DEPS, libxml-2.0 >= 1.0.0 openssl >= 0.9.6)
 AC_SUBST(DEPS_CFLAGS)
 AC_SUBST(DEPS_LIBS)
 
-CFLAGS="$CFLAGS $DEPS_CFLAGS -Wall -Werror"
+#CFLAGS="$CFLAGS $DEPS_CFLAGS -Wall -Werror"
+CFLAGS="$CFLAGS $DEPS_CFLAGS"
 LIBS="$LIBS $DEPS_LIBS"
 
 

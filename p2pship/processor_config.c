@@ -58,10 +58,10 @@ static char* DEFAULT_CONFIGURATION[] =
 
 		P2PSHIP_CONF_CALL_LOG_SHOW_PATHINFO, "yes", "Show trustpath for accepted calls", "bool", 0,
 		P2PSHIP_CONF_CALL_LOG_SHOW_DROPPED, "yes", "Show dropped calls", "bool", 0,
+#endif
 
 		P2PSHIP_CONF_PDD_RESET_MODE, "no", "Reset peer connections before each call", "bool", 0,
 		P2PSHIP_CONF_PDD_LOG, "no", "Log PDD data to separate file", "bool", 0,
-#endif
 		
 		P2PSHIP_CONF_IDENT_UA_MODE, "open", "UA mode", "enum:open,relax,paranoid", 0,
 		P2PSHIP_CONF_CONN_KEEPALIVE, "30", "Keepalive interval in seconds", "int", 0,
@@ -135,9 +135,9 @@ static char* DEFAULT_FILES[] =
 #define DEFAULT_WEB_DIR ".p2pship/web"
 #define DEFAULT_LOG_FILE ".p2pship/log"
 #define DEFAULT_WEBCACHE_INDEX ".p2pship/webcache/index.txt"
-#ifdef CONFIG_SIP_ENABLED
 #define DEFAULT_SIPP_ROUTING_FILE ".p2pship/sip-routing.xml"
-#endif
+#define DEFAULT_DATA_DIR ".p2pship/data"
+
 #define DEFAULT_CONTACTS_FILE ".p2pship/contacts.log"
 
 /* the white / blacklists */
@@ -440,10 +440,9 @@ processor_config_load_defaults(processor_config_t *config)
 	ASSERT_ZERO(processor_config_check_ensure_homedir_file(DEFAULT_BLACKLIST_FILE, P2PSHIP_CONF_BLACKLIST_FILE, 
 							       "# The blacklist for P2PSHIP\n# Please don't edit white the proxy is running!\n#\n\n", config), err);
 	
-#ifdef CONFIG_SIP_ENABLED
 	ASSERT_ZERO(processor_config_check_ensure_homedir_file(DEFAULT_SIPP_ROUTING_FILE, P2PSHIP_CONF_SIPP_ROUTING_FILE, 
 							       "<sip-routing />\n", config), err);
-#endif
+
 	ASSERT_ZERO(ship_get_homedir_file(DEFAULT_WEB_DIR, &tmpstr), err);
 	ASSERT_ZERO(processor_config_set_string(config, P2PSHIP_CONF_WEB_DIR, tmpstr), err);
 
@@ -462,6 +461,9 @@ processor_config_load_defaults(processor_config_t *config)
 		ASSERT_ZERO(processor_config_set_string(config, key, value), err);
 		arr += 3;
 	}
+
+	ASSERT_ZERO(processor_config_check_ensure_homedir_file(DEFAULT_DATA_DIR, P2PSHIP_CONF_DATA_DIR,
+							       NULL, config), err);
 
 #ifdef CONFIG_PYTHON_ENABLED
 	ASSERT_ZERO(processor_config_check_ensure_homedir_file(DEFAULT_PYTHON_LIB_DIR, P2PSHIP_CONF_PYTHON_LIB_DIR,

@@ -155,9 +155,14 @@ typedef struct reg_package_s
   	ship_lock_t lock;
 
 	char *sip_aor;
+
+#ifdef NEW_CONNS
+	ship_ht_t *transport_addresses;
+#else
 	ship_list_t *ip_addr_list;
 	ship_list_t *rvs_addr_list;
 	ship_list_t *hit_addr_list;
+#endif
 
 	/* validity */	
 	time_t created;
@@ -226,6 +231,11 @@ typedef struct buddy_s
 	   contact) or some random person that has called us */
 	int is_friend;
 #endif
+
+#ifdef NEW_CONNS
+	processor_task_t *lookup_wait;
+	ship_list_t *lookup_cb;
+#endif
 }
 buddy_t;
 
@@ -261,6 +271,11 @@ typedef struct ident_s
 	/* whether this is a on-the-fly ident, not to be saved in the
 	   xml file */
 	int do_not_save;
+	
+#ifdef NEW_CONNS
+	/* the transport handlers */
+	ship_list_t *transport_handlers;
+#endif
 }
 ident_t;
 
@@ -327,11 +342,11 @@ int ident_service_register(service_t *service);
 
 /* returns own reg package for AOR */
 char * ident_get_cached_reg_str(char *sip_aor);
-ident_t *_ident_find_by_aor(char *aor);
+ident_t *_ident_find_by_aor(const char *aor);
 ident_t * ident_get_default_ident();
 
 #ifdef LOCK_DEBUG
-ident_t *__ident_find_by_aor(char *aor, const char *file, const char *func, const int line);
+ident_t *__ident_find_by_aor(const char *aor, const char *file, const char *func, const int line);
 #define ident_find_by_aor(aor) __ident_find_by_aor(aor, __FILE__, __FUNCTION__, __LINE__)
 #else
 #define ident_find_by_aor(aor) _ident_find_by_aor(aor)
@@ -425,5 +440,17 @@ void ident_data_dump_cas_json(ship_list_t *cas, char **msg);
 
 void ident_set_status(char *aor, char *status);
 int ident_has_ident(const char* aor, const char *password);
+
+#ifdef NEW_CONNS
+int ident_reinit_transport_handlers();
+
+typedef void (*ident_transport_param_cb) (const char *data, void *ptr);
+
+char *ident_get_transport_params(ident_t *ident, const char *remote_aor, 
+				 const char *transport);
+int ident_update_transport_params(ident_t *ident, const char *remote_aor,
+				  const char *transport,
+				  ident_transport_param_cb callback, void *ptr);
+#endif
 
 #endif

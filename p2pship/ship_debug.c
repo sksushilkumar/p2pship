@@ -17,6 +17,7 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include "ship_debug.h"
+#include <unistd.h>
 
 /* default log level */
 int p2pship_log_level = LOG_INFO;
@@ -87,7 +88,7 @@ debug2_run(void *data)
 		/* find any thread that has been waiting for over x
 		   secs for a lock */
 		time(&now);
-		while (l1 = _ship_list_next(0, debug2_threads, &p1)) {
+		while ((l1 = _ship_list_next(0, debug2_threads, &p1))) {
 			if ((now - l1->time) > 3) {
 				debug2_lock_t *l2 = 0;
 				void *p2 = 0;
@@ -132,6 +133,7 @@ debug2_init()
 	debug2_threads = ship_list_new();
 	debug2_restricts = ship_list_new();
 	pthread_create(&debugger, NULL, debug2_run, NULL);
+	return 0;
 }
 
 void
@@ -225,7 +227,7 @@ debug2_check_restricts(int thread, const char *file, const char *func, int line)
 
 	_ship_lock(debug2_threads);
 	ptr = 0;
-	while (r = _ship_list_next(0, debug2_restricts, &ptr)) {
+	while ((r = _ship_list_next(0, debug2_restricts, &ptr))) {
 		if (r->thread == thread) {
 			debug2_lock_t *l = 0;
 			USER_PRINT("+++++++ RESTRICT WARNING at %s:%s:%d (%s):\n\tRestriction for %08x :: %08x, token %08x\n",
@@ -233,7 +235,7 @@ debug2_check_restricts(int thread, const char *file, const char *func, int line)
 
 			/* print all the locks we still have on this one .. */
 			l = 0;
-			while (l = _ship_list_next(0, debug2_locks, &p2)) {
+			while ((l = _ship_list_next(0, debug2_locks, &p2))) {
 				if (l->lock == r->token && l->thread == thread) {
 					USER_PRINT("\tLocked at %s / %s\n",
 						   l->str, l->bt);
@@ -301,7 +303,7 @@ debug2_lock(void *lock, int thread, char *file, const char *function, int line)
 	
 	/* check all possible restrictions! */
 	ptr = 0;
-	while (r = _ship_list_next(0, debug2_restricts, &ptr)) {
+	while ((r = _ship_list_next(0, debug2_restricts, &ptr))) {
 		if (r->thread == thread && (!r->target || r->target == lock)) {
 			USER_PRINT("+++++++ LOCK WARNING at %s:%s:%d (%s):\n\tTrying to get a lock (%08x :: %08x) restricted at %s for %08x\n",
 				   file, function, line, l->str, thread, r->target, r->loc, r->token);
@@ -378,7 +380,7 @@ debug2_unlock(void *lock, int thread, char *file, const char *function, int line
 	_ship_unlock(lock);
 	//USER_PRINT("unlocking %08x :: %08x..\n", thread, lock);
 
-	while (l2 = _ship_list_next(0, debug2_locks, &ptr)) {
+	while ((l2 = _ship_list_next(0, debug2_locks, &ptr))) {
 		if (l2->lock == lock && l2->thread == thread)
 			l = l2;
 	}

@@ -763,7 +763,7 @@ sipp_process_sdp_message_body(osip_message_t* sip,
 					if (sipp_tunnel_proxy
 #ifdef CONFIG_HIP_ENABLED
 					    || (hipapi_addr_is_hit(&addrt)
-						&& conn_create_peer_hit_locator_mapping(remote_aor, &addrt))
+						&& hipapi_create_peer_hit_locator_mapping(remote_aor, &addrt))
 					    || (!processor_config_bool(processor_get_config(), P2PSHIP_CONF_ALLOW_NONHIP)
 						&& !hipapi_addr_is_hit(&addrt))
 #endif					    
@@ -937,7 +937,9 @@ sipp_cb_packetfilter_remote2(ident_t* ident, char *remote_aor, osip_event_t *evt
 	int respcode = -1;
 
 	/* record the message / call */
+	ship_unlock(ident);
 	sipp_call_log_record(ident->sip_aor, remote_aor, evt, verdict, 1);
+	ship_lock(ident);
 
 	switch (verdict) {
 	case AC_VERDICT_NONE:
@@ -1355,8 +1357,7 @@ sipp_url_to_short_str(osip_uri_t *url)
 /* called when an event has been processed by the processor */
 static void
 sipp_queued_sent(char *to, char *from, service_type_t service,
-		 char *data, int data_len, void *ptr,
-		 int code)
+		 int code, char *return_data, int data_len, void *ptr)
 {
 	sipp_request_t* req = ptr;
 	ship_lock(req);
@@ -1601,9 +1602,9 @@ sipp_handle_message_do(sipp_request_t *req)
                         char *buf = 0;                
                         size_t len;
                         if (osip_message_to_str(sip, &buf, &len) ||
-			    conn_queue_to_peer(toident, ident->sip_aor, SERVICE_TYPE_SIP, 
-					       buf, len, req, 
-					       sipp_queued_sent)) {
+			    conn_send_slow(toident, ident->sip_aor, SERVICE_TYPE_SIP, 
+					   buf, len, req, 
+					   sipp_queued_sent)) {
 				ret = 500; //-2;
 			} else {
 				/* add a ref for the callback */
@@ -1889,7 +1890,9 @@ static int
 sipp_send_sip_to_ident(osip_message_t *sip, ident_t *ident, addr_t *from)
 {        
 	addr_t *contact_addr = 0;
+#ifdef CONFIG_DISABLE_LO_HIT_ROUTING
 	addr_t addr;
+#endif
 	char *buf = 0;
 	int len, ret;
 
@@ -2124,11 +2127,14 @@ sipp_send_remote_response(osip_message_t* sip, int code, char *sip_aor, ident_t 
 	if (sipp_check_and_mark(sip, "resp", code))
 		return 0;
 	
+	/* dtn: try to establish a 'fast' connection after positive
+	   responses to invites? */
+
         if (!sipp_create_sip_response(&resp, code, sip) &&
 	    !osip_message_to_str(resp, &buf, &len) && 
-	    !conn_queue_to_peer(sip_aor, ident->sip_aor, 
-				SERVICE_TYPE_SIP,
-				buf, len, NULL, NULL))
+	    !conn_send_slow(sip_aor, ident->sip_aor, 
+			    SERVICE_TYPE_SIP,
+			    buf, len, NULL, NULL))
 		ret = 0;
 	
         if (resp)

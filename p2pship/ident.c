@@ -184,9 +184,9 @@ ident_pp_send_message(char *from, char *to,
 		ship_inroll(msg_type, buf, 2);
 		if (param)
 			memcpy(buf+2, param, strlen(param));
-		conn_queue_to_peer(to, from,
-				   SERVICE_TYPE_PRIVACYPAIRING,
-				   buf, blen, NULL, NULL);
+		conn_send_simple(to, from,
+				 SERVICE_TYPE_PRIVACYPAIRING,
+				 buf, blen);
 		freez(buf);
 	}
 }
@@ -199,16 +199,22 @@ ident_pp_start_negotiation(ident_t *ident, buddy_t *peer)
 	char *sugg = 0;
 	int i;
 	
-	freez(peer->shared_secret);
-	if ((sugg = mallocz(11))) {
-		ship_get_random((unsigned char *)sugg, 10);
-		
-		/* convert those bytes into something readable.. */
-		for (i = 0; i < 10; i++)
-			sugg[i] = crypt_arr[sugg[i] % strlen(crypt_arr)];
-		freez(peer->my_suggestion);
-		peer->my_suggestion = sugg;
-		
+	if (peer->my_suggestion) {
+		sugg = peer->my_suggestion;
+	} else {
+		freez(peer->shared_secret);
+		if ((sugg = mallocz(11))) {
+			ship_get_random((unsigned char *)sugg, 10);
+			
+			/* convert those bytes into something readable.. */
+			for (i = 0; i < 10; i++)
+				sugg[i] = crypt_arr[sugg[i] % strlen(crypt_arr)];
+			freez(peer->my_suggestion);
+			peer->my_suggestion = sugg;
+		}
+	}
+	
+	if (sugg) {
 		ident_pp_send_message(ident->sip_aor, peer->sip_aor,
 				      PP_MSG_SUGGEST, sugg);
 	}
@@ -227,9 +233,9 @@ ident_bb_send_buddies(ident_t *ident, buddy_t *buddy)
 		
 		/* encode, IF we have any knowledge of that level.. */
 		if (!ident_data_bb_encode(ident->buddy_list, buddy, &buf, &blen, i))
-			conn_queue_to_peer(buddy->sip_aor, ident->sip_aor,
-					   SERVICE_TYPE_BLOOMBUDDIES,
-					   buf, blen, NULL, NULL);
+			conn_send_simple(buddy->sip_aor, ident->sip_aor,
+					 SERVICE_TYPE_BLOOMBUDDIES,
+					 buf, blen);
 		freez(buf);
 	}
 
@@ -283,8 +289,10 @@ ident_cb_conn_events(char *event, void *data, void *eventdata)
 			/* have secret, send ack package */
 			ident_pp_send_message(conn->local_aor, conn->sip_aor,
 					      PP_MSG_ACK, peer->shared_secret);
-		} else {
+		} else if (strcmp(ident->sip_aor, peer->sip_aor) || !strcmp(event, "conn_made")) {
 			/* no secret, start negotiation for a new one */
+			freez(peer->my_suggestion);
+			freez(peer->shared_secret);
 			ident_pp_start_negotiation(ident, peer);
 		}
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
@@ -328,6 +336,7 @@ ident_handle_privacy_pairing_message(char *data, int data_len,
 		/* if we do not have */
 		
 		if (!param || !peer->shared_secret || strcmp(peer->shared_secret, param)) {
+			//printf("got ack .. but isn't working! '%s', when param was '%s'\n", peer->shared_secret, param);
 			ident_pp_start_negotiation(target, peer);
 		} else if (peer->my_suggestion) {
 			/* save & use */
@@ -341,6 +350,7 @@ ident_handle_privacy_pairing_message(char *data, int data_len,
 		ret = 0;
 		break;
 	case PP_MSG_SUGGEST:
+
 		/* suggest: create my own suggest, send ack */
 		
 		ASSERT_TRUE(param, err);
@@ -351,7 +361,6 @@ ident_handle_privacy_pairing_message(char *data, int data_len,
 		/* create whole secret, send ack */
 		freez(peer->shared_secret);
 		ASSERT_TRUE(peer->shared_secret = mallocz(strlen(peer->my_suggestion) + strlen(param) + 1), err);
-		
 		/* .. hm, which one was first now ? */
 		if (strcmp(target->sip_aor, source) > 0) {
 			strcpy(peer->shared_secret, peer->my_suggestion);
@@ -730,7 +739,7 @@ ident_get_issuer_ca(X509 *cert)
 /* find a user identity by aor */
 #ifdef LOCK_DEBUG
 ident_t *
-__ident_find_by_aor(char *aor, const char *file, const char *func, const int line)
+__ident_find_by_aor(const char *aor, const char *file, const char *func, const int line)
 {
 	ident_t *ret = 0;	
 	char *l = mallocz(strlen(file) + strlen(func) + 75);
@@ -742,6 +751,13 @@ __ident_find_by_aor(char *aor, const char *file, const char *func, const int lin
 	return ret;
 }
 #endif
+
+static void 
+ident_set_status_done(char *event, void *eventdata)
+{
+	ship_obj_unref(eventdata);
+}
+
 
 /* sets / gets the status */
 void
@@ -759,17 +775,16 @@ ident_set_status(char *aor, char *status)
 			if (status)
 				ident->status = strdup(status);
 
-			/* re-create the xml */
-			/* send it to all open connections! */
-			ship_unlock(ident);
-			conn_resend_reg_pkg(ident);
-			ship_lock(ident);
+			/* send an event, cause conn's to be updated */
+			ship_obj_ref(ident);
+			processor_event_generate("ident_status", ident, ident_set_status_done);
 			if (ship_list_length(ident->services))
 				ident_update_registration(ident);
 		}
 		ship_unlock(ident);
 	}
  	ship_unlock(identities);
+	
 }
 
 /* gets / gets the status */
@@ -846,7 +861,7 @@ ident_get_default_ident()
 }
 
 ident_t *
-_ident_find_by_aor(char *aor)
+_ident_find_by_aor(const char *aor)
 {
         ident_t *ident, *ret = NULL;
 	void *ptr = 0;
@@ -911,7 +926,7 @@ ident_update_service_registration(ident_t *ident, service_type_t service_type,
 	ident_service_t *s;
 	
 	s = ship_ht_get_int(ident->services, service_type);
-	if (expire < 1) {
+	if (expire == 0) {
 		/* check that it is the same handler */
 		if (s && s->service == service) {
 			LOG_INFO("removing registration i have for %s, service type %u\n", ident->sip_aor, service_type);
@@ -966,8 +981,11 @@ _ident_process_register(char *aor, service_type_t service_type, service_t *servi
 	ident_t *ident = 0;
 	int ret = 500;
 
-	if (aor) {                        
-		ident = (ident_t *)ident_find_by_aor(aor);
+	if (aor) {
+		if (strcmp(aor, "@") == 0)
+			ident = (ident_t *)ident_get_default_ident();
+		else
+			ident = (ident_t *)ident_find_by_aor(aor);
 		
 		/* check policy - can we register those that we have no account of? */ 
 		if (!ident && ident_allow_unknown_registrations) {
@@ -1045,19 +1063,15 @@ ident_create_new_reg(ident_t *ident)
 	ident->reg = NULL;
 	
 	ASSERT_TRUE(ident->reg = ident_reg_new(ident), err);
-	ASSERT_ZERO(conn_fill_reg_package(ident->reg), err);
+	ASSERT_ZERO(conn_fill_reg_package(ident, ident->reg), err);
 	
 	/* set the validity and time-of-creation according to the reg */
 	ident->reg->created = time(0);
 	ident->reg->valid = time(0) + ident_registration_timeleft(ident);
 
-	/* create new xml only if needed */
-	if (!ident->reg->cached_xml) { // hm.. this will always be NULL
-		char *tmp = NULL;
-		ASSERT_ZERO(ident_create_reg_xml(ident->reg, ident, 
-						 &tmp), err);
-		ident->reg->cached_xml = tmp;
-	}
+	/* create new xml */
+	ASSERT_ZERO(ident_create_reg_xml(ident->reg, ident, 
+					 &(ident->reg->cached_xml)), err);
 	ret = 0;
  err:
 	return ret;
@@ -1072,8 +1086,8 @@ ident_registration_is_valid(ident_t *ident, service_type_t service)
 	if (ident) {
 		ident_service_t *s = ship_ht_get_int(ident->services, service);
 
-		if (s && 
-		    ((s->reg_time + s->expire) >= now))
+		if (s && ((s->expire < 0) ||
+			  ((s->reg_time + s->expire) >= now)))
 			return 1;
 	}
 	
@@ -1091,6 +1105,8 @@ ident_registration_timeleft(ident_t *ident)
 	timeleft = 0;
 	while ((s = ship_ht_next(ident->services, &ptr))) {
 		int tl = s->reg_time + s->expire - now;
+		if (s->expire < 0)
+			tl = 3600; // default to indicate?
 		if (tl > timeleft)
 			timeleft = tl;
 	}
@@ -1269,6 +1285,24 @@ ident_reregister_all()
 	return 0;
 }
 
+#ifdef NEW_CONNS
+int
+ident_reinit_transport_handlers()
+{
+	ident_t *ident = 0;
+	void *ptr = 0;
+	
+	ship_lock(identities);
+	while ((ident = (ident_t*)ship_list_next(identities, &ptr))) {
+		ship_lock(ident);
+		conn_init_transports(ident);		
+		ship_unlock(ident);
+	}
+	ship_unlock(identities);
+	return 0;
+}
+#endif
+
 /* this function resets the foreign reg package cache. should be
  * called e.g. when changing networks to update possible peer
  * addresses and not to try connecting to some old non-routable
@@ -1284,11 +1318,10 @@ ident_reset_foreign_regs()
 static void 
 ident_mark_foreign_regs_for_update()
 {
-	void *ptr = 0;
-	reg_package_t *r;
-
 	LOG_DEBUG("Marking peer registration cache for update..\n");
 	ship_lock(foreign_idents);
+	void *ptr = 0;
+	reg_package_t *r;
 	while ((r = (reg_package_t *)ship_list_next(foreign_idents, &ptr)))
 		r->need_update = 1;
 	ship_unlock(foreign_idents);
@@ -1551,6 +1584,7 @@ ident_cb_lookup_registration(char *key, char *buf, char *signer, void *param, in
 			status = -1;
 
 		/* mark the end time of the lookup! */
+		LOG_DEBUG("ended lookup for %s as imported: %d and status: %d\n", key, imported, status);
 		STATS_LOG("ended lookup for %s\n", key);
 #ifdef CONFIG_SIP_ENABLED
 #ifdef DO_STATS
@@ -1562,6 +1596,106 @@ ident_cb_lookup_registration(char *key, char *buf, char *signer, void *param, in
 		processor_signal_wait(val, status);
 	}
 }
+
+#ifdef NEW_CONNS
+
+/* retrieves the connection parameters for a remote peer, only if
+ * present.  returns a copy of the string. ownership transferred. */
+char *
+ident_get_transport_params(ident_t *ident, const char *remote_aor, 
+			   const char *transport)
+{
+	reg_package_t *pkg = 0;
+	char *ret = 0;
+	ship_lock(ident);
+        if ((pkg = ident_find_foreign_reg((char*)remote_aor))) {
+		ret = ship_ht_get_string(pkg->transport_addresses, transport);
+		if (ret)
+			ret = strdup(ret);
+		ship_unlock(pkg);
+	}
+	LOG_HL("transport params for %s are '%s'\n", transport, ret);
+	ship_unlock(ident);
+	return ret;
+}
+
+static void 
+ident_update_transport_done(void *rdata, int code)
+{
+	ident_t *ident;
+	void *d = 0;
+	char *remote_aor = 0;
+	buddy_t *buddy;
+
+	LOG_HL("notifying lookup waiting clients with code %d\n", code);
+	ship_unpack_keep(rdata, &ident, &remote_aor, NULL, NULL, NULL);
+	ship_obj_lockref(ident);
+	
+	ASSERT_TRUE(buddy = ident_buddy_find_or_create(ident, remote_aor), err);
+	while ((d = ship_list_pop(buddy->lookup_cb))) {
+		char *transport;
+		ident_transport_param_cb callback;
+		void *ptr;
+		
+		ship_unpack_keep(d, NULL, NULL, &transport, &callback, &ptr);
+		callback(ident_get_transport_params(ident, remote_aor, transport), ptr);
+		if (rdata != d)
+			ship_pack_free(d);
+	}
+	buddy->lookup_wait = NULL;
+ err:
+	ship_obj_unlockref(ident);
+	ship_pack_free(rdata);
+}
+
+static int 
+ident_update_transport_do(void *data, processor_task_t **wait, int wait_for_code)
+{
+	ident_t *ident;
+	char *remote_aor = 0;
+	reg_package_t *pkg = 0;
+	int ret = -1;
+	
+	if ((*wait)) {
+		LOG_HL("lookup done, with code %d\n", wait_for_code);
+		return wait_for_code;
+	}
+	
+	ship_unpack_keep(data, &ident, &remote_aor, NULL, NULL, NULL);
+	ret = ident_lookup_registration(ident, remote_aor, 
+					&pkg, wait);
+	ship_unlock(pkg);
+	return ret;
+}
+
+/* updates async the connection parameters for a remote peer */
+int
+ident_update_transport_params(ident_t *ident, const char *remote_aor,
+			      const char *transport,
+			      ident_transport_param_cb callback, void *ptr)
+{
+	buddy_t *buddy = 0;
+	void *ptr2 = 0;
+	int ret = -1;
+	
+	ASSERT_TRUE(ptr2 = ship_pack("psspp", ident, remote_aor, transport, callback, ptr), err);
+	
+	ship_lock(ident);
+	ASSERT_TRUE(buddy = ident_buddy_find_or_create(ident, (char*)remote_aor), err);
+	if (!buddy->lookup_wait) {
+                ASSERT_TRUE(buddy->lookup_wait = processor_tasks_add(ident_update_transport_do, ptr2,
+								     ident_update_transport_done), err);
+	}
+	ship_list_add(buddy->lookup_cb, ptr2);
+	ptr2 = 0;
+	ret = 0;
+ err:
+	ship_unlock(ident);
+	ship_pack_free(ptr2);
+	//callback("no idea yet..", ptr);
+	return ret;
+}
+#endif
 
 int
 ident_lookup_registration(ident_t *ident, char *remote_aor, 
@@ -1575,17 +1709,11 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
 	   needs updating. If so, keep the old, but initiate an
 	   update. */
         (*pkg) = ident_find_foreign_reg(remote_aor);
-        if (!(*pkg) || (*pkg)->need_update ||
-	    /* check whether a transport address is present! */
-	    !conn_can_connect_to(*pkg)
-	    ) {
+	/* check whether a transport address is present! */
+        if (!(*pkg) || (*pkg)->need_update || !conn_can_connect_to(*pkg)) {
 		processor_task_t *val = processor_create_wait();
-
+                
 		if (*pkg) {
-			LOG_WARN("Could not use registration packet: %s %s\n",
-				 ((*pkg)->need_update? "it needs update":""),
-				 (conn_can_connect_to(*pkg)? "":"no usable connection address!"));
-
 			ship_unlock(*pkg);
 			(*pkg) = 0;
 		}
@@ -1633,6 +1761,7 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
 			}
 			
 			if (ret != 1) {
+				LOG_DEBUG("Something went wrong when initializing the lookup!\n", remote_aor);
 				processor_signal_wait(val, -2);
 				ret = -2;
 			}

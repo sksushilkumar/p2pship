@@ -33,7 +33,7 @@ static ship_list_t *rvs_arr = NULL;
 /* how often the rvs registration should be updated */
 #define RVS_UPDATE_PERIOD 600
 
-int hipapi_update_rvs_registration();
+static int hipapi_update_rvs_registration();
 
 
 static void
@@ -83,7 +83,7 @@ hipapi_close()
 
 }
 
-int 
+static int 
 hipapi_update_rvs_registration()
 {
 	char *str = 0;
@@ -464,5 +464,47 @@ hipapi_clear_sas()
 	return 0;
 }
 
+/* this function creates a mapping from a HIT to a locator so that the
+   HIT can be used as-is when sending packets. The HIT must be tied to
+   a specific peer (the aor given) meaning that the locators will be
+   looked up only from that peer's registration package.
+
+   If the HIT doesn't belong to the peer, locator missing or something
+   else goes wrong, it returns an errorcode
+*/
+int
+hipapi_create_peer_hit_locator_mapping(char *sip_aor, addr_t *hit) 
+{
+	int ret = -1;
+	/* dtn: get the hip transport addresses where the locators are */
+#ifndef NEW_CONNS
+	reg_package_t *reg = 0;
+	void *ptr = 0;
+	addr_t *tmp = 0;
+
+	if (hipapi_has_linkto(hit))
+		return 0;
+	
+
+	/* we should do this async actually (fetching the reg package)! */
+	LOG_INFO("Should map %s's HIT %s to a locator\n", sip_aor, hit->addr);
+	ASSERT_TRUE(reg = ident_find_foreign_reg(sip_aor), err);
+	
+	/* Assure that the HIT really belongs to this person */
+	while (!tmp && (tmp = (addr_t*)ship_list_next(reg->hit_addr_list, &ptr))) {
+		if (strcmp(tmp->addr, hit->addr))
+			tmp = NULL;
+	}
+	ASSERT_TRUE(tmp, err);
+	
+	/* establish .. */
+	ASSERT_ZERO(hipapi_establish(hit, reg->ip_addr_list, reg->rvs_addr_list), err);
+	ret = 0;
+ err:
+	if (reg) 
+		ship_unlock(reg);
+#endif
+	return ret;
+}
 
 #endif

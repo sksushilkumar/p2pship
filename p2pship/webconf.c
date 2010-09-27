@@ -259,6 +259,9 @@ webconf_process_req(netio_http_conn_t *conn, void *pkg)
 		if (!found)
 			netio_http_respond_str(conn, 404, "Not found", "The page you were looking for could not be found");
 			
+	} else if (str_startswith(conn->url, "/favicon.ico")) {
+		/* small hack for the favicon .. */
+		netio_http_redirect(conn, "/web/favicon.ico");
 	} else {
 		LOG_WARN("Got unknown HTTP request on webconf interface for %s\n", conn->url);
 
@@ -268,6 +271,12 @@ webconf_process_req(netio_http_conn_t *conn, void *pkg)
 		else
 			netio_http_respond_str(conn, 404, "Not found", "The page you were looking for could not be found");
 	}
+	// todo: we need a solution for this!
+	// -> netio_http_conns should be ship_objs!
+	//close(conn->socket);
+	netio_man_close_socket(conn->socket);
+	conn->socket = -1;
+	// netio_http_conn_close(conn);
 	
 	return 0;
 }
@@ -439,8 +448,8 @@ webconf_un_read_cb(int s, char *data, ssize_t datalen)
 				ret = strdup("");
 			
 		} else if (str_startswith(data, "events:")) {
-#ifdef CONFIG_SIP_ENABLED
 			int *s2 = 0;
+#ifdef CONFIG_SIP_ENABLED
 			if (!strcmp(conf, "sip_log")) {
 				if ((s2 = mallocz(sizeof(int)))) {
 					*s2 = s;
