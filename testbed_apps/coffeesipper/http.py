@@ -15,6 +15,8 @@ class CoffeeHTTPHandler(BaseHTTPRequestHandler):
     
     def do_GET(self):
         print "we got a get for " + self.path
+        if self.path == "/":
+            self.path = "/index.html"
         try:
             f = open(curdir + sep + http_root + self.path)
             self.send_response(200)

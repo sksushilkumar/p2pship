@@ -205,25 +205,28 @@ class ServerHandler:
                     ins.append(s)
                 self.update = False
 
-            for s in inp:
-                if self.c_socks.has_key(s):
-                    data, addr = s.recvfrom(65536)
-                    self.c_socks[s].handle(data, s, addr)
-                elif ff_socks.has_key(s):
-                    data = s.recv(65536)
-                    for h in ff_socks[s]:
-                        s.sendto(data, h)
-                elif self.sip_sockets.has_key(s):
-                    data, addr = s.recvfrom(65536)
-                    h = self.sip_sockets[s]
-                    h.data_got(data, addr)
-                elif self.http_sockets.has_key(s):
-                    h = self.http_sockets[s]
-                    csock, caddr = s.accept()
-                    h(csock, caddr, self)
-                    csock.close()
-                else:
-                    s.recv(65536)
+            try:
+                for s in inp:
+                    if self.c_socks.has_key(s):
+                        data, addr = s.recvfrom(65536)
+                        self.c_socks[s].handle(data, s, addr)
+                    elif ff_socks.has_key(s):
+                        data = s.recv(65536)
+                        for h in ff_socks[s]:
+                            s.sendto(data, h)
+                    elif self.sip_sockets.has_key(s):
+                        data, addr = s.recvfrom(65536)
+                        h = self.sip_sockets[s]
+                        h.data_got(data, addr)
+                    elif self.http_sockets.has_key(s):
+                        h = self.http_sockets[s]
+                        csock, caddr = s.accept()
+                        h(csock, caddr, self)
+                        csock.close()
+                    else:
+                        s.recv(65536)
+            except Exception, ex:
+                print "Error processing socket, " + str(ex)
 
     def run_check(self):
         while True:
