@@ -156,13 +156,9 @@ typedef struct reg_package_s
 
 	char *sip_aor;
 
-#ifdef NEW_CONNS
-	ship_ht_t *transport_addresses;
-#else
 	ship_list_t *ip_addr_list;
 	ship_list_t *rvs_addr_list;
 	ship_list_t *hit_addr_list;
-#endif
 
 	/* validity */	
 	time_t created;
@@ -232,10 +228,6 @@ typedef struct buddy_s
 	int is_friend;
 #endif
 
-#ifdef NEW_CONNS
-	processor_task_t *lookup_wait;
-	ship_list_t *lookup_cb;
-#endif
 }
 buddy_t;
 
@@ -272,10 +264,6 @@ typedef struct ident_s
 	   xml file */
 	int do_not_save;
 	
-#ifdef NEW_CONNS
-	/* the transport handlers */
-	ship_list_t *transport_handlers;
-#endif
 }
 ident_t;
 
@@ -440,17 +428,5 @@ void ident_data_dump_cas_json(ship_list_t *cas, char **msg);
 
 void ident_set_status(char *aor, char *status);
 int ident_has_ident(const char* aor, const char *password);
-
-#ifdef NEW_CONNS
-int ident_reinit_transport_handlers();
-
-typedef void (*ident_transport_param_cb) (const char *data, void *ptr);
-
-char *ident_get_transport_params(ident_t *ident, const char *remote_aor, 
-				 const char *transport);
-int ident_update_transport_params(ident_t *ident, const char *remote_aor,
-				  const char *transport,
-				  ident_transport_param_cb callback, void *ptr);
-#endif
 
 #endif

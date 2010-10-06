@@ -477,7 +477,6 @@ hipapi_create_peer_hit_locator_mapping(char *sip_aor, addr_t *hit)
 {
 	int ret = -1;
 	/* dtn: get the hip transport addresses where the locators are */
-#ifndef NEW_CONNS
 	reg_package_t *reg = 0;
 	void *ptr = 0;
 	addr_t *tmp = 0;
@@ -503,7 +502,6 @@ hipapi_create_peer_hit_locator_mapping(char *sip_aor, addr_t *hit)
  err:
 	if (reg) 
 		ship_unlock(reg);
-#endif
 	return ret;
 }
 
