@@ -158,6 +158,8 @@ trustman_fetch_params_cb(char *url, int respcode, char *data, int data_len, void
 {
 	trustparams_t *params = pkg;
 	void **ptr;
+	char *params_copy = NULL, *from_copy = NULL, *to_copy = NULL;
+	int params_len = 0;
 	
 	if (!params_ht)
 		return;
@@ -191,6 +193,13 @@ trustman_fetch_params_cb(char *url, int respcode, char *data, int data_len, void
 		params->expires += 30;
 	}
 	params->requesting = 0;
+
+	if ((params_copy = mallocz(params->params_len + 1))) {
+		memcpy(params_copy, params->params, params->params_len);
+		params_len = params->params_len;
+	}
+	from_copy = strdup(params->from_aor);
+	to_copy = strdup(params->to_aor);
 	
 	/* we should do something with the queued packets.. */
 	while ((ptr = ship_list_pop(params->queued_packets))) {
@@ -199,9 +208,13 @@ trustman_fetch_params_cb(char *url, int respcode, char *data, int data_len, void
 			     void *data) = ptr[0];
 		void *data = ptr[1];
 		free(ptr);
-		func(params->from_aor, params->to_aor, params->params, params->params_len, data);
+		ship_unlock(params->queued_packets);
+		func(from_copy, to_copy, params_copy, params_len, data); // cbret
+		ship_lock(params->queued_packets);
 	}
-	ship_unlock(params->queued_packets);
+	freez(params_copy);
+	freez(from_copy);
+	freez(to_copy);
 }
 
 char *
@@ -279,7 +292,9 @@ trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from
 {
 	int ret = -1;
 	trustparams_t *params = 0;
-
+	char *params_copy = NULL;
+	int params_len = 0;
+	
 	/* do we know *anything* about any trust params to send? */
 
 	params = trustman_get_trustparams(from_aor, to_aor);
@@ -290,8 +305,9 @@ trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from
 		trustman_fetch_params(params);
 		if (!params->current_sent && params->params) {
 			/* we have new trust params to send! */
-			ret = func(from_aor, to_aor, params->params, params->params_len, data);
-			data = NULL;
+			ASSERT_TRUE(params_copy = mallocz(params->params_len + 1), err);
+			memcpy(params_copy, params->params, params->params_len);
+			params_len = params->params_len;
 		} else if (!params->params && params->requesting) {
 			/* ..wait for trust params */
 			void **ptr = mallocz(2*sizeof(void*));
@@ -309,13 +325,15 @@ trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from
 		}
 	}
 		
+ err:
+	if (params)
+		ship_unlock(params->queued_packets);
+
 	/* we don't have any params, and aren't expecting any
 	   either */
 	if (data)
-		ret = func(from_aor, to_aor, NULL, 0, data);
-	
-	if (params)
-		ship_unlock(params->queued_packets);
+		ret = func(from_aor, to_aor, params_copy, params_len, data); // cbret	
+	freez(params_copy);
 	return ret;
 }
 

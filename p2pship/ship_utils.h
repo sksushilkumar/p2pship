@@ -41,9 +41,6 @@
 #include <libxml/xmlwriter.h>
 #include <libxml/xpath.h>
 
-/* the new, module-based connection system */
-//#define NEW_CONNS
-
 /* print debugging */
 #define PRINT_DEBUG 1
 

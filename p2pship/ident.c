@@ -1285,24 +1285,6 @@ ident_reregister_all()
 	return 0;
 }
 
-#ifdef NEW_CONNS
-int
-ident_reinit_transport_handlers()
-{
-	ident_t *ident = 0;
-	void *ptr = 0;
-	
-	ship_lock(identities);
-	while ((ident = (ident_t*)ship_list_next(identities, &ptr))) {
-		ship_lock(ident);
-		conn_init_transports(ident);		
-		ship_unlock(ident);
-	}
-	ship_unlock(identities);
-	return 0;
-}
-#endif
-
 /* this function resets the foreign reg package cache. should be
  * called e.g. when changing networks to update possible peer
  * addresses and not to try connecting to some old non-routable
@@ -1596,106 +1578,6 @@ ident_cb_lookup_registration(char *key, char *buf, char *signer, void *param, in
 		processor_signal_wait(val, status);
 	}
 }
-
-#ifdef NEW_CONNS
-
-/* retrieves the connection parameters for a remote peer, only if
- * present.  returns a copy of the string. ownership transferred. */
-char *
-ident_get_transport_params(ident_t *ident, const char *remote_aor, 
-			   const char *transport)
-{
-	reg_package_t *pkg = 0;
-	char *ret = 0;
-	ship_lock(ident);
-        if ((pkg = ident_find_foreign_reg((char*)remote_aor))) {
-		ret = ship_ht_get_string(pkg->transport_addresses, transport);
-		if (ret)
-			ret = strdup(ret);
-		ship_unlock(pkg);
-	}
-	LOG_HL("transport params for %s are '%s'\n", transport, ret);
-	ship_unlock(ident);
-	return ret;
-}
-
-static void 
-ident_update_transport_done(void *rdata, int code)
-{
-	ident_t *ident;
-	void *d = 0;
-	char *remote_aor = 0;
-	buddy_t *buddy;
-
-	LOG_HL("notifying lookup waiting clients with code %d\n", code);
-	ship_unpack_keep(rdata, &ident, &remote_aor, NULL, NULL, NULL);
-	ship_obj_lockref(ident);
-	
-	ASSERT_TRUE(buddy = ident_buddy_find_or_create(ident, remote_aor), err);
-	while ((d = ship_list_pop(buddy->lookup_cb))) {
-		char *transport;
-		ident_transport_param_cb callback;
-		void *ptr;
-		
-		ship_unpack_keep(d, NULL, NULL, &transport, &callback, &ptr);
-		callback(ident_get_transport_params(ident, remote_aor, transport), ptr);
-		if (rdata != d)
-			ship_pack_free(d);
-	}
-	buddy->lookup_wait = NULL;
- err:
-	ship_obj_unlockref(ident);
-	ship_pack_free(rdata);
-}
-
-static int 
-ident_update_transport_do(void *data, processor_task_t **wait, int wait_for_code)
-{
-	ident_t *ident;
-	char *remote_aor = 0;
-	reg_package_t *pkg = 0;
-	int ret = -1;
-	
-	if ((*wait)) {
-		LOG_HL("lookup done, with code %d\n", wait_for_code);
-		return wait_for_code;
-	}
-	
-	ship_unpack_keep(data, &ident, &remote_aor, NULL, NULL, NULL);
-	ret = ident_lookup_registration(ident, remote_aor, 
-					&pkg, wait);
-	ship_unlock(pkg);
-	return ret;
-}
-
-/* updates async the connection parameters for a remote peer */
-int
-ident_update_transport_params(ident_t *ident, const char *remote_aor,
-			      const char *transport,
-			      ident_transport_param_cb callback, void *ptr)
-{
-	buddy_t *buddy = 0;
-	void *ptr2 = 0;
-	int ret = -1;
-	
-	ASSERT_TRUE(ptr2 = ship_pack("psspp", ident, remote_aor, transport, callback, ptr), err);
-	
-	ship_lock(ident);
-	ASSERT_TRUE(buddy = ident_buddy_find_or_create(ident, (char*)remote_aor), err);
-	if (!buddy->lookup_wait) {
-                ASSERT_TRUE(buddy->lookup_wait = processor_tasks_add(ident_update_transport_do, ptr2,
-								     ident_update_transport_done), err);
-	}
-	ship_list_add(buddy->lookup_cb, ptr2);
-	ptr2 = 0;
-	ret = 0;
- err:
-	ship_unlock(ident);
-	ship_pack_free(ptr2);
-	//callback("no idea yet..", ptr);
-	return ret;
-}
-#endif
 
 int
 ident_lookup_registration(ident_t *ident, char *remote_aor, 

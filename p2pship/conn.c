@@ -59,9 +59,7 @@
 
 #define ship_lock_conn(conn) { ship_lock(conn); ship_restrict_locks(conn, identities); ship_restrict_locks(conn, conn_all_conn); }
 
-#ifndef NEW_CONNS
 static int conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait, int flags);
-#endif
 static int conn_resend_reg_pkg(ident_t *ident);
 static void conn_connection_free(conn_connection_t *conn);
 static int conn_connection_init(conn_connection_t *conn, void *param);
@@ -103,12 +101,10 @@ static int conn_sendto(char *sip_aor, char *from, char *buf, size_t len, int typ
 static void conn_process_data_done(void *rdata, int code);
 static int conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code);
 static int conn_periodic();
-#ifndef NEW_CONNS
 static int conn_has_connection_to(char *sip_aor, ident_t *ident, int flags);
 static int conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_code);
 static void conn_open_connection_to_done(void *data, int code);
 static void conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen);
-#endif
 static void conn_send_done(void *data, int code);
 static int conn_send_do(void *data, processor_task_t **wait, 
 			int wait_for_code);
@@ -117,44 +113,7 @@ static int conn_send_do(void *data, processor_task_t **wait,
 /* timeout which to wait for an ack / nack */
 #define PACKET_ACK_TIMEOUT (1*30)
 
-#ifdef NEW_CONNS
-static ship_ht_t *conn_transports = 0;
-
-typedef struct conn_transport_handler_s  conn_transport_handler_t;
-typedef void (*conn_transport_handler_cb) (int success, conn_packet_t *p, conn_transport_handler_t *conn);
-
-struct conn_transport_handler_s {
-	
-	char *name;
-
-	/* 'static methods' */
-	int (*init) ();
-	void (*close) ();
-
-	conn_transport_handler_t* (*new_instance) (ident_t *ident);
-
-	/* 'instance methods' */
-	int (*connect) (conn_transport_handler_t *self, conn_packet_t *packet, conn_transport_handler_cb callback);
-	int (*is_connected) (conn_transport_handler_t *self, const char *sip_aor);
-	int (*disconnect) (conn_transport_handler_t *self, const char *sip_aor);
-	
-	int (*is_fast) (conn_transport_handler_t *self, const char *sip_aor);
-	int (*is_slow) (conn_transport_handler_t *self, const char *sip_aor);
-	
-	/* returns 0 - ok, -1 - error, 1 - not sure, awaiting.. */
-	int (*send) (conn_transport_handler_t *self, conn_packet_t *packet, conn_transport_handler_cb callback);
-	
-	/* closes a connection. NULL for all. */
-	void (*close_instance) (conn_transport_handler_t *self);
-
-	char* (*get_transport_address) (conn_transport_handler_t *self);
-};
-#endif
-
-
-#ifndef NEW_CONNS
 static int conn_send_service_package_to(conn_packet_t *p);
-#endif
 static char *conn_create_pkgid(const char *from, const char *to);
 static void conn_packet_free(conn_packet_t *obj);
 static int conn_packet_init(conn_packet_t *obj, void *param);
@@ -451,14 +410,6 @@ void
 conn_close()
 {
         LOG_INFO("closing the conn module..\n");
-#ifdef NEW_CONNS
-	if (conn_transports) {
-		conn_transport_handler_t *h = 0;
-		while ((h = ship_ht_pop(conn_transports)))
-			h->close();
-		ship_ht_free(conn_transports);
-	}
-#else
 	ship_list_t *conns = conn_all_conn;
 	conn_all_conn = NULL;
 	
@@ -470,7 +421,6 @@ conn_close()
 	conn_lis_socket_addrs = 0;
 	ship_tokens_free(conn_ifaces, conn_ifaces_count);
 	freez(ka_sa);
-#endif
 
 	trustman_close();
 	ship_obj_ht_free(conn_waiting_packets);
@@ -542,13 +492,6 @@ conn_init(processor_config_t *config)
 	ASSERT_TRUE(conn_waiting_packets = ship_obj_ht_new(), err);
 
 	ASSERT_ZERO(processor_tasks_add_periodic(conn_periodic, 5000), err);
-
-#ifdef NEW_CONNS
-	ASSERT_TRUE(conn_transports = ship_ht_new(), err);
-
-	/* init the various transports */
-	ASSERT_ZERO(trans_tcp_register(), err);
-#endif
 
         LOG_INFO("Started ship listener\n");
         return 0;
@@ -815,7 +758,6 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 
 	ident_reg_xml_to_struct(&reg, payload);
 
-#ifndef NEW_CONNS
 	/* dtn: move this to the hip module.. */
 #ifdef CONFIG_HIP_ENABLED
 	/* verify that the hit in the reg belongs to the end-point for
@@ -852,7 +794,7 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 		ret = -3;
 	}
 #endif
-#endif
+
         if (reg && (tmp_aor = strdup(reg->sip_aor)) && !ident_import_foreign_reg(reg)) {
                 
                 if (!conn->sip_aor) {
@@ -1200,6 +1142,7 @@ conn_packet_free(conn_packet_t *obj)
 		obj->callback(obj->to, obj->from, obj->service, obj->code, obj->return_data, obj->return_data_len, obj->ptr);
 	}
 	freez(obj->to);
+	freez(obj->from);
 	ship_obj_unref(obj->ident);
 	freez(obj->data);
 	freez(obj->pkg_id);
@@ -1388,7 +1331,6 @@ conn_packet_serialize(conn_packet_t *p, char **retv, int *len)
 	return -1;
 }
 
-#ifndef NEW_CONNS
 /* @sync none
  * sends a message to the given aor
 
@@ -1429,8 +1371,6 @@ conn_send_service_package_to(conn_packet_t *p)
  err:
 	return ret;
 }
-
-#endif
 
 
 /* @sync none
@@ -1698,7 +1638,6 @@ conn_periodic()
 	return 0;
 }
 
-#ifndef NEW_CONNS
 /* @sync ok
  * check if we have an established & working connection to the given
  * peer. */
@@ -1725,7 +1664,6 @@ conn_has_connection_to(char *sip_aor, ident_t *ident, int flags)
 	ship_obj_unlockref(conn);
         return ret;
 }
-#endif
 
 /* a func for returning all the peers a given ident has a connection
    to. if NULL, then ALL peers all returned. ownership is given */
@@ -1974,181 +1912,6 @@ conn_send(int flags,
 #endif
 }
 
-#ifdef NEW_CONNS
-
-void
-conn_deinit_transports(ident_t *ident)
-{
-	conn_transport_handler_t *conn = 0;
-	while ((conn = ship_list_pop(ident->transport_handlers)))
-		conn->close_instance(conn);
-}
-
-/* inits & fills the user's transport handlers */
-int
-conn_init_transports(ident_t *ident)
-{
-	conn_transport_handler_t *conn = 0;
-	void *ptr = 0;
-	char **tokens = 0;
-	int toklen = 0, i;
-	ship_ht_t *tmp = 0;
-
-	// todo: make this a setting
-	char *preference = "hip,tcp,chord";
-	
-	if (!conn_transports)
-		return 0;
-
-	ship_lock(conn_transports);
-
-	// remove old ones not valid anymore
-	ASSERT_TRUE(tmp = ship_ht_new(), err);
-	while ((conn = ship_list_next(ident->transport_handlers, &ptr))) {
-		if (!ship_ht_get_string(conn_transports, conn->name))
-			conn->close_instance(conn);
-		else
-			ship_ht_put_string(tmp, conn->name, conn);
-	}
-	
-	// add new ones
-	while ((conn = ship_ht_next(conn_transports, &ptr))) {
-		if (!ship_ht_get_string(tmp, conn->name)) {
-			ASSERT_TRUE(conn = conn->new_instance(ident), err);
-			ship_ht_put_string(tmp, conn->name, conn);
-		}
-	}
-
-	// sort
-	ASSERT_ZERO(ship_tokenize_trim(preference, -1, &tokens, &toklen, ','), err);
-	ship_list_clear(ident->transport_handlers);
-	for (i = 0; i < toklen; i++) {
-		if ((conn = ship_ht_remove_string(tmp, tokens[i])))
-			ship_list_add(ident->transport_handlers, conn);
-	}
-
-	while ((conn = ship_ht_pop(tmp)))
-		ship_list_add(ident->transport_handlers, conn);
- err:
-	ship_unlock(conn_transports);
-	ship_tokens_free(tokens, toklen);
-	ship_ht_free(tmp);
-	return 0;
-}
-
-
-/* registers the handler, initing it for each of the currently
-   registered identities */
-int
-conn_register_transport(conn_transport_handler_t *handler)
-{
-	ASSERT_ZERO(ship_ht_get_string(conn_transports, handler->name), err);
-	ASSERT_ZERO(handler->init(), err);
-	ship_ht_put_string(conn_transports, handler->name, handler);
-	ident_reinit_transport_handlers();
-	return 0;
- err:
-	return -1;
-}
-
-void
-conn_unregister_transport(const char *name)
-{
-	conn_transport_handler_t *h;
-	if ((h = ship_ht_remove_string(conn_transports, name))) {
-		/* go through identities .. refresh those */
-		ident_reinit_transport_handlers();
-		h->close();
-	}
-}
-
-/* note, modules:
-
-- hip
-- tls
-- plain-tcp
-- overlay
-- im (aol, jabber etc?)
-- mail?
-- file-dtn
-
-*/
-
-#endif
-
-
-#ifdef NEW_CONNS
-
-static void conn_send_loop_cb(int success, conn_packet_t *p, conn_transport_handler_t *oconn);
-
-static void
-conn_connect_cb(int success, conn_packet_t *p, conn_transport_handler_t *conn) {
-	if (success == 0) {
-		conn->send(conn, p, conn_send_loop_cb);
-	} else {
-		conn_send_loop_cb(-1, p, conn);
-	}
-}
-
-static void
-conn_send_loop_cb(int success, conn_packet_t *p, conn_transport_handler_t *oconn)
-{
-	void *ptr = 0;
-
-	ship_lock(p);
-	ASSERT_TRUE(p->wait, end);
-	if (oconn && success == 0) {
-		LOG_HL("send over, we got a winner!\n");
-		processor_signal_wait(p->wait, 0);
-		p->wait = 0;
-		ship_list_clear(p->conns);
-		ship_list_clear(p->secondary_conns);
-	} else { 
-		conn_transport_handler_t *conn = 0;
-
-		// either not sent or 'perhaps / pending / not sent'
-		while ((conn = ship_list_next(p->conns, &ptr)))
-			if (conn->is_connected(conn, p->to))
-				break;
-		if (conn) {
-			// let it be there unless we are preferring slow AND this
-			// is the first round.
-			if ((p->flags & CONN_SEND_PREFER_SLOW) &&
-			    p->secondary_conns)
-				ship_list_remove(p->conns, conn);
-
-			ship_obj_ref(p);
-			if (conn->send(conn, p, conn_send_loop_cb) < 0) {
-				ship_obj_unref(p);
-				conn->disconnect(conn, p->to);
-				conn_send_loop_cb(-1, p, NULL);
-			}
-		} else if ((conn = ship_list_pop(p->conns))) {
-			ship_obj_ref(p);
-			if (conn->connect(conn, p, conn_connect_cb) < 0) {
-				ship_obj_unref(p);
-				conn_send_loop_cb(-1, p, NULL);
-			}
-		} else if (p->secondary_conns) {
-			ship_list_free(p->conns);
-			p->conns = p->secondary_conns;
-			p->secondary_conns = 0;
-			conn_send_loop_cb(-1, p, NULL);
-		} else {
-			/* game over? */
-			LOG_HL("send over, no luck!\n");
-			processor_signal_wait(p->wait, -1);
-			p->wait = 0;
-		}
-	}
- end:
-	ship_unlock(p);
-	if (oconn)
-		ship_obj_unref(p);
-}
-
-#endif
-
 static void 
 conn_send_done(void *data, int code)
 {
@@ -2164,16 +1927,6 @@ conn_send_do(void *data, processor_task_t **wait,
 {
         int ret = -2;
 	conn_packet_t *p = (conn_packet_t *)data;
-#ifdef NEW_CONNS
-	conn_transport_handler_t *conn = 0;
-	void *ptr = 0;
-
-	/* done with the loops? */
-	if ((*wait)) { // && ((*wait) != p->reg_wait)) {
-		LOG_HL("got wait with code %d\n", wait_for_code);
-		return wait_for_code;
-	}
-#endif
 
 	if (!p->ident) {
 		ship_wait("Waiting to get the default ident to use with send!\n");
@@ -2186,58 +1939,6 @@ conn_send_do(void *data, processor_task_t **wait,
 		ship_complete();
 	}
 
-#ifdef NEW_CONNS
-	/* order: first check whether we have connections matching
-	   that actually are connected!  if not, check that we have a
-	   valid registration for the user. then start the loop! */
-
-	/* no, new order: try to get a valid reg packet, update if necessary. */
-	/* skip this. do it the right way(r): start a lookup for reg packets when a transport module 
-	   asks for an address not currently known .. */
-	/*
-	reg_package_t *pkg = 0;
-	if ((ret = ident_lookup_registration(ident, p->to, &pkg, &(p->reg_wait)))) {
-		LOG_HL("pkg lookup with code %d\n", ret);
-
-		if (!(*wait) || wait_for_code == 0) {
-		
-		*wait = p->reg_wait;
-		return ret;
-	} else 
-		ship_unlock(pkg);
-	*/
-	
-	ship_list_free(p->conns);
-	ASSERT_TRUE(p->conns = ship_list_new(), err);
-	ship_list_free(p->secondary_conns);
-	ASSERT_TRUE(p->secondary_conns = ship_list_new(), err);
-
-	p->wait = processor_create_wait();
-	*wait = p->wait;
-	if (p->flags & CONN_SEND_REQUIRE_FAST) {
-		while ((conn = ship_list_next(p->ident->transport_handlers, &ptr))) {
-			if (conn->is_fast(conn, p->to))
-				ship_list_add(p->conns, conn);
-		}
-	} else if (p->flags & CONN_SEND_PREFER_SLOW) {
-		// put all connected conns plus slow conns in conns
-		// put fast in secondary_conns
-		while ((conn = ship_list_next(p->ident->transport_handlers, &ptr))) {
-			if ((conn->is_fast(conn, p->to) && conn->is_connected(conn, p->to)) ||
-			    conn->is_slow(conn, p->to))
-				ship_list_add(p->conns, conn);
-			if (conn->is_fast(conn, p->to))
-				ship_list_add(p->secondary_conns, conn);
-		}
-	} else {
-		// just all conns, but in preferred order. fast first!
-		while ((conn = ship_list_next(p->ident->transport_handlers, &ptr)))
-			ship_list_add(p->conns, conn);
-	}
-	LOG_HL("Starting send thing!\n");
-	conn_send_loop_cb(-1, p, NULL);
-	ret = 1;
-#else
 	ret = 0;
 	if (!conn_has_connection_to(p->to, p->ident, p->flags)) {
 		/* try only once! */
@@ -2254,18 +1955,11 @@ conn_send_do(void *data, processor_task_t **wait,
 			ret = -2;
 		}
 	}
-#endif
  err:
-#ifdef NEW_CONNS
-        ship_unlock(p->ident);
-#else
         ship_obj_unlockref(p->ident);
 	p->ident = NULL;
-#endif
         return ret;
 }
-
-#ifndef NEW_CONNS
 
 /* @sync ok
    starts the connecting-process to the given peer.  returns error if
@@ -2332,15 +2026,11 @@ conn_find_first_with_port(ship_list_t *list)
 	}
 	return ret;
 }
-#endif
 
 /* gets the connection address */
 int
 conn_can_connect_to(reg_package_t *pkg)
 {
-#ifdef NEW_CONNS
-	return 1;
-#else
 #ifdef CONFIG_HIP_ENABLED
 	if (conn_find_first_with_port(pkg->hit_addr_list) ||
 	    (conn_allow_nonhip && conn_find_first_with_port(pkg->ip_addr_list)))
@@ -2350,11 +2040,9 @@ conn_can_connect_to(reg_package_t *pkg)
 		return 1;
 #endif
 	return 0;
-#endif
 }
 
 
-#ifndef NEW_CONNS
 /* @sync ok
    initiates a hip connection to a peer. */
 static int
@@ -2550,7 +2238,6 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
         
         LOG_INFO("socket %d conn end with %d\n", s, status);
 }
-#endif
 
 /**********************************
  ** some misc. utility functions **
@@ -2562,16 +2249,6 @@ int
 conn_fill_reg_package(ident_t *ident, reg_package_t *pkg)
 {
 	void *ptr = 0;
-#ifdef NEW_CONNS
-	conn_transport_handler_t *handler = 0;
-	ship_ht_empty_free(pkg->transport_addresses);
-	while ((handler = ship_list_next(ident->transport_handlers, &ptr))) {
-		char *addr = 0;
-		if (handler->get_transport_address)
-			addr = handler->get_transport_address(handler);
-		ship_ht_put_string(pkg->transport_addresses, handler->name, addr);
-	}
-#else
 	addr_t *addr = 0;
 #ifdef CONFIG_HIP_ENABLED
 	void *last = 0;
@@ -2613,7 +2290,6 @@ conn_fill_reg_package(ident_t *ident, reg_package_t *pkg)
 	hipapi_getrvs(pkg->rvs_addr_list);
 #endif
 	ship_unlock(conn_lis_sockets);
-#endif
 	return 0;
 }
 
@@ -2831,6 +2507,22 @@ conn_get_publicip(addr_t *addr)
 	return ret;
 }
 
+/* checks whether the given addr (source socket) is able to send to
+   the other */
+int
+conn_can_send_to(addr_t *from, addr_t *to)
+{
+	int ret = 0;
+	if (!to || !from)
+		return 0;
+	if (from->family == to->family &&
+	    from->type == to->type)
+		ret = 1;
+
+	LOG_VDEBUG("Can %s/%d/%d can send to %s/%d/%d? %s\n", from->addr, from->family, from->type,
+		   to->addr, to->family, to->type, (ret? "yes":"no"));
+	return ret;
+}
 
 /* the conn register */
 static struct processor_module_s processor_module = 
@@ -2851,354 +2543,3 @@ conn_register() {
 	processor_register(&processor_module);
 }
 
-
-#ifdef NEW_CONNS
-/* plain-tcp transport */
-static int trans_tcp_init();
-static void trans_tcp_close();
-static conn_transport_handler_t* trans_tcp_new_instance(ident_t *ident);
-static int trans_tcp_connect(conn_transport_handler_t *self, conn_packet_t *packet, conn_transport_handler_cb callback);
-static int trans_tcp_is_connected(conn_transport_handler_t *self, const char *sip_aor);
-static int trans_tcp_disconnect(conn_transport_handler_t *self, const char *sip_aor);
-static int trans_tcp_is_fast(conn_transport_handler_t *self, const char *sip_aor);
-static int trans_tcp_is_slow(conn_transport_handler_t *self, const char *sip_aor);
-static int trans_tcp_send(conn_transport_handler_t *self, conn_packet_t *packet, conn_transport_handler_cb callback);
-static void trans_tcp_close_instance(conn_transport_handler_t *self);
-static char* trans_tcp_get_transport_address(conn_transport_handler_t *self);
-
-struct trans_tcp_transport_s {
-	conn_transport_handler_t handler;
-	ship_ht_t *connections;
-};
-
-static struct trans_tcp_transport_s trans_tcp_transport =
-	{
-		.handler = {
-			.name = "tcp",
-			
-			.init = trans_tcp_init,
-			.close = trans_tcp_close,
-			.new_instance = trans_tcp_new_instance,
-			
-			.connect = trans_tcp_connect,
-			.is_connected = trans_tcp_is_connected,
-			.disconnect = trans_tcp_disconnect,
-			
-			.is_fast = trans_tcp_is_fast,
-			.is_slow = trans_tcp_is_slow,
-			
-			.send = trans_tcp_send,
-			
-			.close_instance = trans_tcp_close_instance,
-
-			.get_transport_address = trans_tcp_get_transport_address,
-		},
-
-		//.data = "hello",
-	};
-		
-	
-
-
-static int 
-trans_tcp_init()
-{
-	LOG_HL("initing tcp transport\n");
-	return 0;
-}
-
-static void 
-trans_tcp_close()
-{
-	LOG_HL("closing tcp transport\n");
-}
-
-static conn_transport_handler_t*
-trans_tcp_new_instance(ident_t *ident)
-{
-	struct trans_tcp_transport_s *ret = 0;
-	
-	LOG_HL("new instance for %s\n", ident->sip_aor);
-	ASSERT_TRUE(ret = mallocz(sizeof(*ret)), err);
-	memcpy(ret, &trans_tcp_transport, sizeof(*ret));
-	ASSERT_TRUE(ret->connections = ship_ht_new(), err);
-	return (conn_transport_handler_t*)ret;
- err:
-	trans_tcp_close_instance((conn_transport_handler_t*)ret);
-	return NULL;
-}
-
-/* callback from the identity module when a reg packet has been received */
-static void
-_trans_tcp_connect_cb(const char *addr, void *ptr)
-{
-	conn_transport_handler_t *self = 0;
-	conn_packet_t *packet = 0;
-	conn_transport_handler_cb callback = 0;
-	LOG_HL("callback with %s\n", addr);
-
-	ship_unpack_keep(ptr, &self, &packet, &callback);
-
-	/* use the address (if any) somehow */
-	if (addr) {
-		
-		
-		callback(-1, packet, self);
-
-
-	} else
-		callback(-1, packet, self);
-	ship_pack_free(ptr);
-}
-
-static int 
-trans_tcp_connect(conn_transport_handler_t *self, conn_packet_t *packet, conn_transport_handler_cb callback)
-{
-	struct trans_tcp_transport_s *tcp = (struct trans_tcp_transport_s*)self;
-	conn_connection_t *conn;
-	int ret = -1;
-	void *ptr = 0;
-	char *addr = 0;
-	
-	LOG_HL("connect to %s\n", packet->to);
-
-	ship_lock(tcp->connections);
-	conn = ship_ht_get_string(tcp->connections, packet->to);
-	if (!conn) {
-		/* create a new connection for this .. */
-		
-		//conn = new();
-	}
-	
-	if (conn->state == STATE_CONNECTED) {
-		callback(0, packet, self);
-		ret = 0;
-	} else {
-		//ship_list_add(conn->connection_waiters, [ packet, callback ]);
-		
-		/* if not in the process of connecting, do it now! */
-
-	}
-
-	ret = 1;
-	ship_unlock(tcp->connections);
-
-
-
-	ASSERT_TRUE(ptr = ship_pack("ppp", self, packet, callback), err);
-	if ((addr = ident_get_transport_params(packet->ident, packet->to, self->name))) {
-		_trans_tcp_connect_cb(addr, ptr);
-		freez(addr);
-	} else {
-		/* get the transport addresses for this one */
-		ASSERT_ZERO(ident_update_transport_params(packet->ident, packet->to, self->name,
-							  _trans_tcp_connect_cb, ptr), err);
-	}
-	ptr = 0;
-	ret = 0;
- err:
-	ship_pack_free(ptr);
-	return ret;
-}
-
-static int 
-trans_tcp_is_connected(conn_transport_handler_t *self, const char *sip_aor)
-{
-	struct trans_tcp_transport_s *tcp = (struct trans_tcp_transport_s*)self;
-	int ret = 0;
-	conn_connection_t *conn;
-	
-	LOG_HL("is connected to %s\n", sip_aor);
-	ship_lock(tcp->connections);
-	conn = ship_ht_get_string(tcp->connections, sip_aor);
-	if (conn && conn->state == STATE_CONNECTED)
-		ret = 1;
-	ship_unlock(tcp->connections);
-	return ret;
-}
-
-static int 
-trans_tcp_disconnect(conn_transport_handler_t *self, const char *sip_aor)
-{
-	struct trans_tcp_transport_s *tcp = (struct trans_tcp_transport_s*)self;
-	conn_connection_t *conn;
-
-	LOG_HL("disconnect %s\n", sip_aor);
-	ship_lock(tcp->connections);
-	if ((conn = ship_ht_remove_string(tcp->connections, sip_aor))) {
-		conn_connection_free(conn);
-	}
-	ship_unlock(tcp->connections);
-	return 0;
-}
-
-static int 
-trans_tcp_is_fast(conn_transport_handler_t *self, const char *sip_aor)
-{
-	return 1;
-}
-
-static int
-trans_tcp_is_slow(conn_transport_handler_t *self, const char *sip_aor)
-{
-	return 0;
-}
-
-static int
-trans_tcp_send(conn_transport_handler_t *self, conn_packet_t *packet, 
-	       conn_transport_handler_cb callback)
-{
-	LOG_HL("send to %s\n", packet->to);
-	return -1;
-}
-
-static void
-trans_tcp_close_instance(conn_transport_handler_t *self)
-{
-	struct trans_tcp_transport_s *tcp = (struct trans_tcp_transport_s*)self;
-	conn_connection_t *conn;
-
-	LOG_HL("closing instance\n");
-	ship_lock(tcp->connections);
-	while ((conn = ship_ht_pop(tcp->connections))) {
-		conn_connection_free(conn);
-	}
-	ship_ht_free(tcp->connections);
-	freez(self);
-}
-
-static char* 
-trans_tcp_get_transport_address(conn_transport_handler_t *self)
-{
-	return strdup("123.4.2.3:2334");
-}
-
-/*
- * dummy (testing) transport
- */
-static int trans_dummy_init();
-static void trans_dummy_close();
-static conn_transport_handler_t *trans_dummy_new_instance(ident_t *ident);
-static int trans_dummy_connect(conn_transport_handler_t *self, conn_packet_t *packet, conn_transport_handler_cb callback);
-static int trans_dummy_is_connected(conn_transport_handler_t *self, const char *sip_aor);
-static int trans_dummy_disconnect(conn_transport_handler_t *self, const char *sip_aor);
-static int trans_dummy_is_fast(conn_transport_handler_t *self, const char *sip_aor);
-static int trans_dummy_is_slow(conn_transport_handler_t *self, const char *sip_aor);
-static int trans_dummy_send(conn_transport_handler_t *self, conn_packet_t *packet, 
-			    conn_transport_handler_cb callback);
-static void trans_dummy_close_instance(conn_transport_handler_t *self);
-static char* trans_dummy_get_transport_address(conn_transport_handler_t *self);
-
-static conn_transport_handler_t trans_dummy_transport =
-	{
-		.name = "dummy",
-		
-		.init = trans_dummy_init,
-		.close = trans_dummy_close,
-		.new_instance = trans_dummy_new_instance,
-		
-		.connect = trans_dummy_connect,
-		.is_connected = trans_dummy_is_connected,
-		.disconnect = trans_dummy_disconnect,
-		
-		.is_fast = trans_dummy_is_fast,
-		.is_slow = trans_dummy_is_slow,
-		
-		.send = trans_dummy_send,
-		
-		.close_instance = trans_dummy_close_instance,
-		
-		.get_transport_address = trans_dummy_get_transport_address,
-	};
-
-static int
-trans_dummy_init()
-{
-	LOG_HL("initing dummy transport\n");
-	return 0;
-}
-
-static void 
-trans_dummy_close()
-{
-	LOG_HL("closing dummy transport\n");
-}
-
-static conn_transport_handler_t*
-trans_dummy_new_instance(ident_t *ident)
-{
-	conn_transport_handler_t *ret = 0;
-	LOG_HL("new instance for %s\n", ident->sip_aor);
-	ASSERT_TRUE(ret = mallocz(sizeof(*ret)), err);
-	memcpy(ret, &trans_dummy_transport, sizeof(*ret));
-	return (conn_transport_handler_t*)ret;
- err:
-	trans_dummy_close_instance((conn_transport_handler_t*)ret);
-	return NULL;
-}
-
-static int 
-trans_dummy_connect(conn_transport_handler_t *self, conn_packet_t *packet, conn_transport_handler_cb callback)
-{
-	LOG_HL("connect to %s\n", packet->to);
-	return -1;
-}
-
-static int 
-trans_dummy_is_connected(conn_transport_handler_t *self, const char *sip_aor)
-{
-	LOG_HL("is connected to %s\n", sip_aor);
-	return 0;
-}
-
-static int 
-trans_dummy_disconnect(conn_transport_handler_t *self, const char *sip_aor)
-{
-	LOG_HL("disconnect %s\n", sip_aor);
-	return -1;
-}
-
-static int 
-trans_dummy_is_fast(conn_transport_handler_t *self, const char *sip_aor)
-{
-	return 1;
-}
-
-static int
-trans_dummy_is_slow(conn_transport_handler_t *self, const char *sip_aor)
-{
-	return 0;
-}
-
-static int
-trans_dummy_send(conn_transport_handler_t *self, conn_packet_t *packet, 
-	       conn_transport_handler_cb callback)
-{
-	LOG_HL("send to %s\n", packet->to);
-	return -1;
-}
-
-static void
-trans_dummy_close_instance(conn_transport_handler_t *self)
-{
-	LOG_HL("closeing instance\n");
-	freez(self);
-}
-
-static char* 
-trans_dummy_get_transport_address(conn_transport_handler_t *self)
-{
-	return strdup("dummy-stuff");
-}	
-
-/* registers the transports */
-int
-trans_tcp_register()
-{
-	conn_register_transport(&trans_dummy_transport);
-	return conn_register_transport(&trans_tcp_transport.handler);
-}
-
-
-
-#endif
