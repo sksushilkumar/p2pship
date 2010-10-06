@@ -200,6 +200,7 @@ int conn_validate_ifaces(char **ifaces, int c);
 int conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, const int af);
 int conn_getips(ship_list_t *ips, char **ifaces, int c, int port);
 int conn_get_lo(addr_t *addr);
+int conn_can_send_to(addr_t *from, addr_t *to);
 
 /* weird little one that should be obsoleted */
 int conn_send_mp_to(char *sip_aor, ident_t *ident,
@@ -239,22 +240,9 @@ typedef struct conn_packet_s {
 	char *return_data;
 	int return_data_len;
 
-#ifdef NEW_CONNS
-	processor_task_t *wait;
-	ship_list_t *conns;
-	ship_list_t *secondary_conns;
-#endif
 } conn_packet_t;
 
-#ifdef NEW_CONNS
 SHIP_INCLUDE_TYPE(conn_packet);
-
-int conn_init_transports(ident_t *ident);
-void conn_deinit_transports(ident_t *ident);
-
-int trans_tcp_register();
-
-#endif
 int conn_packet_serialize(conn_packet_t *p, char **retv, int *len);
 
 #endif
