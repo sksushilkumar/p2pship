@@ -27,7 +27,7 @@ The application assumes that the table it installed with the p2pship system with
 
 The application has been created in Python. It uses the gstreamer framework for capturing the video feed. From the maemo garage-extras repository, the following packages should be installed on the tablet:
 {{{
-apt-get install python2.5-sdk gstreamer-utils
+apt-get install python2.5-sdk gstreamer-tools
 }}}
 
 == Setup ==
