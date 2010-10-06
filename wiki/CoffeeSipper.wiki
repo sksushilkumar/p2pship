@@ -32,7 +32,7 @@ apt-get install python2.5-sdk gstreamer-tools
 
 == Setup ==
 
-Copy the source code to the tablet. The source can be found in the repository in the `testbed_apps/coffeesipper/` directory.
+Copy all the source files to the tablet. The source can be found in the repository in the `testbed_apps/coffeesipper/` directory.  This is relative to the _root_ of the repository, i.e. `svn checkout http://p2pship.googlecode.com/svn/`.
 
 Add also the `http/` directory. This is the root folder for the P2P HTTP served content, and is where the `snapshot.jpg` snapshots are placed.
 
