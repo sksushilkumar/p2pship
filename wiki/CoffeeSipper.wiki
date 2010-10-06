@@ -27,8 +27,22 @@ The application assumes that the table it installed with the p2pship system with
 
 The application has been created in Python. It uses the gstreamer framework for capturing the video feed. From the maemo garage-extras repository, the following packages should be installed on the tablet:
 {{{
-apt-get install python2.5-sdk gstreamer-tools
+apt-get install python2.5-sdk gstreamer-tools gstreamer0.10-plugins-extra
 }}}
+
+Depending on the tablet OS version, these can be got from different locations. For chinook (4.0), the following repository install file will do:
+{{{
+[catalogues]
+catalogues = Maemo Chinook
+
+[Maemo Chinook]
+name = Maemo Chinook
+uri = http://repository.maemo.org/
+dist = chinook
+components = free non-free
+}}}
+
+(rename it to something.install, beam it to the tablet and double click!)
 
 == Setup ==
 
