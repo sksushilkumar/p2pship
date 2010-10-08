@@ -41,7 +41,6 @@ static ship_ht_t *conns_ht = 0;
 static const char *post_header = "POST %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: HIIT P2PSIP\r\nAccept: *\r\nContent-Length: %d\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
 static const char *get_header = "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: HIIT P2PSIP\r\nAccept: *\r\nConnection: close\r\n\r\n";
 
-//char *strndup(const char *s, size_t n);
 
 /* some packet ordering funcs. these are a bit quick&dirty, yes.*/
 
@@ -167,12 +166,13 @@ netio_http_conn_lock(netio_http_conn_t *conn)
 void
 netio_http_conn_close(netio_http_conn_t *conn)
 {
-	if (conn && conns && (conn->socket != -1)) {
+	if (conn && conns && conn->added) {
 		ship_unlock(conn);
 		ship_lock(conns);
 		conn = netio_http_conn_lock(conn);
-		
+	
 		if (conn) {
+			conn->added = 0;
 			ship_ht_remove_string(conns_ht, conn->tracking_id);
 			netio_http_packet_orderer_close(conn->tracking_id);
 			conn = _ship_list_remove(0, conns, conn);
@@ -217,6 +217,7 @@ netio_http_track_conn(netio_http_conn_t *ret, int socket)
 	if (socket != -1) {
 		ship_lock(conns); {
 			ship_list_add(conns, ret);
+			ret->added = 1;
 			netio_http_conn_lock(ret);
 			
 			/* create some sort of unique id for this connection */
@@ -225,7 +226,8 @@ netio_http_track_conn(netio_http_conn_t *ret, int socket)
 			} while (ship_ht_get_string(conns_ht, ret->tracking_id));
 			
 			ship_ht_put_string(conns_ht, ret->tracking_id, ret);
-		} ship_unlock(conns);
+		}
+		ship_unlock(conns);
 	}
 }
 
@@ -1085,10 +1087,19 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 		// cut off stuff meant for the next request!
 		netio_http_cut_overrun(conn, &data, &datalen);
 		ret = __netio_http_process_req(conn);
+		if (datalen == 0)
+			break;
 
 		/* forts; todo: this is pretty dangerous if some
 		   handler decides to close the http conn before
 		   returning */
+
+		/* verify that we still have the conn. todo: ship_obj'ify this!! */
+		/* .. this will lead to deadlocks!
+		if (!netio_http_conn_lock(conn))
+			return;
+		ship_unlock(conn);
+		*/
 
 		/* we strip the data from the conn now as there might
 		   come another request on the same connection, which
@@ -1096,16 +1107,22 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 
 		// don't do this; just start a new conn! and transfer the ownership of socket!
 		// netio_conn_reset(conn);
+
+		ship_unlock(conn);
+
 		ASSERT_TRUE(new_conn = netio_http_conn_new(s), err);
 		memcpy(&(new_conn->addr), &(conn->addr), sizeof(addr_t));
 		new_conn->ss = conn->ss;
 		conn->owns_socket = 0;
+		ship_unlock(new_conn);
 
+		netio_http_conn_lock(conn);
 		if (ret < 1) {
 			netio_http_conn_close(conn);
 		} else {
 			ship_unlock(conn);
 		}
+		netio_http_conn_lock(new_conn);
 		conn = new_conn;
 
 		/* and here .. do a parse thing again! */

@@ -340,10 +340,9 @@ sipp_mp_notify_fragmentation_support(sipp_media_proxy_t *mp)
 	int ret = -1;
 	if ((buf = sipp_mp_create_mp_info_str(mp->sip_aor, &mp->local_addr))) {
 		LOG_DEBUG("sending mp support on %s\n", buf);
-		ret = conn_queue_to_peer(mp->remote_aor, mp->sip_aor,
-					 SERVICE_TYPE_MP_INFO,
-					 buf, strlen(buf)+1,
-					 NULL, NULL);
+		ret = conn_send_simple(mp->remote_aor, mp->sip_aor,
+				       SERVICE_TYPE_MP_INFO,
+				       buf, strlen(buf)+1);
 		freez(buf);
 	}
 	

@@ -763,7 +763,7 @@ sipp_process_sdp_message_body(osip_message_t* sip,
 					if (sipp_tunnel_proxy
 #ifdef CONFIG_HIP_ENABLED
 					    || (hipapi_addr_is_hit(&addrt)
-						&& conn_create_peer_hit_locator_mapping(remote_aor, &addrt))
+						&& hipapi_create_peer_hit_locator_mapping(remote_aor, &addrt))
 					    || (!processor_config_bool(processor_get_config(), P2PSHIP_CONF_ALLOW_NONHIP)
 						&& !hipapi_addr_is_hit(&addrt))
 #endif					    
@@ -937,7 +937,9 @@ sipp_cb_packetfilter_remote2(ident_t* ident, char *remote_aor, osip_event_t *evt
 	int respcode = -1;
 
 	/* record the message / call */
+	ship_unlock(ident);
 	sipp_call_log_record(ident->sip_aor, remote_aor, evt, verdict, 1);
+	ship_lock(ident);
 
 	switch (verdict) {
 	case AC_VERDICT_NONE:
@@ -1306,7 +1308,8 @@ sipp_init(processor_config_t *config)
 void
 sipp_close()
 {
-        LOG_INFO("closing the legacy sip proxy\n");
+        ship_list_t *liss = NULL;
+	LOG_INFO("closing the legacy sip proxy\n");
 	
 	sipp_mp_close_sys();
 	ac_close();
@@ -1319,9 +1322,11 @@ sipp_close()
 	ship_ht_free(prox_resps);
 	prox_resps = NULL;
 	
-	ship_list_empty_with(sipp_all_listeners, sipp_listener_free);
-	ship_list_free(sipp_all_listeners);
-        sipp_all_listeners = NULL;
+	/* spurious netio packets might interrupt this */
+	liss = sipp_all_listeners;
+	sipp_all_listeners = NULL;
+	ship_list_empty_with(liss, sipp_listener_free);
+	ship_list_free(liss);
 
 	ship_list_empty_with(call_log, sipp_call_log_free);
 	ship_list_free(call_log);
@@ -1355,8 +1360,7 @@ sipp_url_to_short_str(osip_uri_t *url)
 /* called when an event has been processed by the processor */
 static void
 sipp_queued_sent(char *to, char *from, service_type_t service,
-		 char *data, int data_len, void *ptr,
-		 int code)
+		 int code, char *return_data, int data_len, void *ptr)
 {
 	sipp_request_t* req = ptr;
 	ship_lock(req);
@@ -1601,9 +1605,9 @@ sipp_handle_message_do(sipp_request_t *req)
                         char *buf = 0;                
                         size_t len;
                         if (osip_message_to_str(sip, &buf, &len) ||
-			    conn_queue_to_peer(toident, ident->sip_aor, SERVICE_TYPE_SIP, 
-					       buf, len, req, 
-					       sipp_queued_sent)) {
+			    conn_send_slow(toident, ident->sip_aor, SERVICE_TYPE_SIP, 
+					   buf, len, req, 
+					   sipp_queued_sent)) {
 				ret = 500; //-2;
 			} else {
 				/* add a ref for the callback */
@@ -1799,7 +1803,7 @@ sipp_cb_tcpconn(int s, struct sockaddr *sa, socklen_t addrlen)
 		netio_close_socket(s);
 	} else if (lis->queued_data) {
 		/* we don't need to specify the addr */
-		sipp_send_buf(lis->queued_data, lis->queued_data_len, lis, NULL/*&(lis->addr)*/);
+		sipp_send_buf(lis->queued_data, lis->queued_data_len, lis, NULL);
 		freez(lis->queued_data);
 	}
 }
@@ -1818,7 +1822,8 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 		return -1;
 
 	/* priority 1: use the same listener to send as we got it on */
-	if (lis && sipp_get_listener_by_socket(lis->socket)) {
+	if (lis && sipp_get_listener_by_socket(lis->socket) && 
+	    (conn_can_send_to(&(lis->addr), to) || lis->addr.type == IPPROTO_TCP)) {
 		s = lis->socket;
 	} else if (!to) {
 		LOG_ERROR("trying to send to a null-address something!\n");
@@ -1830,6 +1835,8 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 
 		/* if tcp: create new lis & connect to the other host. */
 		if (!ident_addr_addr_to_sa(to, &sa, &salen)) {
+			
+			ship_lock(sipp_all_listeners);
 			s = netio_connto(sa, salen, sipp_cb_tcpconn);
 			
 			if ((lis = sipp_listener_new_queued(to, buf, len))) {
@@ -1839,6 +1846,7 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 				netio_close_socket(s);
 				s = -1;
 			}
+			ship_unlock(sipp_all_listeners);
 			
 			freez(sa);
 			if (s != -1)
@@ -1853,7 +1861,7 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 		void *ptr = NULL;
 		ship_lock(sipp_all_listeners); {
 			while ((lis = (sipp_listener_t *)ship_list_next(sipp_all_listeners, &ptr))) {
-				if (lis->addr.type == to->type)
+				if (conn_can_send_to(&(lis->addr), to))
 					break;
 				lis = NULL;
 			}
@@ -1863,8 +1871,7 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 			s = lis->socket;
 	}
 
-	switch (to->type) {
-	case IPPROTO_UDP:
+	if (to && to->type == IPPROTO_UDP) {
 		if (!ident_addr_addr_to_sa(to, &sa, &salen)) {
 			LOG_VDEBUG("Sending %d bytes over UDP %s:%d..\n", len, to->addr, to->port);
 			if (s != -1)
@@ -1874,8 +1881,7 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 			freez(sa);
 			return s;
 		}
-		break;
-	case IPPROTO_TCP:
+	} else {
 		TODO("maybe all those VIAs are screwing up the TCP conn???\n");
 		LOG_VDEBUG("Sending %d bytes over TCP..\n", len);
 		return netio_send(s, buf, len);
@@ -1889,7 +1895,9 @@ static int
 sipp_send_sip_to_ident(osip_message_t *sip, ident_t *ident, addr_t *from)
 {        
 	addr_t *contact_addr = 0;
+#ifdef CONFIG_DISABLE_LO_HIT_ROUTING
 	addr_t addr;
+#endif
 	char *buf = 0;
 	int len, ret;
 
@@ -2050,7 +2058,7 @@ sipp_send_sip_to_ident_do(void *d, processor_task_t **wait, int wait_for_code)
 
 	LOG_DEBUG("sending async message to %s..\n", aor);
 	if ((ident = ident_find_by_aor(aor)) || addr) {
-		sipp_send_sip_to_ident(sip, ident, NULL);
+		sipp_send_sip_to_ident(sip, ident, addr);
 		ship_obj_unlockref(ident);
 	} else {
 		LOG_WARN("should send msg to %s, but could not (no target found!)\n", aor);
@@ -2124,11 +2132,14 @@ sipp_send_remote_response(osip_message_t* sip, int code, char *sip_aor, ident_t 
 	if (sipp_check_and_mark(sip, "resp", code))
 		return 0;
 	
+	/* dtn: try to establish a 'fast' connection after positive
+	   responses to invites? */
+
         if (!sipp_create_sip_response(&resp, code, sip) &&
 	    !osip_message_to_str(resp, &buf, &len) && 
-	    !conn_queue_to_peer(sip_aor, ident->sip_aor, 
-				SERVICE_TYPE_SIP,
-				buf, len, NULL, NULL))
+	    !conn_send_slow(sip_aor, ident->sip_aor, 
+			    SERVICE_TYPE_SIP,
+			    buf, len, NULL, NULL))
 		ret = 0;
 	
         if (resp)

@@ -556,6 +556,9 @@ ship_tokenize(const char *str, int len, char ***tokens, int *toklen, char token)
 	const char *tstr;
 	const char *ltstr;
 
+	// len .. ?
+	if (len < 0) len = strlen(str);
+
 	/* calc number of tokens */
 	nr = 1;
 	for (tstr = str; tstr < (str+len); tstr++)
@@ -1111,6 +1114,17 @@ ship_ht_next(ship_ht_t *ht, void **ptr)
 	if (e)
 		return e->value;
 	else
+		return NULL;
+}
+
+void *
+ship_ht_next_with_key(ship_ht_t *ht, void **ptr, char **key)
+{
+	ship_ht_entry_t *e = ship_list_next(ht, ptr);
+	if (e) {
+		*key = e->key;
+		return e->value;
+	} else
 		return NULL;
 }
 
@@ -2030,6 +2044,149 @@ ship_lenbuf_create_ref(char *data, int len)
 	return ret;
 }
 
+/*
+ * packing
+ */
+
+/* packs a bunch of values into a single pack (void**)
+   format: p - pointer, s - string (copy made), i - int,
+   l - long, c - char, m - memory buffer (followed by size, copy made)
+*/
+
+void **
+ship_pack(char *fmt, ...)
+{
+	va_list ap;
+	void **ret = 0;
+	int p = 1, s, i, elms = strlen((char*)fmt);
+	int vi;
+	long vl;
+	void *vm;
+	
+	ASSERT_TRUE(ret = mallocz(sizeof(void*) * (elms+1)), err);
+	ASSERT_TRUE(ret[0] = strdup(fmt), err);
+
+	va_start(ap, fmt);
+	for (i=0; i < elms; i++) {
+		vm = NULL;
+		switch (fmt[i]) {
+		case 'i':
+			vi = (int)va_arg(ap, int);
+			vm = &vi;
+			s = sizeof(int);
+			break;
+		case 'l':
+			vl = (long)va_arg(ap, long);
+			vm = &vl;
+			s = sizeof(long);
+			break;
+		case 'm':
+			vm = (void*)va_arg(ap, void*);
+			s = (int)va_arg(ap, int);
+			break;
+		case 's':
+			vm = (char*)va_arg(ap, char*);
+			s = strlen((char*)vm)+1;
+			break;
+		case 'p':
+			ret[p] = (void*)va_arg(ap, void*);
+			break;
+		default:
+			PANIC("Invalid pack: %c\n", fmt[i]);
+		}
+		
+		if (vm) {
+			ASSERT_TRUE(ret[p] = malloc(s), err2);
+			memcpy(ret[p], vm, s);
+		}
+		p++;
+	}
+	va_end(ap);
+	return ret;
+ err2:
+	va_end(ap);
+ err:
+	ship_pack_free(ret);
+	return NULL;
+}
+
+/* return the number of values unpacked. ownership transferred, can be
+   called only once per pack. */
+int
+ship_unpack(int keep, int elm, void **list, ...)
+{
+	int i, ret = 0;
+	char *fmt;
+	va_list ap;
+	void *vm;
+	
+	if (!list || !list[0])
+		return ret;
+
+	va_start(ap, list);
+	
+	fmt = list[0];
+	for (i=0; i < strlen(fmt); i++) {
+		if (elm > -1 && i != elm)
+			continue;
+
+		vm = (void*)va_arg(ap, void*);
+		if (!vm)
+			continue;
+
+		switch (fmt[i]) {
+		case 'i':
+			if (list[i+1])
+				memcpy(vm, list[i+1], sizeof(int));
+			break;
+		case 'l':
+			if (list[i+1])
+				memcpy(vm, list[i+1], sizeof(long));
+			break;
+		case 'm':
+		case 's':
+		case 'p':
+			*(void**)vm = (void*)list[i+1];
+			if (!keep)
+				list[i+1] = NULL;
+			break;
+		default:
+			PANIC("Invalid unpack: in '%s' unknown char %c\n", fmt, fmt[i]);
+		}
+
+		if (!keep) {
+			freez(list[i+1]);
+			list[i+1] = NULL;
+		}
+		ret++;
+	}
+	va_end(ap);
+	return ret;
+}
+
+void
+ship_pack_free(void **list)
+{
+	int i;
+	char *fmt;
+	
+	if (!list || !list[0])
+		return;
+	fmt = list[0];
+	for (i=0; i < strlen(fmt); i++) {
+		switch (fmt[i]) {
+		case 'i':
+		case 's':
+		case 'm':
+		case 'l':
+			freez(list[i+1]);
+			break;
+		}
+	}
+	free(fmt);
+	free(list);
+}
+
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 
 #include<limits.h>
@@ -2273,5 +2430,6 @@ void ship_debug_closeref()
 	}
 	ship_ht_free(debug_refs);
 }
+
 
 #endif

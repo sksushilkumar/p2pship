@@ -81,6 +81,9 @@ typedef struct netio_http_conn_s {
 	char tracking_id[32];
 
 	int forward_socket;	
+
+	/* whether has been added to the conns tracking */
+	int added;
 } netio_http_conn_t;
 
 /* struct holding a single server */

@@ -23,6 +23,7 @@
 #include "ident.h"
 #include <time.h>
 #include "p2pship_version.h"
+#include "conn.h"
 
 static void ident_free(ident_t *ident);
 static int ident_init(ident_t *ret, char *sip_aor);
@@ -285,7 +286,7 @@ static void
 ident_free(ident_t *ident)
 {
 	ident_service_t *s;
-	
+
 	/* 		ship_lock_free(&ident->lock); */
 	freez(ident->sip_aor);
 	freez(ident->username);
@@ -308,9 +309,6 @@ ident_free(ident_t *ident)
 	ident->private_key = NULL;
 	if (ident->cert) X509_free(ident->cert);
 	ident->cert = NULL;
-	
-/* 	free(ident); */
-/* } */
 }
 
 /* creates a new identity */
@@ -382,7 +380,6 @@ ident_contact_new()
         return 0;
 }
 
-
 /* Add addr-fields to a reg package */
 static int
 ident_fill_reg_addr_field(xmlNodePtr cur, void *key, ship_list_t *temp_list)
@@ -429,7 +426,7 @@ ident_reg_struct_to_xml(reg_package_t *reg, char **text)
 	if (reg->status) {
 		ASSERT_TRUE(xmlNewTextChild(cur, NULL, (const xmlChar*)"status", (const xmlChar*)reg->status), err);
 	}
-	
+
 	/* the addr lists */
 	ASSERT_ZERO(ident_fill_reg_addr_field(cur, "ip", reg->ip_addr_list), err);
 	ASSERT_ZERO(ident_fill_reg_addr_field(cur, "hit", reg->hit_addr_list), err);
@@ -446,7 +443,6 @@ ident_reg_struct_to_xml(reg_package_t *reg, char **text)
 
 	xmlDocDumpFormatMemory(doc, &xmlbuf, &bufsize, 1);
 	ASSERT_TRUE(xmlbuf, err);
-	
 	ASSERT_TRUE((*text) = (char *)malloc(bufsize+1), err);
 	strcpy(*text, (char *)xmlbuf);
 	ret = 0;
@@ -611,7 +607,7 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	ASSERT_ZERO(ship_xml_get_child_addr_list(cur, "ip", reg->ip_addr_list), err);
 	ASSERT_ZERO(ship_xml_get_child_addr_list(cur, "hit", reg->hit_addr_list), err);
 	ASSERT_ZERO(ship_xml_get_child_addr_list(cur, "rvs", reg->rvs_addr_list), err);
-	
+
 	/* read sip aor from cert, compare & require them to be the same */
 	freez(sign);
 	ASSERT_TRUE(sign = ident_data_x509_get_cn(X509_get_subject_name(reg->cert)), err);
@@ -1206,13 +1202,16 @@ ident_data_x509_check_signature(X509 *cert, X509 *ca)
 void
 ident_data_dump_identities_json(ship_list_t *identities, char **msg)
 {
-	ident_t *ident = 0;
+	ident_t *ident = 0, *def = 0;
 	void *ptr = 0;
 	char *buf = 0;
 	int buflen = 0, datalen = 0;
 	char *tmp = 0;
 	char *s1 = 0, *s2 = 0;
 	
+	ASSERT_TRUE(def = ident_get_default_ident(), err);
+	ship_unlock(def);
+
 	ASSERT_TRUE(buf = append_str("var p2pship_idents = {\n", buf, &buflen, &datalen), err);
 	ship_lock(identities);
 	while ((ident = ship_list_next(identities, &ptr))) {
@@ -1230,7 +1229,7 @@ ident_data_dump_identities_json(ship_list_t *identities, char **msg)
 		//len += strlen(ident->contact_addr.addr);
 		
 		ASSERT_TRUE(tmp = mallocz(len), err);
-		sprintf(tmp, "     \"%s\" : [ \"%s\", \"%d\", \"%s\", \"%s:%d\", \"%s:%d\", \"%s\", \"%s\" ],\n",
+		sprintf(tmp, "     \"%s\" : [ \"%s\", \"%d\", \"%s\", \"%s:%d\", \"%s:%d\", \"%s\", \"%s\", \"%s\" ],\n",
 			ident->sip_aor, 
 			(ident->username? ident->username:""), 0, //ident->reg_time, 
 			(ident_registration_timeleft(ident)? "online" : "offline"),
@@ -1238,18 +1237,21 @@ ident_data_dump_identities_json(ship_list_t *identities, char **msg)
 			0, //ident->contact_addr.port,
 			(reg? reg->addr:""), (reg? reg->port:0), 
 			ident_modif_state_str(ident->modified),
-			(s2? s2:""));
+			(s2? s2:""),
+			(ident == def? "default": ""));
 		
 		ASSERT_TRUE(buf = append_str(tmp, buf, &buflen, &datalen), err);
 		freez(tmp);
 		ship_unlock(ident);
 		ident = 0;
 	}
+
 	ASSERT_TRUE(replace_end(buf, &buflen, &datalen, ",\n", "\n"), err);
 	ASSERT_TRUE(buf = append_str("};\n", buf, &buflen, &datalen), err);
 	*msg = buf;
 	buf = 0;
  err:
+	ship_obj_unref(def);
 	ship_unlock(ident);
 	ship_unlock(identities);
 	freez(buf);

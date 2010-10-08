@@ -532,8 +532,6 @@ netio_connto(struct sockaddr *sa, socklen_t size,
 {
         int ret = -1;
         netio_sock_t *e = NULL;
-	struct sockaddr *bsin = 0;
-	socklen_t bsin_len = 0;
 	addr_t addr;
 	
 	ASSERT_ZERO(ident_addr_sa_to_addr(sa, size, &addr), err);
@@ -545,6 +543,8 @@ netio_connto(struct sockaddr *sa, socklen_t size,
 #ifdef CONFIG_HIP_ENABLED
 #ifdef BIND_HIP_TO_DEFAULT_HIT
 		if (hipapi_addr_is_hit(&addr)) {
+			struct sockaddr *bsin = 0;
+			socklen_t bsin_len = 0;
 			ASSERT_ZERO(hipapi_gethit(&addr), err);
 			ASSERT_ZERO(ident_addr_addr_to_sa(&addr, &bsin, &bsin_len), err);
 			ASSERT_ZERO(bind(ret, bsin, bsin_len), err);
@@ -697,7 +697,6 @@ netio_get_generic_packet_socket(struct sockaddr *sa, int cache)
 {
 	int s = -1;
 	struct sockaddr *bsin = 0;
-	socklen_t bsin_len = 0;
 
 	/* sync this? */
 	switch (sa->sa_family) {
@@ -723,6 +722,7 @@ netio_get_generic_packet_socket(struct sockaddr *sa, int cache)
 #ifdef BIND_HIP_TO_DEFAULT_HIT
 			/* bind only the non-cached sockets to hit */
 			if (!cache) {
+				socklen_t bsin_len = 0;
 				addr_t addr;
 				struct sockaddr_in6 *sin = (struct sockaddr_in6 *)sa;
 				ident_addr_in6_to_addr(&sin->sin6_addr, &addr);
@@ -926,7 +926,8 @@ netio_loop(void *data)
                                 while ((d = ship_list_next(netio_sock_list, &ptr))) {
 					ship_list_add(nl, d);
                                 }
-                        } ship_unlock(netio_sock_list);
+                        }
+			ship_unlock(netio_sock_list);
 
                         while ((e = ship_list_pop(nl))) {
                                 switch (e->type) {
@@ -938,6 +939,7 @@ netio_loop(void *data)
                                                 if (e->read_callback) {
 							/* todo: make the worker threads do this */
 							e->read_callback(e->s, buf, r);
+							ship_check_restricts();
 						}
                                                 retval--;
                                         }
@@ -989,6 +991,7 @@ netio_loop(void *data)
 							if (e->accept_callback) {
 								/* todo: make the worker threads do this! */
 								e->accept_callback(s, sa, addrlen, e->s);
+								ship_check_restricts();
 							}
 							freez(sa);
 						}
@@ -1024,6 +1027,7 @@ netio_loop(void *data)
 								/* todo: for the worker threads! */
 								e->packet_read_callback(e->s, buf, r, sa, addrlen);
 							}
+							ship_check_restricts();
 							retval--;
 							freez(sa);
 						}

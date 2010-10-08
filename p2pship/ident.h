@@ -155,6 +155,7 @@ typedef struct reg_package_s
   	ship_lock_t lock;
 
 	char *sip_aor;
+
 	ship_list_t *ip_addr_list;
 	ship_list_t *rvs_addr_list;
 	ship_list_t *hit_addr_list;
@@ -226,6 +227,7 @@ typedef struct buddy_s
 	   contact) or some random person that has called us */
 	int is_friend;
 #endif
+
 }
 buddy_t;
 
@@ -261,6 +263,7 @@ typedef struct ident_s
 	/* whether this is a on-the-fly ident, not to be saved in the
 	   xml file */
 	int do_not_save;
+	
 }
 ident_t;
 
@@ -327,11 +330,11 @@ int ident_service_register(service_t *service);
 
 /* returns own reg package for AOR */
 char * ident_get_cached_reg_str(char *sip_aor);
-ident_t *_ident_find_by_aor(char *aor);
+ident_t *_ident_find_by_aor(const char *aor);
 ident_t * ident_get_default_ident();
 
 #ifdef LOCK_DEBUG
-ident_t *__ident_find_by_aor(char *aor, const char *file, const char *func, const int line);
+ident_t *__ident_find_by_aor(const char *aor, const char *file, const char *func, const int line);
 #define ident_find_by_aor(aor) __ident_find_by_aor(aor, __FILE__, __FUNCTION__, __LINE__)
 #else
 #define ident_find_by_aor(aor) _ident_find_by_aor(aor)

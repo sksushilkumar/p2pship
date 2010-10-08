@@ -65,4 +65,6 @@ void ui_print_import_result(const char *template, ...);
 
 void ui_print_error(const char *template, ...);
 
+void ui_maemo_register();
+
 #endif

@@ -21,6 +21,7 @@
 
 
 
+void dbus_register();
 
 
 
