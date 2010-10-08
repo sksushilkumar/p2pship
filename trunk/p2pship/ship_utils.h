@@ -417,6 +417,14 @@ typedef ship_list_t ship_obj_list_t;
 #define ship_obj_list_free(list) { ship_obj_t *_obj; while (list && (_obj = ship_list_pop(list))) { ship_obj_unref(_obj); } ship_list_free(list); }
 #define ship_obj_list_clear(list) { ship_obj_t *_obj; while ((_obj = ship_list_pop(list))) { ship_obj_unref(_obj); } }
 
+typedef ship_list_t ship_obj_ht_t;
+
+#define ship_obj_ht_new() ship_ht_new()
+#define ship_obj_ht_put_string(list, key, obj) { ship_obj_ref(obj); ship_ht_put_string(list, key, obj); }
+#define ship_obj_ht_remove_string(list, obj) { void *__o = ship_ht_remove_string(list, obj); ship_obj_unref(__o); }
+#define ship_obj_ht_free(list) { ship_obj_t *_obj; while (list && (_obj = ship_ht_pop(list))) { ship_obj_unref(_obj); } ship_ht_free(list); }
+#define ship_obj_ht_clear(list) { ship_obj_t *_obj; while ((_obj = ship_ht_pop(list))) { ship_obj_unref(_obj); } }
+
 #if 0
 /*
  * Example of use 
@@ -613,6 +621,7 @@ ship_ht_t * __NON_INSTRUMENT_FUNCTION__ ship_ht_new();
 void __NON_INSTRUMENT_FUNCTION__ ship_ht_empty_free_with(ship_ht_t *ht, void (*func) (void *));
 void __NON_INSTRUMENT_FUNCTION__ ship_ht_free(ship_ht_t *ht);
 void * __NON_INSTRUMENT_FUNCTION__ ship_ht_next(ship_ht_t *ht, void **ptr);
+void * __NON_INSTRUMENT_FUNCTION__ ship_ht_next_with_key(ship_ht_t *ht, void **ptr, char **key);
 void * __NON_INSTRUMENT_FUNCTION__ ship_ht_first(ship_ht_t *ht);
 void * __NON_INSTRUMENT_FUNCTION__ ship_ht_put_int(ship_ht_t *ht, const int key, void *val);
 void * __NON_INSTRUMENT_FUNCTION__ ship_ht_put_string(ship_ht_t *ht, const char *key, void *val);
@@ -665,6 +674,8 @@ char *replace_end(char *str, int *buflen, int *datalen, char *end, char *newend)
 
 #define zstrcat(target, source) if (source && target) { strcat(target, source); }
 #define zstrlen(str) (str? strlen(str):0)
+
+#define zdefault(str, def) (str? str:def)
 
 /**
  * misc. data parsing functions
@@ -779,5 +790,15 @@ int ship_bloom_dump_size(ship_bloom_t *bloom);
 void ship_bloom_dump(ship_bloom_t *bloom, char *buf);
 ship_bloom_t *ship_bloom_load(char *buf, int buflen);
 #endif
+
+/* packing. should replace lenbufs etc atsome point .. */
+void ship_pack_free(void **list);
+void **ship_pack(char *fmt, ...);
+
+int ship_unpack(int keep, int elm, void **list, ...);
+#define ship_unpack_keep(list, args...) ship_unpack(1, -1, list, ##args)
+#define ship_unpack_keep_one(element, list, args...) ship_unpack(1, element, list, ##args)
+#define ship_unpack_transfer(list, args...) ship_unpack(0, -1, list, ##args)
+#define ship_unpack_transfer_one(element, list, args...) ship_unpack(0, element, list, ##args)
 
 #endif

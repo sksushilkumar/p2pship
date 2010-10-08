@@ -138,6 +138,8 @@ static char* DEFAULT_FILES[] =
 #ifdef CONFIG_SIP_ENABLED
 #define DEFAULT_SIPP_ROUTING_FILE ".p2pship/sip-routing.xml"
 #endif
+#define DEFAULT_DATA_DIR ".p2pship/data"
+
 #define DEFAULT_CONTACTS_FILE ".p2pship/contacts.log"
 
 /* the white / blacklists */
@@ -462,6 +464,9 @@ processor_config_load_defaults(processor_config_t *config)
 		ASSERT_ZERO(processor_config_set_string(config, key, value), err);
 		arr += 3;
 	}
+
+	ASSERT_ZERO(processor_config_check_ensure_homedir_file(DEFAULT_DATA_DIR, P2PSHIP_CONF_DATA_DIR,
+							       NULL, config), err);
 
 #ifdef CONFIG_PYTHON_ENABLED
 	ASSERT_ZERO(processor_config_check_ensure_homedir_file(DEFAULT_PYTHON_LIB_DIR, P2PSHIP_CONF_PYTHON_LIB_DIR,

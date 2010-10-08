@@ -22,6 +22,7 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <sys/time.h>
 
 #include "processor.h"
 #ifdef CONFIG_SIP_ENABLED
@@ -34,6 +35,13 @@
 #ifdef CONFIG_PYTHON_ENABLED
 #include "pymod.h"
 #endif
+
+#ifdef CONFIG_START_GTK
+#include <glib.h>
+#include <gtk/gtk.h>
+#include <gdk/gdk.h>
+#endif
+
 
 /* the configuration for the current .. */
 static processor_config_t *pconfig;
@@ -783,7 +791,9 @@ int
 processor_run()
 {
         int i, ret = -1;
+#ifndef CONFIG_START_GTK
 	struct processor_worker_s main_w = { .thread = 0, .name = "main-0" };
+#endif
 
 	USER_ERROR("proxy initialized ok\n");
         

@@ -35,6 +35,13 @@
 #include "netio_events.h"
 #include "netio_http.h"
 #include "addrbook.h"
+#include "osso_dbus.h"
+
+#ifdef CONFIG_START_GTK
+#include <glib.h>
+#include <gtk/gtk.h>
+#include <gdk/gdk.h>
+#endif
 
 #ifdef CONFIG_BROADCAST_ENABLED
 #include "ol_broadcast.h"

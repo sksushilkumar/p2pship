@@ -873,10 +873,11 @@ resourcefetch_handle_message(char *data, int data_len,
 			if (sdata.st_size)
 				r = fread(buf + l, 1, sdata.st_size, f);
 			if (r == sdata.st_size) {
-				ASSERT_ZERO(conn_queue_to_peer(source, target->sip_aor, 
-							       SERVICE_TYPE_RESOURCEFETCH,
-							       buf, l+r,
-							       NULL, NULL), 
+				/* dtn: here we should just respond with the data! */
+				ASSERT_ZERO(conn_send_default(source, target->sip_aor, 
+							      SERVICE_TYPE_RESOURCEFETCH,
+							      buf, l+r,
+							      NULL, NULL), 
 					    err);
 			}
 		}
@@ -911,8 +912,7 @@ resourcefetch_handle_message(char *data, int data_len,
 
 static void
 resourcefetch_get_cb(char *to, char *from, service_type_t service,
-		     char *data, int data_len, void *ptr,
-		     int code)
+		     int code, char *return_data, int data_len, void *ptr)
 {
 	pending_rf_t *rf = ptr;
 	if (code && (rf = ship_list_remove(pending_rfs, rf))) {
@@ -924,7 +924,7 @@ resourcefetch_get_cb(char *to, char *from, service_type_t service,
 static int
 resourcefetch_get_to(void *data, processor_task_t **wait, int wait_for_code)
 {
-	resourcefetch_get_cb(NULL, NULL, 0, NULL, 0, data, -1);
+	resourcefetch_get_cb(NULL, NULL, 0, -1, NULL, 0, data);
 	return 0;
 }
 
@@ -934,7 +934,6 @@ resourcefetch_get(char *host, char *rid,
 		  void (*func) (void *param, char *host, char *rid, char *data, int datalen),
 		  void *data) 
 {
-	
 	pending_rf_t *rf = 0;
 	char *dp = 0;
 	int ret = -1;
@@ -962,10 +961,11 @@ resourcefetch_get(char *host, char *rid,
 	ASSERT_TRUE(rf = resourcefetch_new(host, rid, func, data), err);
 	ship_list_add(pending_rfs, rf);
 
-	ASSERT_ZERO(conn_queue_to_peer(host, local_aor, 
-				       SERVICE_TYPE_RESOURCEFETCH,
-				       dp, strlen(dp), 
-				       rf, resourcefetch_get_cb), 
+	/* dtn: here we could actually use the ack-response data! */
+	ASSERT_ZERO(conn_send_slow(host, local_aor, 
+				   SERVICE_TYPE_RESOURCEFETCH,
+				   dp, strlen(dp), 
+				   rf, resourcefetch_get_cb), 
 		    err);
 
 	/* create some sort of timeout for this */

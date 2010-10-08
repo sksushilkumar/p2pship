@@ -25,7 +25,7 @@
  *
  * @author joakim.koskela@hiit.fi
  */
-
+#define _GNU_SOURCE
 #include <pthread.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -56,16 +56,16 @@
 #include "trustman.h"
 #include "ship_utils.h"
 
+
 #define ship_lock_conn(conn) { ship_lock(conn); ship_restrict_locks(conn, identities); ship_restrict_locks(conn, conn_all_conn); }
 
+static int conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait, int flags);
+static int conn_resend_reg_pkg(ident_t *ident);
 static void conn_connection_free(conn_connection_t *conn);
 static int conn_connection_init(conn_connection_t *conn, void *param);
 extern ship_obj_list_t *identities;
 
 SHIP_DEFINE_TYPE(conn_connection);
-
-/* this was needed for the lock-restrict stuff, but not anymore .. */
-/* extern ship_list_t *identities; */
 
 static ship_obj_list_t *conn_all_conn;
 static ship_list_t *conn_lis_sockets = 0;
@@ -78,7 +78,7 @@ static int conn_allow_nonhip = 0;
 #endif
 
 /* this is the holder for the 'unique' split-part numbers */
-static int splitcounter = 0;
+//static int splitcounter = 0;
 
 /* the keepalive counter / time */
 static int keepalive_sent = 0;
@@ -89,14 +89,44 @@ static int conn_ifaces_count = 0;
 static struct sockaddr* ka_sa = 0;
 static socklen_t ka_salen = 0;
 
+/* dtn: unique packet id */
+static unsigned char conn_instance_id[32];
+
+/* dtn: ! this should be per to-from ! */
+static int packet_count = 0;
+
 static void conn_cb_socket_got(int s, struct sockaddr *sa, socklen_t addrlen, int ss);
 static int conn_send_conn(conn_connection_t *conn, char *buf, int len, int type);
-static int conn_sendto(char *sip_aor, ident_t *ident, char *buf, size_t len, int type);
+static int conn_sendto(char *sip_aor, char *from, char *buf, size_t len, int type);
 static void conn_process_data_done(void *rdata, int code);
 static int conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code);
 static int conn_periodic();
-static int conn_has_connection_to(char *sip_aor, ident_t *ident);
+static int conn_has_connection_to(char *sip_aor, ident_t *ident, int flags);
+static int conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_code);
+static void conn_open_connection_to_done(void *data, int code);
+static void conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen);
+static void conn_send_done(void *data, int code);
+static int conn_send_do(void *data, processor_task_t **wait, 
+			int wait_for_code);
 
+
+/* timeout which to wait for an ack / nack */
+#define PACKET_ACK_TIMEOUT (1*30)
+
+static int conn_send_service_package_to(conn_packet_t *p);
+static char *conn_create_pkgid(const char *from, const char *to);
+static void conn_packet_free(conn_packet_t *obj);
+static int conn_packet_init(conn_packet_t *obj, void *param);
+static int conn_packet_process_data(char *payload, int pkglen, conn_connection_t *conn);
+static int conn_send_ack(conn_packet_t *p, int code, const char *data, const int data_len);
+static conn_packet_t *conn_packet_new_service(const char *to, const char *from,
+					      service_type_t service,
+					      char *data, int data_len,
+					      int flags,
+					      void *ptr, conn_packet_callback callback);
+
+SHIP_DEFINE_TYPE(conn_packet);
+static ship_obj_ht_t *conn_waiting_packets = 0;
 
 /* @sync none
  * frees & closes the given connection. 
@@ -379,11 +409,10 @@ conn_rebind()
 void
 conn_close()
 {
+        LOG_INFO("closing the conn module..\n");
 	ship_list_t *conns = conn_all_conn;
 	conn_all_conn = NULL;
 	
-        LOG_INFO("closing the conn module..\n");
-
         ship_obj_list_free(conns);
 	conn_close_bindings();
 	ship_list_free(conn_lis_sockets);
@@ -394,12 +423,17 @@ conn_close()
 	freez(ka_sa);
 
 	trustman_close();
+	ship_obj_ht_free(conn_waiting_packets);
+	conn_waiting_packets = NULL;
 }
 
 static void
 conn_cb_events(char *event, void *data, void *eventdata)
 {
-	conn_rebind();
+	if (str_startswith(event, "net_"))
+		conn_rebind();
+	else if (str_startswith(event, "ident_"))
+		conn_resend_reg_pkg((ident_t *)eventdata);
 }
 
 static void
@@ -425,6 +459,8 @@ conn_init(processor_config_t *config)
 
         LOG_INFO("initing the conn module\n");
 
+	ASSERT_ZERO(ship_get_random(conn_instance_id, sizeof(conn_instance_id)), err);
+
 #ifdef CONFIG_HIP_ENABLED	
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_ALLOW_NONHIP, conn_cb_config_update);
 #endif
@@ -433,6 +469,9 @@ conn_init(processor_config_t *config)
 
 	/* capture net events so we can rebind to hits as hipd goes up & down */
 	ASSERT_ZERO(processor_event_receive("net_*", 0, conn_cb_events), err);
+	
+	/* capture the ident_status events */
+	ASSERT_ZERO(processor_event_receive("ident_*", 0, conn_cb_events), err);
 
 	/* init trust manager */
 	ASSERT_ZERO(trustman_init(config), err);
@@ -450,54 +489,16 @@ conn_init(processor_config_t *config)
 	ASSERT_TRUE(conn_lis_socket_addrs = ship_list_new(), err);
 	ASSERT_ZERO(conn_rebind(), err);
 
+	ASSERT_TRUE(conn_waiting_packets = ship_obj_ht_new(), err);
+
 	ASSERT_ZERO(processor_tasks_add_periodic(conn_periodic, 5000), err);
+
         LOG_INFO("Started ship listener\n");
         return 0;
  err:
         conn_close();
         return -1;
 }
-
-#ifdef CONFIG_HIP_ENABLED	
-/* this function creates a mapping from a HIT to a locator so that the
-   HIT can be used as-is when sending packets. The HIT must be tied to
-   a specific peer (the aor given) meaning that the locators will be
-   looked up only from that peer's registration package.
-
-   If the HIT doesn't belong to the peer, locator missing or something
-   else goes wrong, it returns an errorcode
-*/
-int
-conn_create_peer_hit_locator_mapping(char *sip_aor, addr_t *hit) 
-{
-	int ret = -1;
-	reg_package_t *reg = 0;
-	void *ptr = 0;
-	addr_t *tmp = 0;
-
-	if (hipapi_has_linkto(hit))
-		return 0;
-	
-	/* we should do this async actually (fetching the reg package)! */
-	LOG_INFO("Should map %s's HIT %s to a locator\n", sip_aor, hit->addr);
-	ASSERT_TRUE(reg = ident_find_foreign_reg(sip_aor), err);
-	
-	/* Assure that the HIT really belongs to this person */
-	while (!tmp && (tmp = (addr_t*)ship_list_next(reg->hit_addr_list, &ptr))) {
-		if (strcmp(tmp->addr, hit->addr))
-			tmp = NULL;
-	}
-	ASSERT_TRUE(tmp, err);
-	
-	/* establish .. */
-	ASSERT_ZERO(hipapi_establish(hit, reg->ip_addr_list, reg->rvs_addr_list), err);
-	ret = 0;
- err:
-	if (reg) 
-		ship_unlock(reg);
-	return ret;
-}
-#endif
 
 /* @sync ok
  *  called when data has arrived. */
@@ -509,8 +510,6 @@ conn_cb_data_got(int s, char *data, ssize_t datalen)
 
         /* find which peer this was & process data */
 
-
-	//forts;
 	// can it be that the socket hasn't been put into the socket
 	// stack yet when this might be called? got a 'between unknowns!!'
         conn = conn_find_connection_by_socket(s);
@@ -551,9 +550,7 @@ conn_cb_data_got(int s, char *data, ssize_t datalen)
 
 static int conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn);
 static int conn_process_pkg_target(char *payload, int pkglen, conn_connection_t *conn);
-static int conn_process_pkg_sip(char *payload, int pkglen, conn_connection_t *conn);
 static int conn_process_pkg_mp(char *payload, int pkglen, conn_connection_t *conn);
-static int conn_process_pkg_trust(char *payload, int pkglen, conn_connection_t *conn);
 static int conn_process_pkg_service(char *payload, int pkglen, service_type_t service, conn_connection_t *conn);
 
 
@@ -587,7 +584,6 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
         do {
 		char *payload;
 		int got_useful = 1;
-		service_type_t service;
 
 		/* we cannot lock an ident while holding a conn
 		   (deadlock), but the other way's ok */
@@ -612,7 +608,7 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 		while ((lenbuf = ship_list_next(conn->in_queue, &ptr)))
 			datalen += lenbuf->len;
 		
-		if (datalen < 3) {
+		if (datalen < (CONN_PKG_LEN_LEN+1)) {
 			ret = 0;
 			break;
 		}
@@ -628,8 +624,8 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 		
 		/* read size (16 bit) & type (8b) */
 		pkglen = 0;
-		ship_unroll(pkglen, buf, 2);
-		type = (uint8_t)buf[2];
+		ship_unroll(pkglen, buf, CONN_PKG_LEN_LEN);
+		type = (uint8_t)buf[CONN_PKG_LEN_LEN];
 		LOG_VDEBUG("got a %d bytes (%d available), pkg %d\n", pkglen, datalen, type);		
 		ASSERT_TRUE(pkglen > 2 && pkglen <= CONN_MAX_PKG_LEN, err);
 
@@ -646,8 +642,8 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 		}
 		
                 /* buf - the current packet, pkglen = the packets total len */	
-		payload = buf+3;
-		pkglen -= 3;
+		payload = buf+CONN_PKG_LEN_LEN+1;
+		pkglen -= (CONN_PKG_LEN_LEN+1);
 		ret = -3;
 		LOG_VDEBUG("processing packet type %d\n", type);
 
@@ -656,30 +652,18 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 		case PKG_REG:
 			ret = conn_process_pkg_reg(payload, pkglen, conn);
 			break;
-		case PKG_SIP:
-			ret = conn_process_pkg_sip(payload, pkglen, conn);
-			break;
 		case PKG_TARGET:
 			ret = conn_process_pkg_target(payload, pkglen, conn);
 			break;
 		case PKG_MP:
 			ret = conn_process_pkg_mp(payload, pkglen, conn);
 			break;
-		case PKG_TRUST:
-			ret = conn_process_pkg_trust(payload, pkglen, conn);
-			break;
 		case PKG_PING:
 			ret = 0;
 			got_useful = 0;
 			break;
 		case PKG_SERVICE:
-			if ((pkglen) >= sizeof(service)) {
-				memcpy(&service, payload, sizeof(service));
-				ret = conn_process_pkg_service(payload+sizeof(service), pkglen-sizeof(service), 
-							       service, conn);
-			} else {
-				LOG_WARN("invalid service packet length!\n");
-			}
+			ret = conn_packet_process_data(payload, pkglen, conn);
 			break;
 		default:
 			/* ignore */
@@ -774,6 +758,7 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 
 	ident_reg_xml_to_struct(&reg, payload);
 
+	/* dtn: move this to the hip module.. */
 #ifdef CONFIG_HIP_ENABLED
 	/* verify that the hit in the reg belongs to the end-point for
 	   this connection! */
@@ -809,6 +794,7 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 		ret = -3;
 	}
 #endif
+
         if (reg && (tmp_aor = strdup(reg->sip_aor)) && !ident_import_foreign_reg(reg)) {
                 
                 if (!conn->sip_aor) {
@@ -867,7 +853,7 @@ conn_process_pkg_target(char *payload, int pkglen, conn_connection_t *conn)
 		ASSERT_TRUE(conn->ident = ident, err);
 		ASSERT_TRUE(reg_str = ident_get_regxml(conn->ident), err);
 		
-		conn_send_conn(conn, reg_str, strlen(reg_str), PKG_REG);
+		conn_send_conn(conn, (char*)reg_str, strlen(reg_str), PKG_REG);
 		conn->state = STATE_CONNECTED;
 		ret = 0;
 		
@@ -884,7 +870,7 @@ err:
 
 /* re-sends the registration packet to all conns for the given
    ident */
-int
+static int
 conn_resend_reg_pkg(ident_t *ident)
 {
         conn_connection_t *c = NULL;
@@ -892,13 +878,14 @@ conn_resend_reg_pkg(ident_t *ident)
 	char *data = NULL;
 	int ret = -1;
 	
+	LOG_INFO("resending new registration packet on all open connections for %s\n", ident->sip_aor);
 	ASSERT_TRUE(data = ident_get_regxml(ident), err);
         if (conn_all_conn) {
 		ship_lock(conn_all_conn);
 		while ((c = ship_list_next(conn_all_conn, &ptr))) {
 			ship_lock_conn(c);
 			if (c->local_aor && !strcmp(ident->sip_aor, c->local_aor))
-				conn_send_conn(c, data, strlen(data), PKG_REG);
+				conn_send_conn(c, (char*)data, strlen(data), PKG_REG);
 			ship_unlock(c);
 		}
 		ship_unlock(conn_all_conn);
@@ -910,14 +897,8 @@ conn_resend_reg_pkg(ident_t *ident)
 }
 
 
-/* handles a sip package */
-static int
-conn_process_pkg_sip(char *payload, int pkglen, conn_connection_t *conn)
-{
-	return conn_process_pkg_service(payload, pkglen, SERVICE_TYPE_SIP, conn);
-}
-
-/* handles a generic service package */
+/* handles a generic service package. return codes:
+ * @return -1 service error, -2 service not found/registered, -3 .. err */
 static int
 conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type, conn_connection_t *conn)
 {
@@ -937,17 +918,23 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 				LOG_WARN("Got service %d packet for ident %s that is not valid anymore!\n", 
 					 service_type, (conn->ident? conn->ident->sip_aor : "<nil>"));
 				s = 0;
-			}
-			
-			if (s) {
+				ret = -2;
+			} else {
 				/* parse the packet, process split packets */
+				/*
 				if (pkglen >= CONN_SERVICE_NORMAL_HEADER_LEN) {
 					int v;
 					ship_unroll(v, payload, 1);
 					if (v == 0) {
-						ret = s->data_received(payload+CONN_SERVICE_NORMAL_HEADER_LEN, 
-								       pkglen-CONN_SERVICE_NORMAL_HEADER_LEN, 
-								       conn->ident, conn->sip_aor, service_type);
+				*/
+				if (s->data_received(payload /*+CONN_SERVICE_NORMAL_HEADER_LEN*/, 
+						     pkglen /*-CONN_SERVICE_NORMAL_HEADER_LEN*/, 
+						     conn->ident, conn->sip_aor, service_type))
+					ret = -1;
+				else
+					ret = 0;
+
+				/*
 					} else if (v == 1 && pkglen >= CONN_SERVICE_SPLIT_HEADER_LEN) {
 						int id, p, tot;
 						ship_ht_t *parts = 0;
@@ -956,7 +943,7 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 						ship_unroll(p, payload+5, 4);
 						ship_unroll(tot, payload+9, 4);
 
-						/* store into the conn these .. */
+						/ * store into the conn these .. * /
 						parts = ship_ht_get_int(conn->fragments, id);
 						if (!parts && (parts = ship_ht_new())) {
 							ship_ht_put_int(conn->fragments, id, parts);
@@ -967,7 +954,7 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 							
 							// todo: lenbuf's
 
-							/* sanity check */
+							/ * sanity check * / 
 							if (p > -1 && p < tot)
 								arr = mallocz(sizeof(void*) * 2);
 							payload += CONN_SERVICE_SPLIT_HEADER_LEN;
@@ -988,9 +975,9 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 							freez_arr(arr, 2);
 							
 							if (ret) {
-								/* something went wrong, cancel all parts! */
+								/ * something went wrong, cancel all parts! * /
 							} else if (ship_list_length(parts) == tot) {
-								/* combine these parts into one */
+								/ * combine these parts into one * /
 								void *ptr = 0;
 								char *totbuf = 0;
 								int totlen = 0;
@@ -1005,7 +992,7 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 									ptr = 0;
 									totlen = 0;
 									
-									/* go through the parts in order */
+									/ * go through the parts in order * /
 									for (i=0; i < tot; i++) {
 										if ((arr = ship_ht_get_int(parts, i))) {
 											memcpy(totbuf + totlen, arr[1], *((int*)arr[0]));
@@ -1027,16 +1014,12 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 								ship_ht_free(parts);
 							}
 						}
-					}
-				} else {
+						}
+						} else {
 					ret = s->data_received(payload, pkglen, conn->ident, conn->sip_aor, service_type);
-				}
-			} else {
-				/* make ret = 0, as this isn't serious enough to cut the chord.. */
-				/* todo: we should actually send some sort of error packet! */
-				ret = 0;
+				*/
 			}
-                } else {
+		} else {
                         LOG_ERROR("FAILING as no ident!\n");
                 }
         } else {
@@ -1112,14 +1095,6 @@ conn_process_pkg_mp(char *payload, int pkglen, conn_connection_t *conn)
         return ret; 
 }
 
-/* handles a mp package */
-static int
-conn_process_pkg_trust(char *payload, int pkglen, conn_connection_t *conn)
-{
-	// todo: trustman to own service?
-	return trustman_handle_trustparams(conn->sip_aor, conn->local_aor, payload, pkglen);
-}
-
 /* @sync ok
  * called when a new socket has been got. creates a new conn object */
 static void
@@ -1157,6 +1132,205 @@ conn_cb_socket_got(int s, struct sockaddr *sa, socklen_t addrlen, int ss)
         	netio_close_socket(s);
 }
 
+/*
+ * conn packet handling 
+ */
+static void 
+conn_packet_free(conn_packet_t *obj)
+{
+	if (obj->callback) {
+		obj->callback(obj->to, obj->from, obj->service, obj->code, obj->return_data, obj->return_data_len, obj->ptr);
+	}
+	freez(obj->to);
+	freez(obj->from);
+	ship_obj_unref(obj->ident);
+	freez(obj->data);
+	freez(obj->pkg_id);
+	freez(obj->return_data);
+}
+
+static int 
+conn_packet_init(conn_packet_t *obj, void *param) 
+{
+	obj->code = -1;
+	/*
+ 	ASSERT_TRUE(obj->ident = ident_find_by_aor(param), err);
+ 	ship_unlock(obj->ident);
+	return 0;
+ err:
+ return -1;*/
+	return 0;
+}
+
+static conn_packet_t *
+conn_packet_new_service(const char *to, const char *from,
+			service_type_t service,
+			char *data, int data_len,
+			int flags,
+			void *ptr, conn_packet_callback callback)
+{
+	conn_packet_t *p = NULL;
+	
+	ASSERT_TRUE(p = (conn_packet_t*)ship_obj_new(TYPE_conn_packet, (void*)from), err);
+	ASSERT_TRUE(p->to = strdup(to), err);
+	ASSERT_TRUE(p->from = strdup(from), err);
+	ASSERT_TRUE(p->pkg_id = conn_create_pkgid(to, from), err);
+	p->service = service;
+	p->flags = flags;
+	if (data) {
+		ASSERT_TRUE(p->data = mallocz(data_len), err);
+		memcpy(p->data, data, data_len);
+		p->data_len = data_len;
+	}
+	p->type = PKG_SERVICE;
+	p->callback = callback;
+	p->ptr = ptr;
+	
+	return p;
+ err:
+	ship_obj_unref(p);
+	return 0;
+}
+
+static conn_packet_t *
+conn_packet_new_service_received(conn_connection_t *conn,
+				 const char *pkg_id,
+				 service_type_t service,
+				 char *data, int data_len)
+{
+	conn_packet_t *p = NULL;
+	
+	ASSERT_TRUE(p = (conn_packet_t*)ship_obj_new(TYPE_conn_packet, conn->local_aor), err);
+	ASSERT_TRUE(p->to = strdup(conn->local_aor), err);
+	ASSERT_TRUE(p->from = strdup(conn->sip_aor), err);
+	ASSERT_TRUE(p->pkg_id = strdup(pkg_id), err);
+	p->service = service;
+	if (data) {
+		ASSERT_TRUE(p->data = mallocz(data_len), err);
+		memcpy(p->data, data, data_len);
+		p->data_len = data_len;
+	}
+	p->type = PKG_SERVICE;
+	return p;
+ err:
+	ship_obj_unref(p);
+	return 0;
+}
+
+static conn_packet_t *
+conn_packet_new_ack(conn_packet_t *orig, int code, const char *data, const int data_len)
+{
+	conn_packet_t *p = NULL;
+	
+	ASSERT_TRUE(p = (conn_packet_t*)ship_obj_new(TYPE_conn_packet, (void*)orig->to), err);
+	ASSERT_TRUE(p->to = strdup(orig->from), err);
+	ASSERT_TRUE(p->from = strdup(orig->to), err);
+	ASSERT_TRUE(p->pkg_id = strdup(orig->pkg_id), err);
+	if (data) {
+		ASSERT_TRUE(p->data = mallocz(data_len), err);
+		memcpy(p->data, data, data_len);
+		p->data_len = data_len;
+	}
+	p->type = PKG_SERVICE;
+	if (code < 0)
+		p->is_ack = -1;
+	else
+		p->is_ack = 1;
+	return p;
+ err:
+	ship_obj_unref(p);
+	return 0;
+}
+
+/* accepts a data block that is supposedly a data packet serialized */
+static int
+conn_packet_process_data(char *payload, int pkglen, conn_connection_t *conn)
+{
+	conn_packet_t *p = 0;
+	service_type_t service;
+	void *ptr = 0;
+	int ret = -1;
+	
+	ASSERT_TRUE(ptr = memmem(payload, pkglen, "\0", 1), err);
+	ptr++;
+	pkglen -= ((int)ptr - (int)payload);
+
+	if (str_startswith(payload, "NCK:") || str_startswith(payload, "ACK:")) {
+		LOG_DEBUG("got ack/nack: %s\n", payload);
+
+		/* just remove, dont dereffit yet! */
+		if ((p = ship_ht_remove_string(conn_waiting_packets, payload+4))) {
+			if (pkglen && !p->return_data && (p->return_data = mallocz(pkglen))) {
+				memcpy(p->return_data, ptr, pkglen);
+				p->return_data_len = pkglen;
+			}
+			p->code = (str_startswith(payload, "ACK:")? 0: -2);
+			ship_obj_unref(p);
+			p = 0;
+		}
+		ret = 0;
+	} else if (str_startswith(payload, "PKG:") && (pkglen) >= sizeof(service)) {
+		payload += 4;
+		
+		/* dtn: here, we should introduce the magic of packet
+		   fragmentation. re-piece the pieces. stuff like that */
+		
+		/* specifically: keep an hashtable of the pkgid -> packets.
+		   add to the packet the data .. */
+
+		memcpy(&service, ptr, sizeof(service));
+		ASSERT_TRUE(p = conn_packet_new_service_received(conn, payload, service,
+								 ptr + sizeof(service), pkglen - sizeof(service)), err);
+		
+		LOG_DEBUG("We got packet id %s\n", p->pkg_id);
+		ret = conn_process_pkg_service(p->data, p->data_len,
+					       p->service, conn);
+		LOG_DEBUG("processed it with %d\n", ret);
+		if (ret < 1)
+			conn_send_ack(p, ret, "he23o", 6);
+	} else {
+		LOG_WARN("invalid packet!\n");
+	}
+ err:
+	ship_obj_unref(p);
+	return ret;
+}
+
+int
+conn_packet_serialize(conn_packet_t *p, char **retv, int *len)
+{
+	char *ret = 0;
+	int tot = 0;
+
+	if (!p)
+		return -2;
+
+	tot = strlen(p->pkg_id) + 1 + 4;
+	*len = p->data_len + tot;
+	if (!p->is_ack)
+		*len += sizeof(p->service);
+	ASSERT_TRUE(ret = mallocz(*len), err);
+	
+	if (p->is_ack > 0)
+		strcpy(ret, "ACK:");
+	else if (p->is_ack < 0)
+		strcpy(ret, "NCK:");
+	else
+		strcpy(ret, "PKG:");
+
+	strcat(ret, p->pkg_id);
+	if (!p->is_ack) {
+		memcpy(ret+tot, &(p->service), sizeof(p->service));
+		tot += sizeof(p->service);
+	}
+	memcpy(ret+tot, p->data, p->data_len);
+	*retv = ret;
+	return 0;
+ err:
+	freez(ret);
+	return -1;
+}
+
 /* @sync none
  * sends a message to the given aor
 
@@ -1164,36 +1338,35 @@ conn_cb_socket_got(int s, struct sockaddr *sa, socklen_t addrlen, int ss)
 
  * returns 0 if ok, < 0 if error */
 static int
-conn_send_service_package_to(char *to, ident_t *from, 
-			     service_type_t service,
-			     char *data, int data_len)
+conn_send_service_package_to(conn_packet_t *p)
 {
-	int ret = -1;
+	int ret = -1, len = 0;
 	char *d2 = 0;
-		
-	LOG_VDEBUG("Sending %d bytes from %s to %s for service %d\n", data_len, from->sip_aor, to, service);
 	
-	/* special case(s) .. */
-	if (service == SERVICE_TYPE_SIP) {
-		ASSERT_TRUE(d2 = mallocz(data_len), err);
-		memcpy(d2, data, data_len);
-		ret = conn_sendto(to, from, d2, data_len, PKG_SIP);
-
-		STATS_LOG("sip message from %s to %s\n", from->sip_aor, to);
+	LOG_VDEBUG("Sending %d bytes from %s to %s for service %d\n", p->data_len, p->from, p->to, p->service);
+	
 #ifdef CONFIG_SIP_ENABLED
 #ifdef DO_STATS
-		ac_packetfilter_stats_event(from->sip_aor, to, "sip_sent");
+	if (service == SERVICE_TYPE_SIP) {
+		STATS_LOG("sip message from %s to %s\n", p->from, p->to);
+		ac_packetfilter_stats_event(p->from, p->to, "sip_sent");
+	}
 #endif
 #endif
-	} else {
-		/* packet encoding .. */
-		ASSERT_TRUE(d2 = mallocz(data_len + sizeof(service)), err);
-		memcpy(d2, &service, sizeof(service));
-		memcpy(d2+sizeof(service), data, data_len);
 
-		STATS_LOG("sendto;%s;%s;%d;%d;%d;%d\n",
-			  to, from->sip_aor, service, data_len, data_len+sizeof(service), 0);
-		ret = conn_sendto(to, from, d2, data_len+sizeof(service), PKG_SERVICE);
+	/* packet encoding .. */
+	ASSERT_ZERO(conn_packet_serialize(p, &d2, &len), err);
+	STATS_LOG("sendto;%s;%s;%d;%d;%d;%d\n",
+		  p->to, p->from, p->service, p->data_len, p->data_len+sizeof(p->service), 0);
+	ASSERT_ZERO(ret = conn_sendto(p->to, p->from, d2, len, PKG_SERVICE), err);
+	
+	/* dtn: here we should go through loops of connection
+	   handlers, calling each one's 'send' */
+
+	if (p->callback) {
+		/* dtn: add this to some sort of waiting list. */
+		p->sent = time(NULL);
+		ship_obj_ht_put_string(conn_waiting_packets, p->pkg_id, p);
 	}
  err:
 	return ret;
@@ -1247,7 +1420,7 @@ conn_send_mp_to(char *sip_aor, ident_t *ident,
                 fullpkg[pos++] = buf[i++];
         }
 
-        if ((i = conn_sendto(sip_aor, ident, fullpkg, totlen, PKG_MP))) {
+        if ((i = conn_sendto(sip_aor, ident->sip_aor, fullpkg, totlen, PKG_MP))) {
 		freez(fullpkg);
 	}
         return i;
@@ -1259,19 +1432,19 @@ static int
 conn_send_conn(conn_connection_t *conn,
                char *buf, int len, int type)
 {
-#define HEAD_SIZE 3        
+#define HEAD_SIZE (CONN_PKG_LEN_LEN+1)
 
         /* create packet header */
 	char *head = 0;
 	int ret = -1;
 	
 	ASSERT_TRUE(head = malloc(len+HEAD_SIZE), err);
-        ship_inroll(len+HEAD_SIZE, head, 2);
-        head[2] = (uint8_t)(type & 0xff);
+        ship_inroll(len+HEAD_SIZE, head, CONN_PKG_LEN_LEN);
+        head[CONN_PKG_LEN_LEN] = (uint8_t)(type & 0xff);
 
 	/* combine into one packet! */
 	if (len)
-		memcpy(head+3, buf, len);
+		memcpy(head+HEAD_SIZE, buf, len);
         if (netio_send(conn->socket, head, HEAD_SIZE+len) == (HEAD_SIZE+len) ){
 		STATS_LOG("sendto_wire;%s;%s;%d;%d;%d;%d\n",
 			  conn->sip_aor, conn->local_aor, 0, len, len+HEAD_SIZE, 0);
@@ -1316,13 +1489,16 @@ conn_trustman_cb(char *local_aor, char *target_aor,
 	
 	/* send some trust parameters */
 	if (params && param_len) {
-		ASSERT_ZERO(ret = conn_sendto_raw(target_aor, local_aor, 
-						  params, param_len, PKG_TRUST), err);
+		ASSERT_ZERO(ret = conn_send_slow(target_aor, local_aor,
+						 SERVICE_TYPE_TRUST,
+						 params, param_len,
+						 NULL, NULL), err);
 		trustman_mark_current_trust_sent(local_aor, target_aor);
 	}
 	
 	/* we might sometimes get just the callback for sending
 	   trustparams, without any app-data associated */
+
 	if (data) {
 		ret = conn_sendto_raw(target_aor, local_aor, 
 				      (char*)d[0], (int)d[1], (int)d[2]);
@@ -1338,17 +1514,17 @@ conn_trustman_cb(char *local_aor, char *target_aor,
 /* @sync ok
  * sends a package to a recipient. The ownership of the data is taken! */
 static int
-conn_sendto(char *sip_aor, ident_t *ident, char *buf, size_t len, int type)
+conn_sendto(char *sip_aor, char *from, char *buf, size_t len, int type)
 {
 	void **data;
-	
+
 	/* fetch trust parameters */
 	data = mallocz(3*sizeof(void*));
 	if (data) {
 		data[0] = buf;
 		data[1] = (void*)len;
 		data[2] = (void*)type;
-		trustman_check_trustparams(ident->sip_aor, sip_aor,
+		trustman_check_trustparams(from, sip_aor,
 					   conn_trustman_cb, data);
 		return 0;
 	}
@@ -1362,18 +1538,19 @@ conn_periodic()
 	time_t now;
         conn_connection_t *conn;
 	void *ptr = 0, *last = 0;
-
+	conn_packet_t *p;
+	
 	LOG_VDEBUG("checking connections.. \n");
 	if (!conn_all_conn)
 		return 0;
 	
+	time(&now);
         ship_lock(conn_all_conn);
 	while ((conn = ship_list_next(conn_all_conn, &ptr))) {
 		int close = 0;
 		int useful, heard, sent;
 		
 		ship_obj_lockref(conn);
-		time(&now);
 		useful = now - conn->last_content;
 		heard = now - conn->last_heard;
 		sent = now - conn->last_sent;
@@ -1442,6 +1619,22 @@ conn_periodic()
 	/* check if we should update our listeners */
 	if (!ship_list_first(conn_lis_sockets))
 		conn_rebind();
+
+	/* check for ack-waiting packets that have been here just for too long */
+	ship_lock(conn_waiting_packets);
+	ptr = 0; last = 0;
+	LOG_DEBUG("Checking %d waiting packets ...\n", ship_list_length(conn_waiting_packets));
+	while ((p = ship_ht_next(conn_waiting_packets, &ptr))) {
+		if ((p->sent + PACKET_ACK_TIMEOUT) < now) {
+			LOG_DEBUG("timeout on packet %s ...\n", p->pkg_id);
+			ship_ht_remove(conn_waiting_packets, p);
+			p->code = -3;
+			ship_obj_unref(p);
+			ptr = last;
+		}
+		last = ptr;
+	}
+	ship_unlock(conn_waiting_packets);
 	return 0;
 }
 
@@ -1449,7 +1642,7 @@ conn_periodic()
  * check if we have an established & working connection to the given
  * peer. */
 static int
-conn_has_connection_to(char *sip_aor, ident_t *ident)
+conn_has_connection_to(char *sip_aor, ident_t *ident, int flags)
 {
         int ret = 0;
         conn_connection_t *conn;
@@ -1496,25 +1689,15 @@ conn_get_connected_peers(char *sip_aor, ship_list_t *ret)
 	}
 }
 
-static void conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen);
-static int conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_code);
-static void conn_open_connection_to_done(void *data, int code);
-static void conn_queue_to_peer_done(void *data, int code);
-static int conn_queue_to_peer_do(void *data, processor_task_t **wait, 
-				 int wait_for_code);
-static int conn_send_service_package_to(char *to, ident_t *from, 
-					service_type_t service,
-					char *data, int data_len);
-
-
+#ifdef OLD_QUEUE
 static int
-conn_queue_fragment(char *to, char *from, 
-		    int id, int part, int parts,
-		    service_type_t service,
-		    char *data, int data_len,
-		    void *ptr, void (*callback) (char *to, char *from, service_type_t service,
-						 char *data, int data_len, void *ptr,
-						 int code))
+conn_queue_fragment(char *to, char *from,
+                   int id, int part, int parts,
+                   service_type_t service,
+                   char *data, int data_len,
+                   void *ptr, void (*callback) (char *to, char *from, service_type_t service,
+                                                char *data, int data_len, void *ptr,
+                                                int code))
 {
 	void **arr = 0;
 	int ret = -1, i;
@@ -1548,9 +1731,8 @@ conn_queue_fragment(char *to, char *from,
 	STATS_LOG("queue;%s;%s;%d;%d;%d;%d\n",
 		  to, from, service, odata_len, data_len, 0);
 	
-	processor_tasks_add(conn_queue_to_peer_do,
-			    arr,
-			    conn_queue_to_peer_done);
+	processor_tasks_add(conn_send_do, arr,
+			    conn_send_done);
 	
 	arr = 0;
 	ret = 0;
@@ -1560,19 +1742,136 @@ conn_queue_fragment(char *to, char *from,
 	freez(arr);
 	return ret;
 }
+#endif
+
+/* try to establish a fast connection, else use slow */
+int conn_send_default(char *to, char *from,
+		      service_type_t service,
+		      char *data, int data_len,
+		      void *ptr, conn_packet_callback callback)
+{
+	return conn_send(CONN_SEND_SECURE, 
+			 to, from, service, data, data_len, ptr, callback);
+}
+
+/* send on fast if connected, else use slow (if possible). else establish fast */
+int conn_send_slow(char *to, char *from,
+		   service_type_t service,
+		   char *data, int data_len,
+		   void *ptr, conn_packet_callback callback)
+{
+	return conn_send(CONN_SEND_SECURE | CONN_SEND_PREFER_SLOW, 
+			 to, from, service, data, data_len, ptr, callback);
+}
+
+/* send on fast only, return error if a connection couldn't be established */
+int conn_send_fast(char *to, char *from,
+		   service_type_t service,
+		   char *data, int data_len,
+		   void *ptr, conn_packet_callback callback)
+{
+	return conn_send(CONN_SEND_SECURE | CONN_SEND_REQUIRE_FAST, 
+			 to, from, service, data, data_len, ptr, callback);
+}
+
+/* send IF connected, nodelay, don't care whether it is delivered; best-effort */
+int conn_send_simple(char *to, char *from,
+		     service_type_t service,
+		     char *data, int data_len)
+{
+	return conn_send(CONN_SEND_SECURE | CONN_SEND_REQUIRE_FAST, 
+			 to, from, service, data, data_len, NULL, NULL);
+}
+
+
+/* dtn: packet id. what? hash(from-to + shared secret?)_instanceid[random...32bit?]_counter? */
+static char*
+conn_create_pkgid(const char *from, const char *to)
+{
+	char *ret = 0, *ret2 = 0;
+	int len = sizeof(conn_instance_id)+strlen(from)+strlen(to);
+	
+	ASSERT_TRUE(ret = mallocz(len), err);
+	strcpy(ret, from);
+	strcat(ret, to);
+	memcpy(ret+strlen(ret), conn_instance_id, 32);
+	ASSERT_TRUE(ret2 = ship_hash_sha1_base64(ret, len), err);
+	freez(ret);
+	ASSERT_TRUE(ret = mallocz(strlen(ret2) + 10), err);
+	sprintf(ret, "%s:%d", ret2, packet_count++);
+	freez(ret2);
+	return ret;
+ err:
+	freez(ret);
+	freez(ret2);
+	return NULL;
+}
+
+
+/* sends an ack / nack for a service packet 
+ * @param conn the conn on which the part was received. can be null
+ * 
+ */
+static int
+conn_send_ack(conn_packet_t *o,
+	      int code, const char *data, const int data_len)
+{
+	int ret = -1;
+	conn_packet_t *p = 0;
+
+	ASSERT_TRUE(p = conn_packet_new_ack(o, code, data, data_len), err);
+	if (processor_tasks_add(conn_send_do, p,
+				conn_send_done))
+		ship_obj_ref(p);
+	ret = 0;
+ err:
+	ship_obj_unref(p);
+	return ret;
+}
+	      
+	      
 
 /* This function tries to send a packet to a remote host, calling the
    provided callback when complete. */
 int
-conn_queue_to_peer(char *to, char *from, 
-		   service_type_t service,
-		   char *data, int data_len,
-		   void *ptr, void (*callback) (char *to, char *from, service_type_t service,
-						char *data, int data_len, void *ptr,
-						int code))
+conn_send(int flags,
+	  char *to, char *from, 
+	  service_type_t service,
+	  char *data, int data_len,
+	  void *ptr, conn_packet_callback callback)
 {
+#ifndef OLD_QUEUE
+	int ret = -1;
+	conn_packet_t *p = 0;
+
+	ASSERT_TRUE(p = conn_packet_new_service(to, from,
+						service,
+						data, data_len,
+						flags, ptr, callback), err);
+	ship_obj_ref(p);
+	if (!processor_tasks_add(conn_send_do, p,
+				 conn_send_done)) {
+		ship_obj_unref(p);
+	} else
+		ret = 0;
+ err:
+	ship_obj_unref(p);
+	return ret;
+#else
 	int i, ret = -1, cs, parts, dpp;
+
+	/* dtn: do not split this up yet. create packet id */
 	
+	/* dtn: this splitting up of packets should be something protocol-specific, e.g.
+	   a parameter in the protocol struct that says what the mtu is. 
+
+	   and the splitup should be based on byte ranges, not sequence numbers as different protocols
+	   can have different sized mtu's.
+
+	   .. maybe the 'direct connection' could actually be just a single-use tube for a packet?
+	   mm. .. maybe not.
+	*/
+
 	/* hm, is it a security risk to use the same counter for all peers? */
 	if (data_len > (CONN_MAX_PKG_SERVICE_CONTENT_LEN - CONN_SERVICE_NORMAL_HEADER_LEN)) {
 		parts = data_len / (CONN_MAX_PKG_SERVICE_CONTENT_LEN - CONN_SERVICE_SPLIT_HEADER_LEN);
@@ -1610,80 +1909,64 @@ conn_queue_to_peer(char *to, char *from,
 	ret = 0;
  err:
 	return ret;
+#endif
 }
 
 static void 
-conn_queue_to_peer_done(void *data, int code)
+conn_send_done(void *data, int code)
 {
-	void **arr = (void**)data;
-	char *to = arr[0];
-	char *from = arr[1]; 
-	service_type_t *service = arr[2];
-	char *buf = arr[3];
-	int *data_len = arr[4];
-	void *ptr = arr[5];
-	void (*callback) (char *to, char *from, service_type_t service,
-			  char *data, int data_len, void *ptr,
-			  int code) = arr[6];
+	conn_packet_t *p = (conn_packet_t *)data;
 
-	/* callback */
-	if (callback)
-		callback(to, from, *service, buf, *data_len, ptr, code);
-	freez_arr(arr, 5);
+	p->code = code;
+	ship_obj_unref(p);
 }
 
-static 
-int conn_queue_to_peer_do(void *data, processor_task_t **wait, 
-			  int wait_for_code)
+static int 
+conn_send_do(void *data, processor_task_t **wait, 
+	     int wait_for_code)
 {
         int ret = -2;
+	conn_packet_t *p = (conn_packet_t *)data;
 
-	void **arr = (void**)data;
-	char *to = arr[0];
-	char *from = arr[1]; 
-	service_type_t *service = arr[2];
-	char *buf = arr[3];
-	int *data_len = arr[4];
-	ident_t *ident = 0;
-
-	//ASSERT_TRUE(ident = (ident_t *)ident_find_by_aor(from), err);
-	ship_wait("Waiting to get the default ident to use with send!\n");
-	if (!(ident = (ident_t *)ident_find_by_aor(from))) {
-		ASSERT_ZERO(strlen(from), err);
-		LOG_WARN("No identity given, using default!\n");
-		ASSERT_TRUE(ident = ident_get_default_ident(), err);
+	if (!p->ident) {
+		ship_wait("Waiting to get the default ident to use with send!\n");
+		if (!(p->ident = (ident_t *)ident_find_by_aor(p->from))) {
+			ASSERT_ZERO(strlen(p->from), err);
+			LOG_WARN("No identity given, using default!\n");
+			ASSERT_TRUE(p->ident = ident_get_default_ident(), err);
+			ASSERT_TRUE(p->from = strdup(p->ident->sip_aor), err);
+		}
+		ship_complete();
 	}
-	ship_complete();
 
 	ret = 0;
-	if (!conn_has_connection_to(to, ident)) {
+	if (!conn_has_connection_to(p->to, p->ident, p->flags)) {
 		/* try only once! */
-		if (!(*wait))
-			ret = conn_open_connection_to(to, ident, wait);
-		else
+		if (!(*wait)) {
+			ret = conn_open_connection_to(p->to, p->ident, wait, p->flags);
+		} else
 			ret = -1;
 	}
 	
 	if (!ret) {
-		if (conn_has_connection_to(to, ident)) {
-			ret = conn_send_service_package_to(to, ident, *service, buf, *data_len);
+		if (conn_has_connection_to(p->to, p->ident, p->flags)) {
+			ret = conn_send_service_package_to(p);
 		} else {
 			ret = -2;
 		}
 	}
-	
  err:
-        ship_obj_unlockref(ident);
+        ship_obj_unlockref(p->ident);
+	p->ident = NULL;
         return ret;
 }
-
 
 /* @sync ok
    starts the connecting-process to the given peer.  returns error if
    it will not be even attempted, otherwise error / ok will be
    reported through a processor event eventually. */
-int
-conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait)
+static int
+conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait, int flags)
 {
         conn_connection_t *conn = 0;
         int ret = -1;
@@ -1775,6 +2058,7 @@ conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_cod
 	ident = ident_find_by_aor(conn->local_aor);
 	ship_lock_conn(conn);
 	conn->ident = ident;
+	LOG_DEBUG("Running with wait: %08x and code: %d..\n");
 	if (!(*wait) || wait_for_code == 0) {
                 int hadwait = 0;
 
@@ -1919,7 +2203,7 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
 				ship_wait("sending reg_pkg on conn");
 				if (!reg_str) {
 					status = -2;
-				} else if (!(status = conn_send_conn(conn, reg_str, strlen(reg_str), PKG_REG)) &&
+				} else if (!(status = conn_send_conn(conn, (char*)reg_str, strlen(reg_str), PKG_REG)) &&
 					   !(status = conn_send_conn(conn, conn->sip_aor, strlen(conn->sip_aor), PKG_TARGET))) {
 					LOG_DEBUG("sent reg and target packets\n");
 					time(&conn->last_content);
@@ -1962,11 +2246,13 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
 
 /* Fills the connectivity-related values of the given reg package */
 int
-conn_fill_reg_package(reg_package_t *pkg)
+conn_fill_reg_package(ident_t *ident, reg_package_t *pkg)
 {
+	void *ptr = 0;
 	addr_t *addr = 0;
-	void *ptr = 0, *last = 0;
-
+#ifdef CONFIG_HIP_ENABLED
+	void *last = 0;
+#endif
         /* get my hit & rvs */
         ship_list_empty_free(pkg->ip_addr_list);
         ship_list_empty_free(pkg->hit_addr_list);
@@ -1981,7 +2267,7 @@ conn_fill_reg_package(reg_package_t *pkg)
 			ship_list_add(pkg->ip_addr_list, tmp);
 		}
 	}
-	
+
 #ifdef CONFIG_HIP_ENABLED
 	/* add ip's without port - for mapping hits! */
 	conn_getips(pkg->ip_addr_list, conn_ifaces, conn_ifaces_count, 0);
@@ -2100,7 +2386,7 @@ conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, const 
 	while (NLMSG_OK(h, i)) {
 		struct ifaddrmsg *ifa = NLMSG_DATA(h);
 
-		/* right scope, right interface */
+		/* right pe, right interface */
 		if (h->nlmsg_type != NLMSG_DONE &&
 		    h->nlmsg_type != NLMSG_ERROR &&
 		    (ifa->ifa_scope == RT_SCOPE_UNIVERSE ||
@@ -2152,6 +2438,8 @@ conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, const 
 		h = NLMSG_NEXT(h, i);
 	}
  err:
+	/* remove duplicates (this has happened on the tablet .. */
+	
 	close(s);
 	return ret;
 }
@@ -2161,8 +2449,31 @@ conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, const 
 int 
 conn_getips(ship_list_t *ips, char **ifaces, int c, int port) 
 {
+	addr_t *addr = 0;
+	void *tmp = 0;
+	
 	conn_getips_af(ips, ifaces, c, port, AF_INET);
 	conn_getips_af(ips, ifaces, c, port, AF_INET6);
+
+	/* remove duplicates */
+	while ((addr = ship_list_next(ips, &tmp))) {
+		void *tmp2 = tmp, *last = tmp;
+		addr_t *addr2 = 0;
+		while ((addr2 = ship_list_next(ips, &tmp2))) {
+			if (!ident_addr_cmp(addr, addr2)) {
+				char *str = 0;
+				ident_addr_addr_to_str(addr2, &str);
+				LOG_WARN("Removed duplicate address: %s\n", str);
+				freez(str);
+				
+				ship_list_remove(ips, addr2);
+				tmp2 = last;
+				freez(addr2);
+			}
+			last = tmp2;
+		}
+	}
+
 	return 0;
 }
 
@@ -2196,6 +2507,22 @@ conn_get_publicip(addr_t *addr)
 	return ret;
 }
 
+/* checks whether the given addr (source socket) is able to send to
+   the other */
+int
+conn_can_send_to(addr_t *from, addr_t *to)
+{
+	int ret = 0;
+	if (!to || !from)
+		return 0;
+	if (from->family == to->family &&
+	    from->type == to->type)
+		ret = 1;
+
+	LOG_VDEBUG("Can %s/%d/%d can send to %s/%d/%d? %s\n", from->addr, from->family, from->type,
+		   to->addr, to->family, to->type, (ret? "yes":"no"));
+	return ret;
+}
 
 /* the conn register */
 static struct processor_module_s processor_module = 
@@ -2215,3 +2542,4 @@ void
 conn_register() {
 	processor_register(&processor_module);
 }
+

@@ -75,6 +75,20 @@ trustman_cb_config_update(processor_config_t *config, char *k, char *v)
 		return;
 	return;
 }
+static int
+trustman_handle_trust_message(char *data, int data_len, 
+			      ident_t *target, char *source, 
+			      service_type_t service_type)
+{
+	return trustman_handle_trustparams(source, target->sip_aor, data, data_len);
+}
+
+static struct service_s trust_service =
+{
+ 	.data_received = trustman_handle_trust_message,
+	.service_closed = 0,
+	.service_handler_id = "trust_service"
+};
 
 int
 trustman_init(processor_config_t *config)
@@ -83,6 +97,8 @@ trustman_init(processor_config_t *config)
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_PATHFINDER, trustman_cb_config_update);
 	processor_config_set_dynamic(config, P2PSHIP_CONF_USE_PATHFINDER);
 	trustman_cb_config_update(config, NULL, NULL);
+
+	ident_register_default_service(SERVICE_TYPE_TRUST, &trust_service);
 	return 0;
  err:
 	return -1;
@@ -142,6 +158,8 @@ trustman_fetch_params_cb(char *url, int respcode, char *data, int data_len, void
 {
 	trustparams_t *params = pkg;
 	void **ptr;
+	char *params_copy = NULL, *from_copy = NULL, *to_copy = NULL;
+	int params_len = 0;
 	
 	if (!params_ht)
 		return;
@@ -175,6 +193,13 @@ trustman_fetch_params_cb(char *url, int respcode, char *data, int data_len, void
 		params->expires += 30;
 	}
 	params->requesting = 0;
+
+	if ((params_copy = mallocz(params->params_len + 1))) {
+		memcpy(params_copy, params->params, params->params_len);
+		params_len = params->params_len;
+	}
+	from_copy = strdup(params->from_aor);
+	to_copy = strdup(params->to_aor);
 	
 	/* we should do something with the queued packets.. */
 	while ((ptr = ship_list_pop(params->queued_packets))) {
@@ -183,9 +208,13 @@ trustman_fetch_params_cb(char *url, int respcode, char *data, int data_len, void
 			     void *data) = ptr[0];
 		void *data = ptr[1];
 		free(ptr);
-		func(params->from_aor, params->to_aor, params->params, params->params_len, data);
+		ship_unlock(params->queued_packets);
+		func(from_copy, to_copy, params_copy, params_len, data); // cbret
+		ship_lock(params->queued_packets);
 	}
-	ship_unlock(params->queued_packets);
+	freez(params_copy);
+	freez(from_copy);
+	freez(to_copy);
 }
 
 char *
@@ -214,7 +243,6 @@ trustman_fetch_params(trustparams_t *params)
 		return 0;
 
 	LOG_INFO("Fetching Trust parameters for %s -> %s\n", params->from_aor, params->to_aor);
-	params->requesting = 1;
 	freez(params->params);
 	params->params_len = 0;
 
@@ -223,18 +251,28 @@ trustman_fetch_params(trustparams_t *params)
 	   before this completes! */
 	
 	/* create the url */
-	ASSERT_TRUE(fh = ship_hash_sha1_base64(params->from_aor, strlen(params->from_aor)), err);
-	ASSERT_TRUE(fuh = ship_urlencode(fh), err);
-	ASSERT_TRUE(th = ship_hash_sha1_base64(params->to_aor, strlen(params->to_aor)), err);
-	ASSERT_TRUE(tuh = ship_urlencode(th), err);
+	if (processor_config_is_true(processor_get_config(), P2PSHIP_CONF_USE_PATHFINDER)) {
+		ASSERT_TRUE(fh = ship_hash_sha1_base64(params->from_aor, strlen(params->from_aor)), err);
+		ASSERT_TRUE(fuh = ship_urlencode(fh), err);
+		ASSERT_TRUE(th = ship_hash_sha1_base64(params->to_aor, strlen(params->to_aor)), err);
+		ASSERT_TRUE(tuh = ship_urlencode(th), err);
+		
+		/* fetch the reverse path */
+		ASSERT_TRUE(url = mallocz(strlen(trustman_pf_get_template) + strlen(tuh) + 
+					  strlen(fuh) + strlen(trustman_get_pathfinder()) + 64), err);
+		sprintf(url, trustman_pf_get_template, trustman_get_pathfinder(), tuh, fuh);
+		if (!(ret = netio_http_get(url, trustman_fetch_params_cb, params)))
+			params->requesting = 1;
+	} else {
+		params->params = strdup("sorry, no trustparams this time!");
+		params->params_len = strlen(params->params);
+		time(&(params->expires));
+		params->expires += 30;
+		ret = 0;
+	}
 	
-	/* fetch the reverse path */
-	ASSERT_TRUE(url = mallocz(strlen(trustman_pf_get_template) + strlen(tuh) + 
-				  strlen(fuh) + strlen(trustman_get_pathfinder()) + 64), err);
-	sprintf(url, trustman_pf_get_template, trustman_get_pathfinder(), tuh, fuh);
-	ret = netio_http_get(url, trustman_fetch_params_cb, params);
-	if (ret)
-		trustman_fetch_params_cb("", -1, NULL, 0, params);
+	//if (ret)
+	//	trustman_fetch_params_cb("", -1, NULL, 0, params);
  err:
 	freez(url);
 	freez(fh);
@@ -254,19 +292,22 @@ trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from
 {
 	int ret = -1;
 	trustparams_t *params = 0;
-
+	char *params_copy = NULL;
+	int params_len = 0;
+	
 	/* do we know *anything* about any trust params to send? */
-	params = trustman_get_trustparams(from_aor, to_aor);
-	if (processor_config_is_true(processor_get_config(), P2PSHIP_CONF_USE_PATHFINDER) && 
-	    params && 
-	    params->send_flag) {
 
+	params = trustman_get_trustparams(from_aor, to_aor);
+	if (params && 
+	    params->send_flag) {
+		
 		/* check for expired, initiate fetch if necessary */
 		trustman_fetch_params(params);
 		if (!params->current_sent && params->params) {
 			/* we have new trust params to send! */
-			ret = func(from_aor, to_aor, params->params, params->params_len, data);
-			data = NULL;
+			ASSERT_TRUE(params_copy = mallocz(params->params_len + 1), err);
+			memcpy(params_copy, params->params, params->params_len);
+			params_len = params->params_len;
 		} else if (!params->params && params->requesting) {
 			/* ..wait for trust params */
 			void **ptr = mallocz(2*sizeof(void*));
@@ -280,17 +321,19 @@ trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from
 				ship_list_add(params->queued_packets, ptr);
 			}
 			ret = trustman_fetch_params(params);
-			ret = 0;
+			ret = 0;			
 		}
 	}
 		
+ err:
+	if (params)
+		ship_unlock(params->queued_packets);
+
 	/* we don't have any params, and aren't expecting any
 	   either */
 	if (data)
-		ret = func(from_aor, to_aor, NULL, 0, data);
-	
-	if (params)
-		ship_unlock(params->queued_packets);
+		ret = func(from_aor, to_aor, params_copy, params_len, data); // cbret	
+	freez(params_copy);
 	return ret;
 }
 
@@ -358,6 +401,8 @@ trustman_get_valid_trustparams(char *from_aor, char *to_aor)
 	time_t now;
 	int has_valid = 0;
 
+	ident_t *ident = ident_find_by_aor(from_aor);
+	
 	ship_lock(params_ht);
 	params = trustman_get_trustparams(from_aor, to_aor);
 
@@ -375,12 +420,10 @@ trustman_get_valid_trustparams(char *from_aor, char *to_aor)
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 		/* go through the ident's buddies, check whether we
 		   have any info on this guy */
-		ident_t *ident = NULL;
-		if ((ident = ident_find_by_aor(from_aor))) {
+		if (ident) {
 			new_len = ident_data_bb_get_first_level(ident->buddy_list, to_aor);
 			if (new_len > -1)
 				new_len += 2;
-			ship_obj_unlockref(ident);
 		}
 #endif
 		/* actually, as we're checking ident's buddies in
@@ -404,6 +447,7 @@ trustman_get_valid_trustparams(char *from_aor, char *to_aor)
 		}
 	}
 	ship_unlock(params_ht);
+	ship_obj_unlockref(ident);
 	return params;
 }
 

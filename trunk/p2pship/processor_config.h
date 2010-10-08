@@ -42,6 +42,7 @@
 #define P2PSHIP_CONF_AUTOREG_FILE "autoreg_file"
 #define P2PSHIP_CONF_LOG_FILE "log_file"
 #define P2PSHIP_CONF_WEB_DIR "web_dir"
+#define P2PSHIP_CONF_DATA_DIR "data_dir"
 
 #define P2PSHIP_CONF_CONTACTS_FILE "contacts_log"
 #define P2PSHIP_CONF_WHITELIST_FILE "whitelist_file"
