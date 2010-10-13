@@ -25,6 +25,7 @@ In short, the system is not designed primarly to provide generic identity-based 
 Currently the p2pship proxy supports the following applications
 
  * SIP with media proxying (see [SIP])
+   * With [PSTN Gateway] support
  * Peer-to-peer HTTP (see [P2PHTTP])
  * Peer-to-peer web caching (see [P2PHTTP the webcache part] of the P2PHTTP documentation)
 
@@ -36,8 +37,8 @@ For lookup:
 
 Transports:
 
- * HIP
- * TCP
+ * TCP-HIP
+ * Plain-TCP
 
 = Sections =
 
