@@ -56,6 +56,9 @@
 #define CONFIG_DISABLE_LO_HIT_ROUTING 1 
 #endif
 
+
+static ship_list_t *sipp_client_handlers = 0;
+
 /* list of all the listeners */
 static ship_list_t *sipp_all_listeners = NULL;
 
@@ -82,11 +85,13 @@ static ship_list_t *gateways = 0;
 static int sipp_handle_message_do(sipp_request_t *req);
 static int sipp_send_response(sipp_request_t *req, int code);
 static int sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to);
-static int sipp_send_sip_to_ident(osip_message_t *sip, ident_t *ident, addr_t *from);
+static int sipp_send_sip_to_ident(osip_message_t *sip, ident_t *ident, addr_t *from, const char *remote_aor);
 static int sipp_send_remote_response(osip_message_t* sip, int code, char *sip_aor, ident_t *ident);
 static int sipp_check_and_mark(osip_message_t *sip, char *prefix, int code);
 static int sipp_handle_remote_message(char *msg, int msglen, ident_t *ident, char *sip_aor, service_type_t service);
 static void sipp_call_log_record(char *local_aor, char *remote_aor, osip_event_t *evt, int verdict, int remote1);
+static char *sipp_real_aor(char *aor);
+//static char *sipp_aor_group_code(char *aor);
 
 /* sipp_requests */
 static void sipp_request_free(sipp_request_t *req);
@@ -348,7 +353,21 @@ sipp_find_to_ident(char *local_sip, char *remote_sip)
 			return strdup(gw->gateway_ident_aor);
 		}
 	}
-	return strdup(remote_sip);
+
+	/* no gateway? check multiparty / alias stuff */
+	return sipp_real_aor(strdup(remote_sip));
+
+	/*
+	ASSERT_TRUE(ret = mallocz(strlen(remote_sip)+1), err);
+	if ((p1 = strchr(remote_sip, '+'))) {
+		strncpy(ret, remote_sip, (int)(p1-remote_sip));
+		if ((p2 = strchr(p1, '@')))
+			strcat(ret, p2);
+	} else
+		strcpy(ret, remote_sip);
+ err:
+	return ret;
+	*/
 }
 
 /*
@@ -424,8 +443,8 @@ sipp_request_init(sipp_request_t *ret, sipp_request_t *param)
 	ret->lis = param->lis;
 	memcpy(&(ret->from_addr), &(param->from_addr), sizeof(addr_t));
 	if (ret->evt && ret->evt->sip && ret->evt->sip->from && ret->evt->sip->to) {
-		char *local = sipp_url_to_short_str(ret->evt->sip->from->url);
-		char *remote = sipp_url_to_short_str(ret->evt->sip->to->url);
+		char *local = sipp_real_aor(sipp_url_to_short_str(ret->evt->sip->from->url));
+		char *remote = sipp_real_aor(sipp_url_to_short_str(ret->evt->sip->to->url));
 		if (MSG_IS_RESPONSE(ret->evt->sip)) {
 			char *tmp = local;
 			local = remote;
@@ -867,12 +886,31 @@ sipp_call_terminated(osip_message_t* sip, int remotely_got)
 
 }
 
+/*
+static int
+sipp_handle_group_message(osip_message_t* sip, ident_t *ident, 
+			  char *remote_aor, 
+			  char *group)
+{
+	printf("got message for group %s on ident %s from %s\n",
+	       group, ident->sip_aor, remote_aor);
+
+	sipp_send_remote_response(sip, 200, remote_aor, ident);
+	
+	
+	
+	return 0;
+}
+*/
+
 /* processes remotely received messages (datagrams) */
 static int
 sipp_forward_remote_message(osip_message_t* sip, ident_t *ident, char *remote_aor)
 {      
         char *tmp = NULL;
-	
+	// char *local = NULL, *remote = NULL;
+	//int ret = -1;
+
 	/* check Via - remove my own entry on responses, add on requests! */
         if (MSG_IS_RESPONSE(sip)) {
                 /* remove my Via */
@@ -928,7 +966,16 @@ sipp_forward_remote_message(osip_message_t* sip, ident_t *ident, char *remote_ao
  err:
 	LOG_WARN("Error while processing remotely got message.\n");
  end:
-	return sipp_send_sip_to_ident(sip, ident, NULL);
+	/* check the SIP client hooks */
+	/* no.. tihs comes later, just before sending! 
+	ASSERT_ZERO(sipp_get_sip_aors(sip, &local, &remote, 1), end);
+	if (strlen(sipp_aor_group_code(local)) > 0)
+		return sipp_handle_group_message(sip, ident, remote_aor, local);
+	freez(local);
+	freez(remote);
+	*/
+
+	return sipp_send_sip_to_ident(sip, ident, NULL, remote_aor);
 }
 
 static void
@@ -1213,6 +1260,19 @@ sipp_load_routing()
 				  sipp_load_routing_xml, arr);
 }
 
+/*
+static int
+test_client_handler(ident_t *ident, const char *remote_aor, addr_t *contact_addr, char **buf, int *len,
+		    void *data)
+{
+	char *tmp = 0;
+	while ((tmp = strstr(*buf, "huff"))) {
+		memcpy(tmp, "!?#%", 4);
+	}
+	return 1;
+}
+*/
+
 int 
 sipp_init(processor_config_t *config)
 {
@@ -1290,6 +1350,10 @@ sipp_init(processor_config_t *config)
 	ASSERT_ZERO(ident_service_register(&sipp_service), err);
 	ASSERT_ZERO(sipp_mp_init(), err);
 
+	ASSERT_TRUE(sipp_client_handlers = ship_list_new(), err);
+
+	//sipp_register_client_handler(test_client_handler, NULL);
+
         ret = 0;
 	goto end;
  err:
@@ -1311,6 +1375,10 @@ sipp_close()
         ship_list_t *liss = NULL;
 	LOG_INFO("closing the legacy sip proxy\n");
 	
+	ship_list_empty_with(sipp_client_handlers, ship_pack_free);
+	ship_list_free(sipp_client_handlers);
+	sipp_client_handlers = NULL;
+
 	sipp_mp_close_sys();
 	ac_close();
         if (sipp_mps) {
@@ -1356,6 +1424,39 @@ sipp_url_to_short_str(osip_uri_t *url)
         }
         return str;
 }
+
+/* shortens the aor, removing any multiparty groups */
+static char *
+sipp_real_aor(char *aor)
+{
+	char *p1, *p2;
+	if (aor && (p1 = strchr(aor, '+'))) {
+		if ((p2 = strchr(p1, '@'))) {
+			while (*p2)
+				*(p1++) = *(p2++);
+		}
+		*p1 = '\0';
+	}
+	return aor;
+}
+
+/* extracts the group code from a sip aor */
+/*
+static char *
+sipp_aor_group_code(char *aor)
+{
+	char *p1, *p2;
+	if (!aor)
+		return aor;
+	
+	p1 = p2 = aor;
+	while ((*p1) && (*p1 != '+')) p1++;
+	p1++;
+	while ((*p1) && (*p1 != '@')) *(p2++) = *(p1++);
+	*p2 = '\0';
+	return aor;
+}
+*/
 
 /* called when an event has been processed by the processor */
 static void
@@ -1882,7 +1983,6 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 			return s;
 		}
 	} else {
-		TODO("maybe all those VIAs are screwing up the TCP conn???\n");
 		LOG_VDEBUG("Sending %d bytes over TCP..\n", len);
 		return netio_send(s, buf, len);
 	}
@@ -1891,22 +1991,77 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 	return -1;
 }
 
+int
+sipp_register_client_handler(sipp_client_handler handler, void *data)
+{
+	void *ptr = 0;
+	int ret = -1;
+	
+	ASSERT_TRUE(ptr = ship_pack("pp", handler, data), err);
+	ship_list_add(sipp_client_handlers, ptr);
+	ret = 0;
+ err:
+	return ret;
+}
+
+/* untested .. */
+void
+sipp_unregister_client_handler(sipp_client_handler handler, void *data)
+{
+	void *ptr = 0, *pack = 0;
+	ship_lock(sipp_client_handlers);
+	while ((pack = ship_list_next(sipp_client_handlers, &ptr))) {
+		sipp_client_handler handler2;
+		void *data2;
+		ship_unpack_keep(pack, &handler2, &data2);
+		if (handler2 == handler && data2 == data) {
+			ship_list_remove(sipp_client_handlers, pack);
+			ship_pack_free(pack);
+			break;
+		}
+	}
+	ship_unlock(sipp_client_handlers);
+}
+
+static int
+sipp_run_client_handlers(ident_t *ident, const char *remote_aor, addr_t *contact_addr, char **buf, int *len)
+{
+	void *ptr = 0, *pack = 0;
+	int ret = -1;
+
+	/* filters: for ident, remote aor, contact addr,
+	   sip-from, sip-to, message type */
+
+	ASSERT_TRUE(ident && *buf, err);
+	ship_lock(sipp_client_handlers);
+	ret = 1;
+	while (ret && *buf && (pack = ship_list_next(sipp_client_handlers, &ptr))) {
+		sipp_client_handler handler;
+		void *data;
+		
+		ship_unpack_keep(pack, &handler, &data);
+		ret = handler(ident, remote_aor, contact_addr, buf, len, data);
+	}
+	ship_unlock(sipp_client_handlers);
+	if (ret)
+		ret = 1;
+ err:
+	return ret;
+}
+
 static int 
-sipp_send_sip_to_ident(osip_message_t *sip, ident_t *ident, addr_t *from)
+sipp_send_sip_to_ident(osip_message_t *sip, ident_t *ident, addr_t *from, const char *remote_aor)
 {        
 	addr_t *contact_addr = 0;
 #ifdef CONFIG_DISABLE_LO_HIT_ROUTING
 	addr_t addr;
 #endif
 	char *buf = 0;
-	int len, ret;
+	int len, ret = 0;
 
 	/* create the msg */
-	if (osip_message_to_str(sip, &buf, (unsigned int*)&len)) {
-		LOG_ERROR("Could not serialize sip message! Message dropped!\n");
-	} else {
-		LOG_VDEBUG("Sending message:\n>>>>>\n%s\n<<<<<\n", buf);
-	}
+	ASSERT_ZERO(osip_message_to_str(sip, &buf, (unsigned int*)&len), err); //, "Could not serialize sip message! Message dropped!\n");
+	LOG_VDEBUG("Sending message:\n>>>>>\n%s\n<<<<<\n", buf);
 	
 	/* get the address where to send the packet! */
 	if (ident && !(contact_addr = sipp_get_relay_addr(ident, sip)))
@@ -1930,9 +2085,17 @@ sipp_send_sip_to_ident(osip_message_t *sip, ident_t *ident, addr_t *from)
 		contact_addr = &addr;
 	}
 #endif	
-	ret = sipp_send_buf(buf, len, 
-			    (sipp_listener_t *)ident_get_service_data(ident, SERVICE_TYPE_SIP), 
-			    contact_addr);
+
+	/* let the output processors do their thing .. */
+	ret = sipp_run_client_handlers(ident, remote_aor, contact_addr, &buf, &len);
+	if (ret && buf) {
+		ret = sipp_send_buf(buf, len, 
+				    (sipp_listener_t *)ident_get_service_data(ident, SERVICE_TYPE_SIP), 
+				    contact_addr);
+	} else
+		LOG_INFO("Dropping SIP packet as a client handler stole it\n");
+	
+ err:
 	freez(buf);
 	return ret;
 }
@@ -2058,7 +2221,7 @@ sipp_send_sip_to_ident_do(void *d, processor_task_t **wait, int wait_for_code)
 
 	LOG_DEBUG("sending async message to %s..\n", aor);
 	if ((ident = ident_find_by_aor(aor)) || addr) {
-		sipp_send_sip_to_ident(sip, ident, addr);
+		sipp_send_sip_to_ident(sip, ident, addr, NULL);
 		ship_obj_unlockref(ident);
 	} else {
 		LOG_WARN("should send msg to %s, but could not (no target found!)\n", aor);

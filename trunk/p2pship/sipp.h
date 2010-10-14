@@ -116,4 +116,16 @@ typedef struct sipp_relay_s {
 int sipp_buddy_handle_subscribe(ident_t *from, char *to, int expire, char *callid);
 int sipp_buddy_handle_subscribes(ident_t *from, char **to, int expire, char *callid);
 
+/* client handlers are actually 'outgoing messsage manglers', but used
+   primarily for implementing custom SIP clients.
+
+   @return 0 on end. 1 on continue, -1 on error (= continue)
+*/
+typedef int (*sipp_client_handler) (ident_t *ident, const char *remote_aor, addr_t *contact_addr, char **buf, int *len,
+				    void *data);
+
+int sipp_register_client_handler(sipp_client_handler handler, void *data);
+void sipp_unregister_client_handler(sipp_client_handler handler, void *data);
+
+
 #endif

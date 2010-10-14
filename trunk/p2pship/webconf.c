@@ -343,7 +343,7 @@ webconf_un_receive_sip_log(char *event, void *data, void *eventdata)
     
 	ASSERT_TRUE((tmp = append_str(e->remote_aor, str, &size, &len)) && (str = tmp), err);
 	ASSERT_TRUE((tmp = append_str(";", str, &size, &len)) && (str = tmp), err);
-	if ((r = ident_find_foreign_reg(e->remote_aor)))
+	if ((r = ident_find_foreign_reg(e->remote_aor))) // multiparty todo: should this be the short version?
 		name = r->name;
 	ASSERT_TRUE((tmp = append_str((name? name:""), str, &size, &len)) && (str = tmp), err);
 	ASSERT_TRUE((tmp = append_str(";", str, &size, &len)) && (str = tmp), err);
