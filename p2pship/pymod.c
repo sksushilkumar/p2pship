@@ -45,6 +45,10 @@
 static ship_ht_t *pymod_config_updaters = 0;
 static ship_ht_t *pymod_http_servers = 0;
 
+#ifdef CONFIG_SIP_ENABLED
+static ship_ht_t *pymod_sipp_client_handlers = 0;
+#endif
+
 /* whether still alive */
 static int pymod_alive = 0;
 
@@ -1221,6 +1225,85 @@ p2pship_alive(PyObject *self, PyObject *args)
 	return Py_BuildValue("b", pymod_alive);
 }
 
+#ifdef CONFIG_SIP_ENABLED
+#include "sipp.h"
+
+/**
+ * 
+ * SIP message processing, client handlers
+ *
+ */
+
+static int
+pymod_sipp_client_handler(ident_t *ident, const char *remote_aor, addr_t *contact_addr, char **buf, int *len,
+			  void *data)
+{
+	int ret = -1;
+	char *addr = 0;
+	pymod_ipc_handler_t *h = (pymod_ipc_handler_t*)data;
+	PyObject *arglist;
+	PyObject *result;
+	
+	ident_addr_addr_to_str(contact_addr, &addr);
+		
+	//ASSERT_TRUE(ship_ht_get(pymod_sipp_client_handlers, h), err);
+	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
+	ASSERT_TRUE(arglist = Py_BuildValue("(ssss#)", ident->sip_aor, remote_aor, addr, *buf, *len), err);
+	result = PyObject_CallObject(h->callback, arglist);
+	Py_DECREF(arglist);
+	ASSERT_TRUE(result, err);
+
+	if (PyString_Check(result)) {
+		char *nbuf = 0;
+		int nlen = 0;
+		if (PyString_AsStringAndSize(result, &nbuf, &nlen) != -1) {
+			freez(addr);
+			ASSERT_TRUE(addr = mallocz(nlen+1), err);
+			memcpy(addr, nbuf, nlen);
+			freez(*buf);
+			*buf = addr;
+			*len = nlen;
+			addr = 0;
+			ret = 1;
+		} else
+			ret = -1;
+	} else
+		ret = 0; /* done with it! */
+	
+	Py_DECREF(result);
+ err:
+	pymod_tstate_return();
+	freez(addr);
+	return ret;
+}
+
+static PyObject *
+p2pship_register_sip_client_handler(PyObject *self, PyObject *args)
+{
+	PyObject *callback = 0;
+	char *name = 0;
+	pymod_ipc_handler_t *h = 0;
+
+	if (!PyArg_ParseTuple(args, "sO:register_sip_client_handler", &name, &callback))
+		goto err;
+
+	ASSERT_ZERO(ship_ht_get_string(pymod_sipp_client_handlers, name), err);
+
+	LOG_DEBUG("registering sip client handler for %s..\n", name);
+	ASSERT_TRUE(h = pymod_ipc_new(name, callback, NULL), err);
+	//pymod_ipc_free(ship_ht_get_string(pymod_sipp_client_handlers, name));
+	ship_ht_put_string(pymod_sipp_client_handlers, name, h);
+	sipp_register_client_handler(pymod_sipp_client_handler, h);
+
+	LOG_DEBUG("registered sip client handler for %s done\n", name);
+	Py_INCREF(Py_None);
+	return Py_None;
+ err:
+	return NULL;
+}	
+#endif
+
+
 /**
  *
  * small, inefficient persistent storage
@@ -1510,6 +1593,10 @@ static PyMethodDef p2pshipMethods[] = {
     {"get_idents",  p2pship_get_idents, METH_VARARGS, "Returns a list of the local identitie's aors."},
     {"get_ident",  p2pship_get_ident, METH_VARARGS, "Returns an identity object."},
 
+#ifdef CONFIG_SIP_ENABLED
+    {"register_sip_client_handler",  p2pship_register_sip_client_handler, METH_VARARGS, "Registers a SIP client handler"},
+#endif
+
     {NULL, NULL, 0, NULL}        /* Sentinel */
 };
 
@@ -1564,7 +1651,9 @@ pymod_init(processor_config_t *config)
 	ASSERT_TRUE(pymod_config_updaters = ship_ht_new(), err);
 	ASSERT_TRUE(pymod_http_servers = ship_ht_new(), err);
 	ASSERT_TRUE(pymod_default_services = ship_ht_new(), err);
-
+#ifdef CONFIG_SIP_ENABLED
+	ASSERT_TRUE(pymod_sipp_client_handlers = ship_ht_new(), err);
+#endif
 	/* http://www.linuxjournal.com/article/3641 */
 	Py_InitializeEx(0);
 	PyEval_InitThreads();
@@ -1603,10 +1692,11 @@ pymod_close()
 	PyEval_AcquireLock();
 	PyThreadState_Swap(mainThreadState);
 	PyThreadState_Clear(mainThreadState);
+
+	//PyThreadState_Swap(NULL);
 	//PyThreadState_Delete(mainThreadState); // can't del the main thread
 	pymod_alive = 0;
 	Py_Finalize();
-
 	/* close the ol's */
 	ship_list_empty_with(pymod_ol_clients, pymod_ol_free);
 	ship_list_free(pymod_ol_clients);
@@ -1626,6 +1716,11 @@ pymod_close()
 		pymod_ipc_free(ptr);
 	ship_ht_free(pymod_config_updaters);
 
+#ifdef CONFIG_SIP_ENABLED
+	while ((ptr = ship_ht_pop(pymod_sipp_client_handlers)))
+		pymod_ipc_free(ptr);
+	ship_ht_free(pymod_sipp_client_handlers);
+#endif
 	// unregister these?
 	while ((ptr = ship_ht_pop(pymod_http_servers)))
 		pymod_ipc_free(ptr);

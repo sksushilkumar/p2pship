@@ -613,6 +613,17 @@ ac_packetfilter_simple(ac_sip_t *asip)
 		/* todo: we should check that the sip from == the aor
 		   associated with the connection (on remote calls) */
 
+		/* except that that would mess up the gateway things. */
+
+		//ASSERT_ZERO(sipp_get_sip_aors_simple(sip, &local_aor, &remote_aor, 1), end);
+		/*
+		if ((!MSG_IS_RESPONSE(asip->evt->sip) &&
+		     (strcmp(asip->from, asip->remote) || strcmp(asip->to, asip->local))) ||
+		    (MSG_IS_RESPONSE(asip->evt->sip) &&
+		     (strcmp(asip->to, asip->remote) || strcmp(asip->from, asip->local))))
+			asip->verdict = AC_VERDICT_REJECT;
+		else 
+		*/
 		if (MSG_IS_RESPONSE(sip)) {
 
 			/* todo: check if this is for one of this proxy's call
