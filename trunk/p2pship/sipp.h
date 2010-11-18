@@ -126,6 +126,7 @@ typedef int (*sipp_client_handler) (ident_t *ident, const char *remote_aor, addr
 
 int sipp_register_client_handler(sipp_client_handler handler, void *data);
 void sipp_unregister_client_handler(sipp_client_handler handler, void *data);
+void sipp_handle_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr);
 
 
 #endif
