@@ -215,6 +215,8 @@ class FbUser extends DbObj
 	}
 
 	public function by_fbid($id, $create = true) {
+		if (!isset($id) || !$id || strlen($id) == 0)
+			return null;
 		$c = get_db_conn();
 		$uid = $c->select_value("select id from " . $this->_table . " where fb_id = ?", $id);
 		if (!$uid)
