@@ -2196,7 +2196,7 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
 				/* first, send reg package, then send target. */
 				ship_unlock(conn);
 				if ((ident = ident_find_by_aor(conn->local_aor)))
-					reg_str = ident_get_regxml(conn->ident);
+					reg_str = ident_get_regxml(ident);
 				ship_obj_unlockref(ident);
 				ship_lock(conn);
 
