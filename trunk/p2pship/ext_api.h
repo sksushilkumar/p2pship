@@ -44,6 +44,6 @@ int extapi_register_p2phttp_handler(char *aor, const int dport, addr_t *addr, co
 
 void extapi_register();
 extapi_http_req_t *extapi_get_http_req(const char *id);
-void extapi_http_data_return(extapi_http_req_t *req, char *data, int odatalen);
+void extapi_http_data_return(extapi_http_req_t *req, const char *data, int odatalen);
 
 #endif
