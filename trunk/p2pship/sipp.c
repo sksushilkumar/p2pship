@@ -500,7 +500,7 @@ sipp_cb_packetfilter_local(char *local_aor, char *remote_aor, void *msg, int ver
 }
 
 /* processes received messages (datagrams) */
-static void
+void
 sipp_handle_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr)
 {
         osip_event_t *evt = 0;
@@ -827,6 +827,8 @@ sipp_process_sdp_message_body(osip_message_t* sip,
 
 				freez(newbodystr);
 				ASSERT_ZERO(sipp_get_sip_aors(sip, &local_sip, &remote_sip, remotely_got), err);
+				sipp_real_aor(local_sip);
+				sipp_real_aor(remote_sip);
 				ASSERT_ZERO(sipp_sdp_replace_addr_create_proxies(bodystr, len, &newbodystr, &newbodylen, 
 										 callid, local_sip, remote_sip,
 										 &newaddr, sendby, remotely_got), err);
@@ -1489,7 +1491,7 @@ sipp_handle_message_do(sipp_request_t *req)
 {
         osip_event_t* evt;
         osip_message_t* sip;
-        char *fulltourl = 0, *fullfromurl = 0, *toident = 0;;
+        char *fulltourl = 0, *fullfromurl = 0, *toident = 0, *fromident = 0;
         osip_header_t *h;
         int expire, alreadyseen, ret = -1, same_domain = 0;
         ident_t *ident = 0;
@@ -1519,6 +1521,7 @@ sipp_handle_message_do(sipp_request_t *req)
 	
 	/* this is for gateway'ing & responses to gateway'd requests */
 	ASSERT_TRUE(toident = sipp_find_to_ident(fullfromurl, fulltourl), end);
+	ASSERT_TRUE(fromident = sipp_real_aor(strdup(fullfromurl)), end);
 
         h = NULL;
         osip_message_get_expires(sip, 0, &h);
@@ -1530,7 +1533,8 @@ sipp_handle_message_do(sipp_request_t *req)
 
         ident = NULL;
         if (!MSG_IS_REGISTER(sip)) {
-                ident = (ident_t *)ident_find_by_aor(fullfromurl);
+                //ident = (ident_t *)ident_find_by_aor(fullfromurl);
+                ident = (ident_t *)ident_find_by_aor(fromident);
                 if (!ident || !ident_registration_is_valid(ident, SERVICE_TYPE_SIP)) {
 			ship_obj_unlockref(ident);
 			ident = NULL;
@@ -1732,6 +1736,7 @@ sipp_handle_message_do(sipp_request_t *req)
 	freez(fulltourl);
 	freez(fullfromurl);
 	freez(toident);
+	freez(fromident);
         return ret;
 }
 
