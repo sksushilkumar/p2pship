@@ -133,13 +133,12 @@ int netio_http_server_modif(int ss, char *new_address);
 void netio_http_server_close(int ss);
 
 
-netio_http_conn_t *netio_http_get_conn_by_socket(int s);
 #define netio_http_get_attr netio_http_get_header
 #define netio_http_set_attr netio_http_set_header
 
 netio_http_conn_t *netio_http_parse_data(char *data, int datalen);
 netio_http_conn_t *netio_http_parse_header(char *data, int datalen);
-netio_http_conn_t *netio_http_get_conn_by_id(char *id);
+netio_http_conn_t *netio_http_get_conn_by_id(const char *id);
 
 int netio_http_get(char *url,
 		   void (*func) (char *url, int respcode, char *data, int data_len, void *pkg),

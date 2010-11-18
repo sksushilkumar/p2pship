@@ -724,20 +724,48 @@ p2pship_send_packet(PyObject *self, PyObject *args)
  * HTTP server
  *
  */
+static void
+p2pship_http_create_ref(char *ref, netio_http_conn_t *conn, extapi_http_req_t *req)
+{
+	if (req)
+		sprintf(ref, "p:%s", req->id);
+	else
+		sprintf(ref, "s:%s", conn->tracking_id);
+}
+
+static int
+p2pship_http_get_ref(const char *ref, netio_http_conn_t **conn, extapi_http_req_t **req)
+{
+	if (str_startswith(ref, "p:")) {
+		*req = extapi_get_http_req(&ref[2]);
+	} else if (str_startswith(ref, "s:")) {
+		*conn = netio_http_get_conn_by_id(&ref[2]);
+	}
+	if (*conn || *req)
+		return 0;
+	return -1;
+}
+
 static PyObject *
 p2pship_http_send(PyObject *self, PyObject *args)
 {
-	int ref = -1;
+	const char *ref = 0;
 	const char *data = 0;
+	extapi_http_req_t *req = NULL;
 	netio_http_conn_t *conn = 0;
 	
 	// todo: test me
-	
-	if (!PyArg_ParseTuple(args, "is:http_send", &ref, &data))
+
+	if (!PyArg_ParseTuple(args, "ss:http_send", &ref, &data))
 		goto err;
 
-	ASSERT_TRUE(conn = netio_http_get_conn_by_socket(ref), err);
-	netio_send(conn->socket, data, strlen(data));
+	ASSERT_ZERO(p2pship_http_get_ref(ref, &conn, &req), err);
+	if (req)
+		extapi_http_data_return(req, data, strlen(data));
+	else if (conn) {
+		netio_send(conn->socket, data, strlen(data));
+		ship_unlock(conn);
+	}
 	Py_INCREF(Py_None);
 	return Py_None;
 err:
@@ -762,31 +790,11 @@ err:
 	return NULL;
 }
 
-static void
-p2pship_http_create_ref(char *ref, netio_http_conn_t *conn, extapi_http_req_t *req)
-{
-	if (req)
-		sprintf(ref, "p:%s", req->id);
-	else
-		sprintf(ref, "s:%d", conn->socket);
-}
-
-static int
-p2pship_http_get_ref(const char *ref, extapi_http_req_t **req)
-{
-	if (str_startswith(ref, "p:")) {
-		*req = extapi_get_http_req(&ref[2]);
-	} else if (str_startswith(ref, "s:")) {
-		return atoi(&ref[2]);
-	}
-	return -1;
-}
-
 static PyObject *
 p2pship_http_respond(PyObject *self, PyObject *args)
 {
 	const char *ref, *code_str, *content_type, *body;
-	int code, body_len, s;
+	int code, body_len;
 	netio_http_conn_t *conn = 0;
 	extapi_http_req_t *req = NULL;
 	
@@ -794,7 +802,7 @@ p2pship_http_respond(PyObject *self, PyObject *args)
 			      &ref, &code, &code_str, &content_type, &body, &body_len))
 		goto err;
 	
-	s = p2pship_http_get_ref(ref, &req);
+	ASSERT_ZERO(p2pship_http_get_ref(ref, &conn, &req), err);
 	if (req) {
 		char *msg = 0;
 		int msglen = 0;
@@ -808,7 +816,6 @@ p2pship_http_respond(PyObject *self, PyObject *args)
 		}
 		extapi_http_data_return(req, "", 0); // to finish the req off..
 	} else {
-		ASSERT_TRUE(conn = netio_http_get_conn_by_socket(s), merr);
 		netio_http_respond(conn, 
 				   code, (char*)code_str, 
 				   (char*)content_type,
@@ -817,9 +824,8 @@ p2pship_http_respond(PyObject *self, PyObject *args)
 	}
 	Py_INCREF(Py_None);
 	return Py_None;
- merr:
-	PyErr_SetString(PyExc_EnvironmentError, "Socket closed");
  err:
+	PyErr_SetString(PyExc_EnvironmentError, "Socket closed");
 	return NULL;
 }
 
@@ -843,7 +849,6 @@ pymod_http_process_req2(netio_http_conn_t *conn, void *pkg, extapi_http_req_t *r
 	addr_t addr;
 	char *astr = 0;
 	char ref[32];
-
 	
 	/*
         (self.ref,
@@ -900,9 +905,11 @@ pymod_http_process_req2(netio_http_conn_t *conn, void *pkg, extapi_http_req_t *r
 					    conn->url_extras, conn->http_version, (astr? astr : "remote:0000"),
 					    params, headers), err);
 	params = 0; headers = 0;
+	freez(astr);
+	ASSERT_TRUE(astr = strdup(conn->tracking_id), err);
 	ship_unlock(conn);
 	result = PyObject_CallObject(h->callback, arglist);
-	conn = netio_http_get_conn_by_socket(conn->socket); // dangerous.. should be ship_obj!!
+	conn = netio_http_get_conn_by_id(astr); // dangerous.. should be ship_obj!!
 	ASSERT_TRUE(result, err);
 	ASSERT_TRUE(PyInt_Check(result), err);
 	funcret = (int)PyInt_AsLong(result);
@@ -1278,6 +1285,25 @@ pymod_sipp_client_handler(ident_t *ident, const char *remote_aor, addr_t *contac
 }
 
 static PyObject *
+p2pship_sip_route(PyObject *self, PyObject *args)
+{
+	char *msg;
+	int len = 0;
+	PyObject *ret = 0;
+	addr_t addr;
+	
+	if (!PyArg_ParseTuple(args, "s#:sip_route", &msg, &len))
+		goto err;
+	
+	bzero(&addr, sizeof(addr));
+	sipp_handle_message(msg, len, NULL, &addr);
+	ret = Py_None;
+ err:
+	Py_XINCREF(ret);
+	return ret;
+}
+
+static PyObject *
 p2pship_register_sip_client_handler(PyObject *self, PyObject *args)
 {
 	PyObject *callback = 0;
@@ -1291,7 +1317,6 @@ p2pship_register_sip_client_handler(PyObject *self, PyObject *args)
 
 	LOG_DEBUG("registering sip client handler for %s..\n", name);
 	ASSERT_TRUE(h = pymod_ipc_new(name, callback, NULL), err);
-	//pymod_ipc_free(ship_ht_get_string(pymod_sipp_client_handlers, name));
 	ship_ht_put_string(pymod_sipp_client_handlers, name, h);
 	sipp_register_client_handler(pymod_sipp_client_handler, h);
 
@@ -1595,6 +1620,9 @@ static PyMethodDef p2pshipMethods[] = {
 
 #ifdef CONFIG_SIP_ENABLED
     {"register_sip_client_handler",  p2pship_register_sip_client_handler, METH_VARARGS, "Registers a SIP client handler"},
+    {"sip_route",  p2pship_sip_route, METH_VARARGS, "Routes a SIP message as if originated from local."},
+
+
 #endif
 
     {NULL, NULL, 0, NULL}        /* Sentinel */

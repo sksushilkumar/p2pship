@@ -82,7 +82,8 @@ static void
 __extapi_get_cb(char *key, char *data, char *signer, void *param, int status)
 {
 	netio_http_conn_t *conn = 0;
-	if ((conn = netio_http_get_conn_by_socket((int)param))) {
+	char *trackingid = (char*)param;
+	if ((conn = netio_http_get_conn_by_id(trackingid))) {
 		char buf[32], *curr, *entry; 
 		int ce = 0; 
 
@@ -131,6 +132,7 @@ __extapi_get_cb(char *key, char *data, char *signer, void *param, int status)
 			ship_unlock(conn);
 		}
 	}
+	freez(trackingid);
 }
 
 
@@ -203,7 +205,7 @@ extapi_http_conn_cb(int s, void *obj)
 
 
 void 
-extapi_http_data_return(extapi_http_req_t *req, char *data, int odatalen)
+extapi_http_data_return(extapi_http_req_t *req, const char *data, int odatalen)
 {
 	char *tmp = 0;
 	int strl = 0, datalen = odatalen;
@@ -530,6 +532,8 @@ extapi_handle_http_forward_data_cb(int s, void *obj, char *data, int datalen)
 			}
 
 			// arr. we should NOT close unless we really have answered all the requests!
+			// BUT.. as we are creating new conns when receiving new requests,
+			// and transferring the ownership, it doesn't matter. i guess.
 			netio_http_conn_close(conn);
 			conn = 0;
 		} else
@@ -687,6 +691,7 @@ httpproxy_process_req(netio_http_conn_t *conn, void *pkg)
 	int port = 80;
 	
 	LOG_DEBUG("got req for %s on socket %d\n", conn->url, conn->socket);
+
 	/* hm, if method == CONNECT, what then? highjack the socket,
 	   put it into a forwarder */
 	if (!strcmp(conn->method, "CONNECT")) {
@@ -886,7 +891,9 @@ extapi_process_req(netio_http_conn_t *conn, void *pkg)
 		if (!key) {
 			netio_http_respond_str(conn, 400, "Bad request", "Bad request");
 		} else {
-			ASSERT_ZERO(olclient_get(key, (void*)conn->socket, __extapi_get_cb), err);
+			char *trackingid = 0;
+			ASSERT_TRUE(trackingid = strdup(conn->tracking_id), err);
+			ASSERT_ZERO(olclient_get(key, (void*)trackingid, __extapi_get_cb), err);
 			ret = 1;
 		}
 	} else if (str_startswith(conn->url, "/put")) {

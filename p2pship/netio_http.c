@@ -41,6 +41,8 @@ static ship_ht_t *conns_ht = 0;
 static const char *post_header = "POST %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: HIIT P2PSIP\r\nAccept: *\r\nContent-Length: %d\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
 static const char *get_header = "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: HIIT P2PSIP\r\nAccept: *\r\nConnection: close\r\n\r\n";
 
+static netio_http_conn_t *netio_http_get_conn_by_socket(int s, const int must_own);
+
 
 /* some packet ordering funcs. these are a bit quick&dirty, yes.*/
 
@@ -239,19 +241,39 @@ netio_http_redirect_data(netio_http_conn_t *conn, int s)
 	return 0;
 }
 
+/* closes all netio_conn's for the given socket */
+static void
+netio_http_conn_close_all(const int socket)
+{
+	netio_http_conn_t *ret = 0;
+
+	while ((ret = netio_http_get_conn_by_socket(socket, 0))) {
+		ret->owns_socket = 0;
+		netio_http_conn_close(ret);
+	}
+}
+
 static netio_http_conn_t *
 netio_http_conn_new(int socket)
 {
 	netio_http_conn_t *ret = 0;
+
+	if (socket != -1)
+		while ((ret = netio_http_get_conn_by_socket(socket, 1))) {
+			ret->owns_socket = 0;
+			ship_unlock(ret);
+		}
+
 	ASSERT_TRUE(ret = mallocz(sizeof(netio_http_conn_t)), err);
 	ret->socket = socket;
-	ret->owns_socket = 1;
 	ret->forward_socket = -1;
 	ASSERT_ZERO(ship_lock_new(&ret->lock), err);
 	netio_http_track_conn(ret, socket);
 	ASSERT_TRUE(ret->params = ship_ht_new(), err);
 	ASSERT_TRUE(ret->headers = ship_ht_new(), err);
 
+	/* this last! */
+	ret->owns_socket = 1;
 	return ret;
 err:
 	netio_http_conn_close(ret);
@@ -427,8 +449,8 @@ __netio_http_parse_data(netio_http_conn_t* conn, char *data, int datalen)
 		do {
 			le = strstr(line, "\r\n");
 			if (le == line)
-				le = 0;
-			
+				break;
+
 			if (str_startswith(line, "POST") || 
 			    str_startswith(line, "GET") ||  
 			    str_startswith(line, "OPTIONS") ||  
@@ -1016,8 +1038,8 @@ netio_http_server_free(netio_http_server_t *server)
 	freez(server);
 }
 
-netio_http_conn_t *
-netio_http_get_conn_by_socket(int s)
+static netio_http_conn_t *
+netio_http_get_conn_by_socket(int s, const int must_own)
 {
 	netio_http_conn_t *conn = 0;
 	void *ptr = 0;
@@ -1026,7 +1048,7 @@ netio_http_get_conn_by_socket(int s)
 	ship_lock(conns); {
 		while (!conn && (conn = ship_list_next(conns, &ptr))) {
 			// todo: check that it also owns the socket!
-			if (!conn->owns_socket || conn->socket != s)
+			if ((must_own && !conn->owns_socket) || conn->socket != s)
 				conn = 0;
 			else {
 				conn = netio_http_conn_lock(conn);
@@ -1037,7 +1059,7 @@ netio_http_get_conn_by_socket(int s)
 }
 
 netio_http_conn_t *
-netio_http_get_conn_by_id(char *id)
+netio_http_get_conn_by_id(const char *id)
 {
 	netio_http_conn_t *conn = 0;
 	if (!conns)
@@ -1069,13 +1091,14 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 	netio_http_conn_t *conn = 0;
 	int ret = -1;
 
-	ASSERT_TRUE(conn = netio_http_get_conn_by_socket(s), err);
-	if (datalen < 1)
+	ASSERT_TRUE(conn = netio_http_get_conn_by_socket(s, 1), err);
+	if (datalen < 1) {
 		goto err;
+	}
 
-	if (conn->forward_socket == -1)
+	if (conn->forward_socket == -1) {
 		ret = __netio_http_parse_data(conn, data, datalen);
-	else if (datalen > 0) {
+	} else if (datalen > 0) {
 		netio_send(conn->forward_socket, data, datalen);
 		ret = 1;
 	}
@@ -1083,37 +1106,35 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 	/* process.. */
 	while (!ret) {
 		netio_http_conn_t *new_conn = 0;
-		
-		// cut off stuff meant for the next request!
-		netio_http_cut_overrun(conn, &data, &datalen);
-		ret = __netio_http_process_req(conn);
-		if (datalen == 0)
+
+		ret = __netio_http_process_req(conn); // should ret be checked??
+		if (!strcmp(conn->method, "CONNECT"))
 			break;
 
-		/* forts; todo: this is pretty dangerous if some
-		   handler decides to close the http conn before
-		   returning */
+		if (!strcmp(conn->http_version, "HTTP/1.0")) {
+			ret = -1;
+			goto err;
+		}
 
-		/* verify that we still have the conn. todo: ship_obj'ify this!! */
-		/* .. this will lead to deadlocks!
-		if (!netio_http_conn_lock(conn))
-			return;
-		ship_unlock(conn);
+		/* we create a new conn for this socket as there might
+		   be another request coming. This instead of clearing
+		   the one as .. the http proxy will close the http_conn if
+		   after responding to just one request.
 		*/
-
-		/* we strip the data from the conn now as there might
-		   come another request on the same connection, which
-		   would mess things up.. */
-
-		// don't do this; just start a new conn! and transfer the ownership of socket!
-		// netio_conn_reset(conn);
-
+		netio_http_cut_overrun(conn, &data, &datalen);
 		ship_unlock(conn);
-
+		
 		ASSERT_TRUE(new_conn = netio_http_conn_new(s), err);
 		memcpy(&(new_conn->addr), &(conn->addr), sizeof(addr_t));
 		new_conn->ss = conn->ss;
 		conn->owns_socket = 0;
+
+		/* ..parse the data at this point, it IS pointing at
+		   the buffer in the old conn! */
+		if (datalen > 0)
+			ret = __netio_http_parse_data(new_conn, data, datalen);
+		else
+			ret = 1;
 		ship_unlock(new_conn);
 
 		netio_http_conn_lock(conn);
@@ -1124,12 +1145,6 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 		}
 		netio_http_conn_lock(new_conn);
 		conn = new_conn;
-
-		/* and here .. do a parse thing again! */
-		if (datalen > 0)
-			ret = __netio_http_parse_data(conn, data, datalen);
-		else
-			ret = 1;
 	}
  err:
 	if (ret < 1) {
@@ -1144,8 +1159,9 @@ static void
 __netio_http_conn_cb(int s, struct sockaddr *sa, socklen_t addrlen, int ss)
 {
 	netio_http_conn_t *conn = 0;
-	LOG_DEBUG("Got connection on netio_http\n");
+	LOG_DEBUG("Got connection on netio_http, socket %d (ss: %d)\n", s, ss);
 
+	netio_http_conn_close_all(s);
 	ASSERT_TRUE(conn = netio_http_conn_new(s), err);
 	ASSERT_ZERO(ident_addr_sa_to_addr(sa, addrlen, &(conn->addr)), err);
 	conn->ss = ss;
