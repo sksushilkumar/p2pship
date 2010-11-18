@@ -112,7 +112,10 @@ class SipMessage:
             self.cseq = parent.cseq
             self.msg_type = parent.msg_type
             self.sfrom = parent.sfrom
-            self.sto = parent.sto+";tag="+context.create_tag(self)
+            if parent.sto.find(";tag=") != -1:
+                self.sto = parent.sto
+            else:
+                self.sto = parent.sto+";tag="+context.create_tag(self)
             self.via = parent.via
             self.local_aor = parent.local_aor
             self.remote_aor = parent.remote_aor
@@ -407,7 +410,8 @@ class SipContext:
             self.msgs[msg.branch] = msg
 
         #print "todo: insert into stream %s -> %s, %s" % (msg.remote_aor, msg.local_aor, str(msg))
-        p2pship.service_send(msg.remote_aor, msg.local_aor, 1, str(msg))
+        #p2pship.service_send(msg.remote_aor, msg.local_aor, 1, str(msg))
+        p2pship.sip_route(str(msg))
 
     def register(self):
         self.registered = time.time()
