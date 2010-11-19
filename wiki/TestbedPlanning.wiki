@@ -20,7 +20,7 @@
  * Client desktop p2phttp widget showing the picture?
 
 
-== Door plates ==
+== [DoorPlates Door plates] ==
 
 An app designed to run on the tablet placed beside the office room doors. Point being to replace various name tags, summers, availability indicators.
 
