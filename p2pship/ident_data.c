@@ -16,12 +16,14 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#define _GNU_SOURCE
 #include "ident.h"
 #include "ship_utils.h"
 #include "processor.h"
 #include "ship_debug.h"
 #include "ident.h"
 #include <time.h>
+#include <string.h>
 #include "p2pship_version.h"
 #include "conn.h"
 
