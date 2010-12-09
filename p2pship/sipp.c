@@ -74,6 +74,7 @@ static int sipp_media_proxy;
 static int sipp_tunnel_proxy;
 static int sipp_force_proxy;
 static int sipp_media_proxy_mobility;
+static int sipp_media_proxy_force4;
 
 /* the list of relay configurations */
 static ship_list_t *relays = 0;
@@ -153,6 +154,7 @@ sipp_get_addr_to_ua(ident_t *ident, addr_t *addr)
 	if (lis) {
 		memcpy(addr, &(lis->addr), sizeof(addr_t));
 		ret = 0;
+		LOG_HL("ok, we are using %s as the addr to the UA!\n", addr->addr);
 	}
 	return ret;
 }
@@ -499,20 +501,41 @@ sipp_cb_packetfilter_local(char *local_aor, char *remote_aor, void *msg, int ver
 	ship_obj_unref(req);
 }
 
+
 /* processes received messages (datagrams) */
-void
+int
 sipp_handle_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr)
 {
         osip_event_t *evt = 0;
         sipp_request_t *req = 0;
 	sipp_request_t param;
+	int ret = -1;
+	int cl, count = 0;
+	int pos = 0;
 
 	LOG_DEBUG("got %d bytes of data from %s:%d\n", len, addr->addr, addr->port);
         LOG_VDEBUG("data: %s\n", msg);
 
         ASSERT_TRUE(evt = osip_parse(msg, len), err);
         ASSERT_TRUE(evt->sip, err);
-        
+
+#ifndef CONFIG_MAEMOEXTS_ENABLED
+	/* check that we actually got the whole message! */
+	if (evt->sip->content_length && evt->sip->content_length->value) {
+		osip_body_t *body;
+		cl = atoi(evt->sip->content_length->value);
+		while ((body = (osip_body_t *)osip_list_get(&evt->sip->bodies, pos))) { // segfaults on maemo
+			count += body->length;
+			pos++;
+		}
+		
+		if (count < cl) {
+			LOG_DEBUG("incomplete message, expected %d, but got %d bytes\n", cl, count);
+			ret = 1;
+			goto err;
+		}
+	}
+#endif
 	param.lis = lis;
 	param.evt = evt;
 	memcpy(&(param.from_addr), addr, sizeof(addr_t));
@@ -520,14 +543,16 @@ sipp_handle_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr)
 
 	/* take this through the AC module */
 	ASSERT_ZERO(ac_packetfilter_local(req, sipp_cb_packetfilter_local), err);
-        return;
+        return 0;
  err:
         LOG_VDEBUG("invalid message!\n");
         if (req) { 
 		ship_obj_unref(req);
         } else if (evt)
                 osip_event_free(evt);
+	return ret;
 }
+
 
 
 /* extracts the contact-string's address to the given addr. includes
@@ -571,10 +596,65 @@ sipp_sdp_extract_contact(char *bodystr, int bodystrlen, addr_t *addrd)
 	return ret;
 }
 
+/* extracts all contacts into an array */
+static int
+sipp_sdp_extract_all_contacts(char *bodystr, int bodystrlen, ship_list_t *list)
+{
+	addr_t* addr = 0;
+	char *p = bodystr;
+	while (p) {
+		p++;
+		if ((p = strstr(p, "c="))) { //, bodystrlen-(p-bodystr)))) {
+			ASSERT_TRUE(addr = mallocz(sizeof(*addr)), err);
+			if (!sipp_sdp_extract_contact(p, bodystrlen - (int)(p - bodystr), addr))
+				ship_list_add(list, addr);
+			else
+				freez(addr);
+		}
+	}
+ err:
+	return ship_list_length(list);
+}
+
+
+static void
+sipp_sdp_process_proxy_address(int remotely_got, addr_t *target_addr, const addr_t *original_new_addr, addr_t *new_addr)
+{
+	memcpy(new_addr, original_new_addr, sizeof(*new_addr));
+	
+	LOG_HL("processing %s..\n", target_addr->addr);
+	
+	/* todo gw: if we are in gateway mode, we should not have the
+	   mobility hack enabled ever! */
+	TODO("check whether we are in proxy mode, disable mobility hack\n");
+		
+	/* support for mobility: replace it with lo, as that doesn't change during mobility.
+	 * Also: this takes care of LSI's (1.0.0.1) */
+	if (!remotely_got && (target_addr->family == AF_INET) &&
+	    sipp_media_proxy_mobility) {
+		LOG_DEBUG("using the mobility hack\n");
+		strcpy(target_addr->addr, "127.0.0.1");
+	}
+				
+	/* if we are proxying traffic to the remote, we might end up assigning an ipv6
+	   local address even though the remote does ipv4. This can be as our local client
+	   for some reason chooses to use ipv6 for signalling. But this can turn out to be
+	   a problem if its media generator doesn't support ipv6 after all. */
+	/* actually, this should be also for the mobility case; in that case, the address
+	   might already by in ipv4, but we might have a public ip here (which could change 
+	   due to mobility..) */
+	if (remotely_got && (target_addr->family == AF_INET) &&
+	    (sipp_media_proxy_mobility || (sipp_media_proxy_force4 && (new_addr->family == AF_INET6)))) {
+		LOG_DEBUG("using the mobility / force-ipv4 hack\n");
+		strcpy(new_addr->addr, "127.0.0.1");
+		new_addr->family = AF_INET;
+	}
+}
+
 
 static int
 sipp_sdp_replace_addr_create_proxies(char *bodystr, int bodystrlen, char **newmsg, int *newmsglen,
-				     char *callid, char *local_aor, char *remote_aor, addr_t *new_addr, 
+				     char *callid, char *local_aor, char *remote_aor, addr_t *original_new_addr, 
 				     int sendby, int remotely_got)
 {
 	int newbodysize, newbodylen = 0;
@@ -586,52 +666,66 @@ sipp_sdp_replace_addr_create_proxies(char *bodystr, int bodystrlen, char **newms
 	char **tokens = NULL;
         int toklen = 0;
 
-        addr_t target_addr;
- 	char *tmp = NULL;
-
-	int ret = -1;
+        addr_t *target_addr = 0;
+        addr_t *new_addr;
+ 	void *ptr = 0;
+	char *tmp = NULL;
 	
-        /* todo: modifs required to support tcp or anything != udp */
-
-	/* Parse manually, find all c and m lines. As (in theory) the
-	   c line (containing the ip addr) could come after the m line
-	   (containing the ports), we create the mediaproxies using
-	   the ports and init them all afterwards with the ip. */
+	int ret = -1, mc = 0, cc = 0;
+	ship_list_t *targets = 0, *new_addrs = 0;
+	
 	newbodysize = len + 512;
 	ASSERT_TRUE(newbodystr = (char*)mallocz(newbodysize), err);
-	bzero(&target_addr, sizeof(addr_t));
+
+	/* Not so elegant, but: We need to find all c lines and
+	   process those (turn them into new_addr, possibly changing
+	   new_addr AND the c-address along the way.  This so that we
+	   have a clear in/out address for the mediaproxies when
+	   encountering the m-lines.  c lines MAY come after the m,
+	   and we are doing the replacement on-the-fly which is why
+	   this has to be done beforehand separately! */
+	ASSERT_TRUE(targets = ship_list_new(), err);
+	ASSERT_TRUE(new_addrs = ship_list_new(), err);
+
+	/* end if we don't have anything to modify in the body! */
+	if (!sipp_sdp_extract_all_contacts(bodystr, bodystrlen, targets)) {
+		LOG_HL("nothing to process, ending\n");
+		memcpy(newbodystr, bodystr, bodystrlen);
+		newbodylen = bodystrlen;
+		goto done;
+	}
+
+	while ((target_addr = ship_list_next(targets, &ptr))) {
+		ASSERT_TRUE(new_addr = mallocz(sizeof(*new_addr)), err);
+		sipp_sdp_process_proxy_address(remotely_got, target_addr, original_new_addr, new_addr);
+		ship_list_add(new_addrs, new_addr);
+	}
 	
+	/* find the m='s, start the mediaproxies! */
 	ls = bodystr;
 	de = bodystr + len;
 	do {
 		char *le = ls;
-		/* one row at a time.. */
-		while (le < de && (*le) != '\n')
-			le++;
-		if (le < de)
-			le++;
+
+		while (le < de && (*le) != '\n') le++;
+		if (le < de) le++;
 		if (le != ls) {
 			int slen = le-ls;
 			if (!memcmp(ls, "c=", 2) || !memcmp(ls, "m=", 2)) {
 				char prefi[3];
 				ASSERT_ZERO(ship_tokenize(ls+2, slen-2, &tokens, &toklen, ' '), err);
+
 				switch (ls[0]) {
 				case 'c':
+					if (cc >= (ship_list_length(targets)))
+						cc = ship_list_length(targets) - 1;
+					target_addr = ship_list_get(targets, cc);
+					new_addr = ship_list_get(new_addrs, cc);
+					cc++;
+					
 					if (toklen == 3) {
-						/* the ipv4/6 flag should get set automatically here .. */
-						ASSERT_ZERO(ident_addr_str_to_addr(tokens[2], &target_addr), err);
-
-						/* todo gw: if we are in gateway mode, we should not have the
-						   mobility hack enabled ever! */
-						TODO("check whether we are in proxy mode, disable mobility hack\n");
-
-						/* support for mobility: replace it with lo, as that doesn't change during mobility. */
-						if (!remotely_got && (target_addr.family == AF_INET) &&
-						    sipp_media_proxy_mobility) {
-							strcpy(target_addr.addr, "127.0.0.1");
-						}
-
-						LOG_DEBUG("replacing c's ip of %s to %s\n", target_addr.addr, new_addr->addr);
+						/* used to parse this, but that's already done! */
+						LOG_DEBUG("replacing c's ip of %s to %s\n", target_addr->addr, new_addr->addr);
 						
 						ASSERT_TRUE(tmp = mallocz(strlen(new_addr->addr) + 5), err);
 						strcpy(tmp, new_addr->addr);
@@ -650,30 +744,30 @@ sipp_sdp_replace_addr_create_proxies(char *bodystr, int bodystrlen, char **newms
 					}
 					break;
 				case 'm':
+					if (mc >= (ship_list_length(targets)))
+						mc = ship_list_length(targets) - 1;
+					target_addr = ship_list_get(targets, mc);
+					new_addr = ship_list_get(new_addrs, mc);
+					mc++;
+					
 					if (toklen > 2) {
 						char portstr[10];
 						sipp_media_proxy_t *proxy = NULL;
 						
-						/* we need to ensure that we have the target address at this point.
-						   we could wait, but that could result in redundant media proxies.
-						   this isn't really optimal, but good enough for now */
-						
 						/* if port == 0, then ignore. */
-						if (atoi(tokens[1]) && (target_addr.addr[0] ||
-									!sipp_sdp_extract_contact(bodystr, bodystrlen, &target_addr))) { 
-							
+						if (atoi(tokens[1])) {
 							/* udp, please .. */
-							target_addr.type = IPPROTO_UDP;
-							target_addr.port = atoi(tokens[1]);
+							target_addr->type = IPPROTO_UDP;
+							target_addr->port = atoi(tokens[1]);
 							
 							/* check to find if we already have a proxy for that */
-							if (!(proxy = sipp_mp_find(callid, &target_addr, sendby))) {
-								
+							if (!(proxy = sipp_mp_find(callid, target_addr, sendby))) {
+
 								/* todo: we should check if udp / other from the medialine */
 								new_addr->type = IPPROTO_UDP;
 								ASSERT_TRUE(proxy = sipp_mp_create_new(callid, local_aor, 
 												       remote_aor, tokens[0],
-												       new_addr, &target_addr, 
+												       new_addr, target_addr, 
 												       sendby), err);
 								
 								if (sipp_mp_start(proxy, remotely_got)) {
@@ -721,14 +815,18 @@ sipp_sdp_replace_addr_create_proxies(char *bodystr, int bodystrlen, char **newms
 		ls = le;
 	} while (ls < de);
 
+ done:
 	(*newmsg) = newbodystr;
 	(*newmsglen) = newbodylen;
 	newbodystr = NULL;
 	ret = 0;
  err:
-        if (tokens)
-                ship_tokens_free(tokens, toklen);
-	
+	ship_tokens_free(tokens, toklen);
+	ship_list_empty_free(targets);
+	ship_list_free(targets);
+	ship_list_empty_free(new_addrs);
+	ship_list_free(new_addrs);
+
         freez(newbodystr);
         freez(tmp);
 	return ret;
@@ -1104,7 +1202,33 @@ sipp_cb_data_got(int s, char *data, ssize_t len)
 	} else if (len < 1) {
                 sipp_listener_close(lis);
 	} else  if (len > 1) {
-                sipp_handle_message(data, len, lis, &(lis->addr));
+		int newlen = 0;
+		char *newbuf = 0;
+		
+		/* piece together the message & camouflage as 'data'.. */
+		if (lis->queued_data && (lis->queued_data_len > 0)) {
+			ASSERT_TRUE(newbuf = mallocz(lis->queued_data_len + len), err);
+			memcpy(newbuf, lis->queued_data, lis->queued_data_len);
+			memcpy(newbuf+lis->queued_data_len, data, len);
+			data = newbuf;
+			newlen = len + lis->queued_data_len;
+			len = newlen;
+		}
+
+		/* ignore errors and complete, just do the incompletes */
+                if (sipp_handle_message(data, len, lis, &(lis->addr)) == 1) {
+			freez(lis->queued_data);
+			if (!newbuf) {
+				ASSERT_TRUE(newbuf = mallocz(len), err);
+				memcpy(newbuf, data, len);
+				newlen = len;
+			}
+			lis->queued_data = newbuf;
+			lis->queued_data_len = newlen;
+			newbuf = 0;
+		}
+	err:
+		freez(newbuf);
 	}
 }
 
@@ -1140,6 +1264,8 @@ sipp_cb_config_update(processor_config_t *config, char *k, char *v)
 					      &sipp_force_proxy), err);
 	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_SIPP_MEDIA_PROXY_MOBILITY_SUPPORT, 
 					      &sipp_media_proxy_mobility), err);
+	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_SIPP_MEDIA_PROXY_FORCE4, 
+					      &sipp_media_proxy_force4), err);
 
 	/* show the call log popups */
 	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_CALL_LOG_SHOW_PATHINFO,
@@ -1291,6 +1417,7 @@ sipp_init(processor_config_t *config)
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SIPP_PROXY_PORT, sipp_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SIPP_MEDIA_PROXY, sipp_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SIPP_MEDIA_PROXY_MOBILITY_SUPPORT, sipp_cb_config_update);
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SIPP_MEDIA_PROXY_FORCE4, sipp_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SIPP_TUNNEL_PROXY, sipp_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SIPP_FORCE_PROXY, sipp_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_CALL_LOG_SHOW_PATHINFO, sipp_cb_config_update);
@@ -1985,6 +2112,8 @@ sipp_send_buf(char *buf, int len, sipp_listener_t *lis, addr_t *to)
 			else
 				s = netio_packet_anon_send(buf, len, sa, salen);
 			freez(sa);
+			if (s != len)
+				LOG_WARN("Could not send all %d bytes over UDP, only got %d!\n", len, s);
 			return s;
 		}
 	} else {
