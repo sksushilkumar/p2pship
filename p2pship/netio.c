@@ -790,6 +790,28 @@ netio_read(int s, void (*callback) (int s, char *data, ssize_t datalen))
 
 #define NETIO_MAX_RECV_SIZE (1024*64)
 
+/* checks whether the given socket is readable, and thus not error 9
+   EBADF-producing */
+static int
+netio_socket_is_readable(int socket) 
+{
+	int retval = 0;
+	fd_set set;
+	struct timeval timeout;
+     
+	FD_ZERO(&set);
+	FD_SET(socket, &set);
+
+	/* a rather short timeout */
+	timeout.tv_sec = 0;
+	timeout.tv_usec = 1;
+
+	retval = select(FD_SETSIZE, &set, NULL, NULL, &timeout);
+	if (retval == -1 && errno == 9)
+		return 0;
+	return 1;
+}
+
 /* sender / receiver loop for the ship server. this is where the ship
    server sends and receives data packets from other ship proxies */
 static void *
@@ -869,47 +891,58 @@ netio_loop(void *data)
 		
                 retval = select(max, fd_read, fd_write, fd_ex, NULL);
 		if (retval == -1) {
+			/* this is something that shouldn't happen if
+			   everything is figured out ok, but sadly it
+			   does. */
 			LOG_WARN("got nio error: %d, %s\n", errno, strerror(errno));
-			/*
+
 			ship_lock(netio_sock_list);
-			ptr = 0; last = 0;
-			while (e = ship_list_next(netio_sock_list, &ptr)) {
+			ptr = 0; 
+			while ((e = ship_list_next(netio_sock_list, &ptr))) {
+				/*
 				struct sockaddr *addr = 0;
 				socklen_t addrlen = 0;
-				
+				*/
+
 				if (!e->active || e->remove)
 					continue;
 
+				if (!netio_socket_is_readable(e->s)) {
+					LOG_HL("removing offending socket %d!\n", e->s);
+					e->remove = 1;
+				}
+
+				/*
 				if (getpeername(e->s, addr, &addrlen))
 					LOG_HL("STUFF. NOT OK! %d\n", e->s);
 
 				switch (e->type) {
 				case NETIO_SOCK_READ:
-					LOG_WARN("had %d for read, closing %d, %08x\n", e->s, e->closing, e);
+					LOG_WARN("had %d for read, flush %d, %08x\n", e->s, e->flush, e);
 					break;
 				case NETIO_SOCK_WRITE:
 					ship_lock(e->send_queue);
+					LOG_WARN("had %d for write, flush %d, %08x\n", e->s, e->flush, e);
 					if (ship_list_first(e->send_queue))
-						LOG_WARN("had %d for write, closing %d, %08x\n", e->s, e->closing, e);
+						LOG_WARN("send queue had %d for write, flush %d, %08x\n", e->s, e->flush, e);
 					ship_unlock(e->send_queue);
 					break;
 				case NETIO_SOCK_ACCEPT:
-					LOG_WARN("had %d for accept, closing %d, %08x\n", e->s, e->closing, e);
+					LOG_WARN("had %d for accept, flush %d, %08x\n", e->s, e->flush, e);
 					break;
 				case NETIO_SOCK_CONNTO:
-					LOG_WARN("had %d for connto, closing %d, %08x\n", e->s, e->closing, e);
+					LOG_WARN("had %d for connto, flush %d, %08x\n", e->s, e->flush, e);
 					break;
 				case NETIO_SOCK_PACKET_READ:
-					LOG_WARN("had %d for packet read, closing %d, %08x\n", e->s, e->closing, e);
+					LOG_WARN("had %d for packet read, flush %d, %08x\n", e->s, e->flush, e);
 					break;
 				}
 
+				*/
 			}
-
 			ship_unlock(netio_sock_list);
 			// segfault
-			raise(SIGSEGV);
-			*/
+			//PANIC("nio error!\n");
 		}
 
                 if (retval > 0) {
