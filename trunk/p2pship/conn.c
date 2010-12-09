@@ -2331,6 +2331,7 @@ conn_if_matches_any(const int index, char **ifaces, int ifaces_len)
 		      str_startswith(bb, "ath") ||
 		      str_startswith(bb, "ppp") ||
 		      str_startswith(bb, "wlan") ||
+		      str_startswith(bb, "venet") ||
 		      str_startswith(bb, "teredo")
 		      ))) {
 			return 1;
