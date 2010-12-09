@@ -52,6 +52,8 @@ SIP support for basic centralized conferencing on a P2P network:
 
  * ~~Support for audio conferencing~~
 
+*Milestone 2 is functionally complete, pending optimization*
+
 == Milestone 3 ==
 
  * Access control and session management
