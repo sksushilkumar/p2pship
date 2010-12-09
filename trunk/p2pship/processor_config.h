@@ -71,6 +71,7 @@
 #define P2PSHIP_CONF_SIPP_PROXY_PORT "sip_proxy_port"
 #define P2PSHIP_CONF_SIPP_MEDIA_PROXY "sip_media_proxy"
 #define P2PSHIP_CONF_SIPP_MEDIA_PROXY_MOBILITY_SUPPORT "sip_media_proxy_mobility"
+#define P2PSHIP_CONF_SIPP_MEDIA_PROXY_FORCE4 "sip_media_proxy_force4"
 #define P2PSHIP_CONF_SIPP_FORCE_PROXY "sip_force_proxy"
 #define P2PSHIP_CONF_SIPP_TUNNEL_PROXY "sip_tunnel_proxy"
 #define P2PSHIP_CONF_CALL_LOG_SHOW_PATHINFO "call_log_show_path"
