@@ -50,7 +50,7 @@ SIP support for basic centralized conferencing on a P2P network:
 
 == Milestone 2 ==
 
- * Support for audio conferencing
+ * ~~Support for audio conferencing~~
 
 == Milestone 3 ==
 
@@ -67,3 +67,9 @@ SIP support for basic centralized conferencing on a P2P network:
  * Support for '+' in identities actually only affect which identities are used when establishing the P2P connection.
  * Added a SIP _client handler_ interface which basically acts as a message processor / mangler for messages headed for a SIP UA. These are able to stop the message from being sent at all, which can be used to create small mini-clients.
  * Added a PRE interface for registering SIP client handlers. Used the SIP parsers from the [CoffeeSipper] to create a simple multicast-IM center.
+
+*Milestone 2 complete.* Notes:
+ 
+ * The actual audioprocessing is done with gstreamer's livemixer
+ * Python-based currently
+ * *very* inefficient. Each stream is multiplexed through UDP and separately decoded for each receiver.
