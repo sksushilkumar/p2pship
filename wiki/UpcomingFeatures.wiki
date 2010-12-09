@@ -21,3 +21,17 @@ Archive:
 
   * Extended HTTP support (7/10), _integrated; see [P2PHTTP]_
   * Scripting support for plugins, _integrated; see [PRE Python runtime]:
+
+= Release schedule =
+
+This is according to the roadmap done at the start of the project.
+
+*1.0* Dec 09
+
+*1.1* Mar 10
+
+*1.2* Sep 10
+
+*2.0* Feb 11
+
+*3.0* Sep 11
