@@ -53,6 +53,7 @@ static char* DEFAULT_CONFIGURATION[] =
 		P2PSHIP_CONF_SIPP_PROXY_PORT, "1234", "SIP proxy port", "int", 0,
 		P2PSHIP_CONF_SIPP_MEDIA_PROXY, "yes", "Enable media proxy", "bool", 0,
 		P2PSHIP_CONF_SIPP_MEDIA_PROXY_MOBILITY_SUPPORT, "yes", "Enable media proxy mobility hack", "bool", 0,
+		P2PSHIP_CONF_SIPP_MEDIA_PROXY_FORCE4, "yes", "Force ipv4 on media proxy proxying to a ipv4 address", "bool", 0,
 		P2PSHIP_CONF_SIPP_FORCE_PROXY, "yes", "Force use of media proxy", "bool", 0,
 		P2PSHIP_CONF_SIPP_TUNNEL_PROXY, "no", "Tunnel media proxy traffic", "bool", 0,
 
