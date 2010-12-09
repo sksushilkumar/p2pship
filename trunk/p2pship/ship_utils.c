@@ -28,6 +28,7 @@
 #include <regex.h>
 #include <ctype.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "processor_config.h"
 #include "ident.h"
