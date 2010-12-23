@@ -26,6 +26,7 @@
 #include "olclient.h"
 #include "addrbook.h"
 #include "ui.h"
+#include "mc.h"
 
 /* the pp packets */
 #define PP_MSG_ACK 1
@@ -2002,7 +2003,7 @@ ident_import_ident_cas(ship_list_t *newi, ship_list_t *newc, int query, int modi
 				int update = 1;
 				
 				/* you already seem to have an account.. ? */
-				if (aname = mc_get_account_name(ident->sip_aor)) {
+				if ((aname = mc_get_account_name(ident->sip_aor))) {
 					ASSERT_TRUE(tmp = mallocz(strlen(aname) + 256), mc_err);
 					sprintf(tmp, "You seem to already have an account '%s' configured for this identity. Do you want to update it or create a new?", aname);
 					switch (ui_query_three("Update account?", tmp, "update", "new", "skip")) {

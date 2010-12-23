@@ -16,15 +16,16 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
-#include "processor_config.h"
-#include "ui.h"
-#include "ident.h"
-#include "processor.h"
 #include <glib.h>
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
 #include <gtk/gtkmain.h>
+#include <ctype.h>
 #include "ship_utils.h"
+#include "processor_config.h"
+#include "ui.h"
+#include "ident.h"
+#include "processor.h"
 
 
 int
@@ -70,7 +71,7 @@ ui_maemo_query_import_contacts(ship_list_t *list)
 									  NULL), err);
 
 	ret = gtk_dialog_run(diag);
-	gtk_widget_destroy(diag);
+	gtk_widget_destroy((GtkWidget*)diag);
 	if (ret == -8)
 		ret = 1;
 	else
@@ -85,7 +86,6 @@ int
 ui_maemo_print_import_result(char *buf)
 {
 	GtkDialog *diag = 0;
-	int ret = 0;
 	char *str = 0, *tmp = 0;
 	
 	ASSERT_TRUE(tmp = ship_pangoify(buf), err);
@@ -98,7 +98,7 @@ ui_maemo_print_import_result(char *buf)
 									  str,
 									  NULL), err);
 	gtk_dialog_run(diag);
-	gtk_widget_destroy(diag);
+	gtk_widget_destroy((GtkWidget*)diag);
  err:
 	freez(str);
 	freez(tmp);
@@ -111,8 +111,6 @@ ui_maemo_print_import_result(char *buf)
 int
 ui_maemo_popup(char *buf)
 {
-	//HildonWindow *window = HILDON_WINDOW(hildon_window_new());
-	//gtk_widget_show_all(GTK_WIDGET(window));
 	GtkWidget *w = NULL;
 	
 	gdk_threads_enter();
@@ -124,8 +122,8 @@ ui_maemo_popup(char *buf)
  	USER_PRINT("We should print: %s\n", buf);
  	return 0;
 
+	/*
 	GtkDialog *diag = 0;
-	int ret = 0;
 	char *str = 0, *tmp = 0;
 	
 	ASSERT_TRUE(tmp = ship_pangoify(buf), err);
@@ -138,18 +136,18 @@ ui_maemo_popup(char *buf)
 									  str,
 									  NULL), err);
 	gtk_dialog_run(diag);
-	gtk_widget_destroy(diag);
+	gtk_widget_destroy((GtkWidget*)diag);
  err:
 	freez(str);
 	freez(tmp);
 	return 0;
+	*/
 }
 
 int
 ui_maemo_print_error(char *buf)
 {
 	GtkDialog *diag = 0;
-	int ret = 0;
 	char *str = 0, *tmp = 0;
 	
 	ASSERT_TRUE(tmp = ship_pangoify(buf), err);
@@ -162,7 +160,7 @@ ui_maemo_print_error(char *buf)
 									  str,
 									  NULL), err);
 	gtk_dialog_run(diag);
-	gtk_widget_destroy(diag);
+	gtk_widget_destroy((GtkWidget*)diag);
  err:
 	freez(str);
 	freez(tmp);
@@ -236,7 +234,7 @@ ui_maemo_query_ca_operation(ca_t *ca, const char *operation,
 	gtk_dialog_add_buttons(diag, op2, 1, "Cancel", 0, NULL);
 	
 	ret = gtk_dialog_run(diag);
-	gtk_widget_destroy(diag);
+	gtk_widget_destroy((GtkWidget*)diag);
  err:
 	freez(op2);
 	freez(str);
@@ -305,7 +303,7 @@ ui_maemo_query_ident_operation(ident_t *ident, const char *operation,
 	gtk_dialog_add_buttons(diag, op2, 1, "Cancel", 0, NULL);
 	
 	ret = gtk_dialog_run(diag);
-	gtk_widget_destroy(diag);
+	gtk_widget_destroy((GtkWidget*)diag);
  err:
 	freez(op2);
 	freez(str);
@@ -345,7 +343,7 @@ ui_maemo_query_simple(char *header, char *body,
 									  NULL), err);
 	gtk_dialog_add_buttons(diag, op1, 1, op2, 0, NULL);
 	ret = gtk_dialog_run(diag);
-	gtk_widget_destroy(diag);
+	gtk_widget_destroy((GtkWidget*)diag);
  err:
 	freez(op2);
 	freez(op1);
@@ -386,7 +384,7 @@ ui_maemo_query_three(char *header, char *body,
 									  NULL), err);
 	gtk_dialog_add_buttons(diag, op1, 0, op2, 1, op3, 2, NULL);
 	ret = gtk_dialog_run(diag);
-	gtk_widget_destroy(diag);
+	gtk_widget_destroy((GtkWidget*)diag);
  err:
 	freez(op3);
 	freez(op2);

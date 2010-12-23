@@ -683,6 +683,7 @@ char *replace_end(char *str, int *buflen, int *datalen, char *end, char *newend)
 void ship_urldecode(char *str);
 char *ship_urlencode(char *str);
 char *ship_addparam_urlencode(char *key, char *val, char *buf, int *size, int *len);
+char *ship_pangoify(char *str);
 
 char *ship_encode_base64(char *input, int length);
 char *ship_decode_base64(char *input, int length, int* outlen);
