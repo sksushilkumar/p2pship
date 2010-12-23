@@ -297,6 +297,7 @@ AC_CACHE_CHECK([whether to use maemoexts],
                [ac_cv_use_maemoexts], [ac_cv_use_maemoexts=no])
 if test x"$ac_cv_use_maemoexts" = x"yes"; then
         AC_DEFINE(CONFIG_MAEMOEXTS_ENABLED, [1], [Enable maemoexts interface])
+	CFLAGS="$CFLAGS -fno-strict-aliasing"
 fi
 
 # the gtk mainloop. activated by default in certain other ones..

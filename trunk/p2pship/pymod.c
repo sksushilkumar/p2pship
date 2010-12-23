@@ -1547,13 +1547,16 @@ p2pship_get_ident(PyObject *self, PyObject *args)
 			str = NULL;
 		}
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
+		/* won't compile on maemo due to dereferencing of the _PyTrue_Struct */
+		//#pragma GCC diagnostic push
+		//#pragma GCC diagnostic ignored "-fno-strict-aliasing"
 		if (buddy->is_friend)
 			str = Py_True;
 		else
 			str = Py_False;
 		ASSERT_ZERO(PyDict_SetItemString(bud, "friend", str), err);
+		//#pragma GCC diagnostic pop
 #endif		
-
 		ASSERT_ZERO(PyList_Append(buds, bud), err);
 		Py_XDECREF(bud);
 	}
@@ -1768,14 +1771,14 @@ pymod_close()
 void 
 pymod_shell()
 {
-	char *args[] = { };
+	char *args[] = { "shell" };
 	USER_PRINT("Starting shell\n");
 
 	/* run shell on the main python thread state */
 	PyEval_AcquireLock();
 	PyThreadState_Swap(mainThreadState);
 
-	Py_Main(0, args);
+	Py_Main(1, args);
 
 	PyThreadState_Swap(NULL);
 	PyEval_ReleaseLock();
