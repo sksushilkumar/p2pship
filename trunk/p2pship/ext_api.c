@@ -372,6 +372,14 @@ extapi_data_received_httpresponse(char *data, int data_len, ident_t *ident,
 	netio_http_conn_t *oldconn = 0;
 	int len = 0, piece = 0;
 	
+	/* todo: we should actually parse the response and fit it into
+	   how we would respond. We might be keeping an http/1.1 connection open,
+	   but receiving http/1.0 EOF terminations. The client will be waiting for
+	   these, but we (being 1.1) will not do it. */
+
+	/* the correct way would be to start pushing data, but with http 100 continues */
+	/* OR to check whether the response is in http/1.0 and only close in that case. */
+
 	ASSERT_TRUE(ident, err);
 	LOG_DEBUG("Got data for http response %d bytes! from %s to %s\n", data_len, source, ident->sip_aor);
 	STATS_LOG("got data for http response\n");
@@ -399,6 +407,8 @@ extapi_data_received_httpresponse(char *data, int data_len, ident_t *ident,
 
 		/* if the last packet was zero, take it as a que to close */
 		if (len < 1) {
+			/* this is hackish. simulate that it 'just went down' & look innocent */
+			close(oldconn->socket);
 			netio_http_conn_close(oldconn);
 		} else {
 			ship_unlock(oldconn);
@@ -440,7 +450,6 @@ extapi_return_and_record(netio_http_conn_t *conn, char *url, char *data, int dat
 		// todo: we should parse the data. check that we have gotten all.
 		
 		// we should then check whether it is our turn to start pumping out data
-
 
 		netio_send(conn->socket, data, datalen);
 #ifdef CONFIG_WEBCACHE_ENABLED
