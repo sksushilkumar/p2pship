@@ -264,7 +264,7 @@ ident_addr_addr_to_sa_to(void *data)
 	ident_addr_lookup_t *lookup = (ident_addr_lookup_t *)data;
         int ret = -1;
         struct sockaddr *sat = 0;
-	socklen_t sat_len;
+	socklen_t sat_len = 0;
 	struct addrinfo hints4, hints6;
 	getaddrinfo_cache_t *e = 0;
 	struct addrinfo *res = 0;

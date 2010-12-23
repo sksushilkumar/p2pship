@@ -536,7 +536,7 @@ __netio_http_parse_data(netio_http_conn_t* conn, char *data, int datalen)
 				if (bound) {
 					ps = memmem_after(&conn->buf[conn->header_len], conn->data_len - conn->header_len, bound, strlen(bound));
 					while (ps) {
-						char *tmp, *name, *tmp2;
+						char *tmp, *name, *tmp2 = 0;
 						pe = (char*)memmem(ps, conn->data_len - (ps-conn->buf), bound, strlen(bound));
 						if (!pe) {
 							pe = conn->buf + conn->data_len;
