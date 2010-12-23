@@ -16,16 +16,17 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include <libosso.h>
 #include "osso_dbus.h"
 #include "processor.h"
 #include "processor_config.h"
 
 #include "ship_utils.h"
 
-#include <libosso.h>
 #undef LOG_DEBUG
 #undef LOG_INFO
 #include "ship_debug.h"
+#include "ui.h"
 
 static osso_context_t *osso_context = 0;
 

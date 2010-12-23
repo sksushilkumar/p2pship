@@ -16,13 +16,34 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#include "../config.h"
+
 #define _GNU_SOURCE /* getline */
 #include <stdio.h>
+
+#ifdef CONFIG_LIBEBOOK_ENABLED
+#include <libebook/e-book.h>
+#include <libosso.h>
+#undef LOG_DEBUG
+#undef LOG_INFO
+#endif
+
 #include "addrbook.h"
 #include "ident.h"
 #include "ship_debug.h"
 #include "ship_utils.h"
 #include "processor.h"
+#include "ui.h"
+
+#ifdef CONFIG_LIBEBOOK_ENABLED
+
+/* the ebook */
+static EBook *book = 0;
+
+static void addrbook_libebook_signal(void *obj, gpointer data);
+static int addrbook_libebook_import(ship_list_t *imps, int *concount, int query);
+static int addrbook_libebook_retrieve(ship_list_t *list);
+#endif
 
 /* the file where to store what we've imported */
 static char *contacts_file = 0;
@@ -374,18 +395,7 @@ addrbook_import_contacts(ship_list_t *newco, int *concount, int query)
 	return ret;
 }
 
-
-
-
 #ifdef CONFIG_LIBEBOOK_ENABLED
-
-#include <libebook/e-book.h>
-#include <libosso.h>
-
-/* the ebook */
-static EBook *book = 0;
-
-static void addrbook_libebook_signal(void *obj, gpointer data);
 
 /* inits the libebook logic. load the library, sets out listeners */
 static int
@@ -446,7 +456,7 @@ addrbook_libebook_signal(void *obj, gpointer data)
 }
 
 /* calls to import contacts */
-int
+static int
 addrbook_libebook_import(ship_list_t *imps, int *concount, int query)
 {
 	int ret = -1;
@@ -460,7 +470,7 @@ addrbook_libebook_import(ship_list_t *imps, int *concount, int query)
 	if (ship_list_first(imps) && (!query || ui_query_import_contacts(imps) > 0)) {
 
 		ptr = 0;
-		while (c = ship_list_next(imps, &ptr)) {
+		while ((c = ship_list_next(imps, &ptr))) {
 			EContact *contact = 0;
 			EContactName name;
 			char *arr[2], *ln;
@@ -529,7 +539,7 @@ addrbook_libebook_import(ship_list_t *imps, int *concount, int query)
 }
 
 /* retrieve a list of contacts from the address book */
-int
+static int
 addrbook_libebook_retrieve(ship_list_t *list)
 {
 	int ret = -1;
@@ -550,7 +560,6 @@ addrbook_libebook_retrieve(ship_list_t *list)
 		name = e_contact_get(c, E_CONTACT_OSSO_CONTACT_STATE);
 		if (!name || strcmp(name, "DELETED")) {
 			char **arrs = 0;
-			int i = 0;
 
 			ASSERT_TRUE(ct = ident_contact_new(), cerr);
 			ASSERT_TRUE(ct->name = e_contact_get(c, E_CONTACT_FULL_NAME), cerr);
@@ -559,7 +568,7 @@ addrbook_libebook_retrieve(ship_list_t *list)
 			ASSERT_TRUE(ct->sip_aor = addrbook_normalize_aor(arrs[0]), cerr);
 			
 			/* apparently arrs doesn't need to be free'd afterwards */
-			g_list_foreach(arrs, (GFunc)g_free, NULL);
+			g_list_foreach((GList*)arrs, (GFunc)g_free, NULL);
 			ship_list_add(list, ct);
 			ct = 0;
 		cerr:
@@ -586,7 +595,6 @@ addrbook_libebook_retrieve(ship_list_t *list)
 
 	return ret;
 }
-	
 
 #endif
 
