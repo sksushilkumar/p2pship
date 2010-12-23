@@ -33,7 +33,6 @@ char *
 mc_get_account_name(char *aor)
 {
 	GList *alist = 0, *l;
-	McAccount *acc = 0;
 	gchar* acc_name = 0;
 	char *ret = 0;
 	

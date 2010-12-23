@@ -1173,7 +1173,7 @@ olclient_create_wrap_xml_record(char *key, char *data, int timeout)
 	xmlDocPtr doc= NULL;
 	xmlNodePtr root= NULL;
 	xmlNodePtr node= NULL;
-	char *buf = NULL;
+	xmlChar *buf = NULL;
 	int blen = 0;
 	char tmp[64];
 	
@@ -1190,7 +1190,7 @@ olclient_create_wrap_xml_record(char *key, char *data, int timeout)
 	if (doc) xmlFreeDoc(doc);
 	//xmlCleanupParser();
 	
-	return buf;
+	return (char*)buf;
 }
 
 static char*
