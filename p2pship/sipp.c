@@ -501,7 +501,6 @@ sipp_cb_packetfilter_local(char *local_aor, char *remote_aor, void *msg, int ver
 	ship_obj_unref(req);
 }
 
-
 /* processes received messages (datagrams) */
 int
 sipp_handle_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr)
@@ -519,12 +518,11 @@ sipp_handle_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr)
         ASSERT_TRUE(evt = osip_parse(msg, len), err);
         ASSERT_TRUE(evt->sip, err);
 
-#ifndef CONFIG_MAEMOEXTS_ENABLED
 	/* check that we actually got the whole message! */
 	if (evt->sip->content_length && evt->sip->content_length->value) {
 		osip_body_t *body;
 		cl = atoi(evt->sip->content_length->value);
-		while ((body = (osip_body_t *)osip_list_get(&evt->sip->bodies, pos))) { // segfaults on maemo
+		while (cl > 0 && (body = (osip_body_t *)osip_list_get(OSIPMSG_PTR(evt->sip->bodies), pos))) {
 			count += body->length;
 			pos++;
 		}
@@ -535,7 +533,7 @@ sipp_handle_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr)
 			goto err;
 		}
 	}
-#endif
+
 	param.lis = lis;
 	param.evt = evt;
 	memcpy(&(param.from_addr), addr, sizeof(addr_t));
