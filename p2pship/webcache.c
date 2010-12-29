@@ -524,6 +524,8 @@ void
 webcache_close_trackers(char *tracking_id)
 {
 	ship_ht_t *dls;
+	if (!all_dls)
+		return;
 	ship_lock(all_dls);
 	if ((dls = ship_ht_remove_string(all_dls, tracking_id))) {
 		webcache_tracker_t *cache = 0;
