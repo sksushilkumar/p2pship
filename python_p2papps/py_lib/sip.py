@@ -95,7 +95,7 @@ class SipMessage:
         self.remote_aor = None
 
         if context is not None:
-            self.local_aor = context.local_aor
+            self.local_aor = context.aor
             self.remote_aor = target
 
         if parent: # responses
@@ -377,6 +377,7 @@ class SipContext:
     def data_got(self, data):
         m = SipMessage(None)
         m.parse(data)
+        (m.local_aor, m.remote_aor) = m.get_local_remote()
         self.msg_got(m)
 
     def msg_got(self, msg):
