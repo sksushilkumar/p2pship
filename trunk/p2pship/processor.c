@@ -84,6 +84,7 @@ static ship_list_t *dead_threads = 0;
 
 static void processor_to_free(void *data);
 static int processor_to_cleanup_dead(void *data, processor_task_t **wait, int wait_for_code);
+void processor_kill_me();
 
 
 static void
@@ -335,7 +336,9 @@ processor_signal_handler(int signum)
 		//case SIGSEGV:
 	case SIGCHLD:
 		LOG_WARN("got signal %d for to thread\n", signum);
-		TREAD_EXIT();
+		processor_shutdown();
+		//processor_kill_me();
+		//TREAD_EXIT();
 		break;
         default:
                 LOG_WARN("unknown signal %d received, ignoring\n", signum);
@@ -564,24 +567,26 @@ processor_close()
 		ship_list_free(modules);
 	}
 
-        SYNCHRONIZE(processor_tasks_lock, {
-                while (processor_tasks && ship_list_first(processor_tasks))
-                        processor_tasks_free((processor_task_t*)ship_list_pop(processor_tasks));
+	if (processor_tasks_lock) {
+		SYNCHRONIZE(processor_tasks_lock, {
+			while (processor_tasks && ship_list_first(processor_tasks))
+				processor_tasks_free((processor_task_t*)ship_list_pop(processor_tasks));
                     
-                while (queued_tasks && ship_list_first(queued_tasks))
-                        processor_tasks_free((processor_task_t *)ship_list_pop(queued_tasks));
+			while (queued_tasks && ship_list_first(queued_tasks))
+				processor_tasks_free((processor_task_t *)ship_list_pop(queued_tasks));
 
-                while (completed_tasks && ship_list_first(completed_tasks))
-                        processor_tasks_free((processor_task_t *)ship_list_pop(completed_tasks));
+			while (completed_tasks && ship_list_first(completed_tasks))
+				processor_tasks_free((processor_task_t *)ship_list_pop(completed_tasks));
 
-                ship_list_free(processor_tasks);
-                ship_list_free(completed_tasks);
-                ship_list_free(queued_tasks);
-                ship_list_free(being_processed_tasks);
-                processor_tasks = 0;
-                queued_tasks = 0; 
-                completed_tasks = 0; 
-        });
+			ship_list_free(processor_tasks);
+			ship_list_free(completed_tasks);
+			ship_list_free(queued_tasks);
+			ship_list_free(being_processed_tasks);
+			processor_tasks = 0;
+			queued_tasks = 0; 
+			completed_tasks = 0; 
+		});
+	}
 
 	/* free up the eventing stuff */
 	if (event_receivers) {
@@ -763,6 +768,25 @@ processor_worker_runner(void *data)
 	return NULL;
 }
 
+void
+processor_kill_me()
+{
+	LOG_WARN("Trying to finish myself off ..\n");
+        /* wait for all threads to close */
+        if (processor_workers) {
+		processor_worker_t *w;
+		void *ptr = 0, *last = 0;
+		while ((w = ship_list_next(processor_workers, &ptr))) {
+			if (pthread_equal(*w->thread, pthread_self())) {
+				ship_list_remove(processor_workers, w);
+				processor_kill_worker(w);
+				ptr = last;
+			}
+			last = ptr;
+		}
+        }
+}
+
 int
 processor_create_worker(const char *type, void (*func)(processor_worker_t*), void *data,
 			void (*kill_func)(processor_worker_t*))
@@ -778,11 +802,12 @@ processor_create_worker(const char *type, void (*func)(processor_worker_t*), voi
 	w->start_func = func;
 	
 	LOG_DEBUG("trying to create worker [%s]..\n", w->name);
-	ASSERT_ZERO(THREAD_RUN(w->thread, processor_worker_runner, (void*)w), err);
 	ship_list_add(processor_workers, w);
+	ASSERT_ZERO(THREAD_RUN(w->thread, processor_worker_runner, (void*)w), err);
 	w = 0;
 	ret = 0;
  err:
+	ship_list_remove(processor_workers, w);
 	freez(w);
 	return ret;
 }
