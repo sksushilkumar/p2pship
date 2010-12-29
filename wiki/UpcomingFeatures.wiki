@@ -7,7 +7,7 @@ This page serves as an overview of features that may be implemented in the futur
 Currently, we are officially planning:
 
   * [Multiparty Multiparty conferencing] (12/10)
-  * Advanced SPAM prevention (12/10)
+  * [SPAM Advanced SPAM prevention] (12/10)
   * Distributed Voicemail (6/11)
   * Integration with Virtual Worlds (12/11)
 
