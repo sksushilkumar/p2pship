@@ -444,6 +444,7 @@ main(int argc, char **argv)
 	config2 = NULL;
 
 	/* ok, ready to rock! */
+	processor_config_ensure_configs(config);
 	if (log_to_file) {
 		p2pship_log_file = processor_config_string(config, P2PSHIP_CONF_LOG_FILE);
 	}

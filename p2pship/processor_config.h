@@ -30,6 +30,7 @@
 
 #define P2PSHIP_CONF_OL_SECRET "ol_secret"
 
+#define P2PSHIP_CONF_IDENT_TRUST_FRIENDS "ident_trust_friends"
 #define P2PSHIP_CONF_IDENT_IGNORE_CERT_VALIDITY "ident_ignore_cert_validity"
 #define P2PSHIP_CONF_IDENT_ALLOW_UNKNOWN_REGISTRATIONS "ident_allow_unknown_registrations"
 #define P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED "ident_allow_untrusted"
@@ -131,6 +132,7 @@
 #endif
 
 
+
 typedef ship_list_t processor_config_t;
 typedef struct processor_config_item_s {
 	char *value;
@@ -141,6 +143,7 @@ typedef struct processor_config_item_s {
 int processor_config_load(processor_config_t *config, char *filename);
 int processor_config_save(processor_config_t *config, char *filename);
 int processor_config_load_defaults(processor_config_t *config);
+int processor_config_ensure_configs(processor_config_t *config);
 
 void processor_config_dump_json(processor_config_t *config, char **msg);
 
