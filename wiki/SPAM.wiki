@@ -1,0 +1,5 @@
+#summary Description and thoughts on SPAM prevention techniques
+
+= Introduction =
+
+As we all know, unsolicited email (SPAM), is a considerable problem. Although advanced filtering techniques have been developed, it continues to annoy, decrease productivity and even cause serious harm through embedded viruses, hoaxes and identity theft. One of the first 
