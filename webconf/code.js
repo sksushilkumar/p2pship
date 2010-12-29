@@ -246,7 +246,7 @@ function initpage2() {
                         inp.options[o].selected = 1;
                 }
                 td.appendChild(inp);
-            } else if (p2pship_config[key][2] == "int" || p2pship_config[key][2] == "string") {
+            } else if (p2pship_config[key][2] == "int" || p2pship_config[key][2] == "string" || p2pship_config[key][2] == "file") {
                 var inp = document.createElement("input");
                 inp.type = "text";
                 inp.name = key;
