@@ -1375,31 +1375,19 @@ ident_data_bb_decode(char *data, int data_len, ship_bloom_t **bloom, int *level)
 static void
 ident_data_bb_add_buddy_to_bloom(ship_bloom_t *bloom, buddy_t *buddy)
 {
-	/* eh, we should use the key, not the aor, right? .. */
-	/*
-	if (buddy->cert) {
-		EVP_PKEY *pkey = NULL;
-		RSA *pu_key = NULL;
-		ASSERT_TRUE(pkey = X509_get_pubkey(receiver->cert), err);
-		ASSERT_TRUE(pu_key = EVP_PKEY_get1_RSA(pkey), err);
-	}
-	*/
-	/* or .. both? */
+	/* Add both the key and the name. */
+	ship_bloom_add_cert(bloom, buddy->cert);
 	ship_bloom_add(bloom, buddy->sip_aor);
 }
 
-
 /* return the first level in any of the buddy list where the give aor
-   might exist. 0 friend-of-friend. 1 - friend-of-friend-of-friend. */
+   might exist. */
 int
-ident_data_bb_get_first_level(ship_list_t *buddy_list, char *to_aor)
+ident_data_bb_get_first_level_cert(ship_list_t *buddy_list, X509 *cert)
 {
 	int ret = -1;
 	buddy_t *buddy;
 	void *ptr = 0;
-
-	/* todo: we should check the key also (or only!): get the reg
-	   package from foreign_regs, extract the key, check. */
 
 	while ((buddy = (buddy_t*)ship_list_next(buddy_list, &ptr)) &&
 	       (ret != 0)) {
@@ -1407,12 +1395,41 @@ ident_data_bb_get_first_level(ship_list_t *buddy_list, char *to_aor)
 
 		if (!buddy->is_friend)
 			continue;
-		
+		if (!ship_cmp_pubkey(cert, buddy->cert))
+			return 1;
+		for (i=0; i < BLOOMBUDDY_MAX_LEVEL && (ret < 0 || i < ret); i++) {
+			if (ship_bloom_check_cert(buddy->friends[i], cert))
+				ret = i;
+		}
+	}
+	if (ret > -1)
+		ret += 2;
+	return ret;
+}
+
+/* return the first level in any of the buddy list where the give aor
+   might exist. < 1: sorry.. . 1 - your friend! 2 friend-of-friend. 3 - friend-of-friend-of-friend. */
+int
+ident_data_bb_get_first_level(ship_list_t *buddy_list, char *to_aor)
+{
+	int ret = -1;
+	buddy_t *buddy;
+	void *ptr = 0;
+
+	while ((buddy = (buddy_t*)ship_list_next(buddy_list, &ptr)) &&
+	       (ret != 0)) {
+		int i;
+		if (!buddy->is_friend)
+			continue;
+		if (!strcmp(buddy->sip_aor, to_aor))
+			return 1;
 		for (i=0; i < BLOOMBUDDY_MAX_LEVEL && (ret < 0 || i < ret); i++) {
 			if (ship_bloom_check(buddy->friends[i], to_aor))
 				ret = i;
 		}
 	}
+	if (ret > -1)
+		ret += 2;
 	return ret;
 }
 

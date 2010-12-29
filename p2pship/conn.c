@@ -753,9 +753,9 @@ static int
 conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 {
         reg_package_t *reg = NULL;
-        int ret = -3;
+        int ret = -3, import = 0;
 	char *tmp_aor = NULL;
-
+	
 	ident_reg_xml_to_struct(&reg, payload);
 
 	/* dtn: move this to the hip module.. */
@@ -795,8 +795,15 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 	}
 #endif
 
-        if (reg && (tmp_aor = strdup(reg->sip_aor)) && !ident_import_foreign_reg(reg)) {
-                
+	ASSERT_TRUE(reg, err);
+	ASSERT_TRUE(tmp_aor = strdup(reg->sip_aor), err);
+
+	ship_unlock(conn);
+	import = ident_import_foreign_reg(reg);
+	ship_lock_conn(conn);
+	
+        if (!import) {
+
                 if (!conn->sip_aor) {
                         conn->sip_aor = tmp_aor;
 			tmp_aor = NULL;
@@ -820,6 +827,7 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 			ret = 0;
                 }
         }
+ err:
 	freez(tmp_aor);
         return ret;
 }
