@@ -561,41 +561,19 @@ p2pship_get_data_dir(PyObject *self, PyObject *args)
  *
  */
 
-/* data received from ..far away. */
-static int 
-pymod_service_data_received(char *data, int data_len, 
-				ident_t *target, char *source, 
-				service_type_t service_type)
-{
-	/* find the service holder .. */
-	pymod_service_t *s = 0;
-	PyObject *arglist, *result;
+static int pymod_service_data_received(char *data, int data_len, 
+				       ident_t *target, char *source, 
+				       service_type_t service_type);
+static void pymod_service_service_closed(service_type_t service_type, ident_t *ident, void *pkg);
 
-	s = ship_ht_get_int(pymod_default_services, service_type);
-	if (!s)
-		return -1;
-	
-	ASSERT_TRUE(pymod_tstate_ok(s->handler->tstate), err);
-	ASSERT_TRUE(arglist = Py_BuildValue("(s#ssi)", data, data_len, target->sip_aor, source, service_type), err);
-	result = PyObject_CallObject(s->handler->callback, arglist);
-	Py_DECREF(arglist);
-	ASSERT_TRUE(result, err);
-	Py_DECREF(result);
+static char *
+p2pship_service_create_id(const char *aor, const service_type_t t)
+{
+	char *ret = NULL;
+	ASSERT_TRUE(ret = mallocz(strlen(aor) + 12), err);
+	sprintf(ret, "%s:%d", aor, t);
  err:
-	pymod_tstate_return();
-	return 0;
-}
-
-/* this notifies the service handler that the service is being closed */
-static void
-pymod_service_service_closed(service_type_t service_type, ident_t *ident, void *pkg)
-{
-	/* find the service holder .. */
-	
-	// todo..
-	// call on the callback
-
-	// remove the service.
+	return ret;
 }
 
 static void
@@ -623,6 +601,82 @@ pymod_service_new(pymod_ipc_handler_t *ipc)
  err:
 	pymod_service_free(ret);
 	return NULL;
+}
+
+
+/* data received from ..far away. */
+static int 
+pymod_service_data_received(char *data, int data_len, 
+			    ident_t *target, char *source, 
+			    service_type_t service_type)
+{
+	/* find the service holder .. */
+	pymod_service_t *s = 0;
+	PyObject *arglist, *result;
+	char *id = NULL;
+	
+	/* check first if we have a registered one for this */
+	ASSERT_TRUE(pymod_default_services, err);
+	ASSERT_TRUE(id = p2pship_service_create_id(target->sip_aor, service_type), err);
+	s = ship_ht_get_string(pymod_default_services, id);
+	/* maybe not, demand that the user uses real aors! */
+	/*
+	if (!s) {
+		freez(id);
+		ASSERT_TRUE(id = p2pship_service_create_id("@", service_type), err);
+		s = ship_ht_get_string(pymod_default_services, id);
+	}
+	*/
+	if (!s)
+		s = ship_ht_get_int(pymod_default_services, service_type);
+	if (!s) {
+		LOG_ERROR("Got a packet for some sort of ident (%s) that we really don't know about!\n", target->sip_aor);
+		return -1;
+	}
+	
+	ASSERT_TRUE(pymod_tstate_ok(s->handler->tstate), err2);
+	ASSERT_TRUE(arglist = Py_BuildValue("(s#ssi)", data, data_len, target->sip_aor, source, service_type), err2);
+	result = PyObject_CallObject(s->handler->callback, arglist);
+	Py_DECREF(arglist);
+	ASSERT_TRUE(result, err2);
+	Py_DECREF(result);
+ err2:
+	pymod_tstate_return();
+ err:
+	freez(id);
+	return 0;
+}
+
+/* this notifies the service handler that the service is being closed */
+static void
+pymod_service_service_closed(service_type_t service_type, ident_t *ident, void *pkg)
+{
+	pymod_service_t *s = 0;
+	PyObject *arglist, *result;
+	char *id = NULL;
+
+	ASSERT_TRUE(pymod_default_services, err);
+
+	/* check first if we have a registered one for this */
+	ASSERT_TRUE(id = p2pship_service_create_id(ident->sip_aor, service_type), err);
+	s = ship_ht_remove_string(pymod_default_services, id);
+	if (!s)
+		s = ship_ht_remove_int(pymod_default_services, service_type);
+	if (!s)
+		goto err;
+	
+	ASSERT_TRUE(pymod_tstate_ok(s->handler->tstate), err2);
+	ASSERT_TRUE(arglist = Py_BuildValue("(is)", service_type, ident->sip_aor), err2);
+	result = PyObject_CallObject(s->handler->callback2, arglist);
+	Py_DECREF(arglist);
+	ASSERT_TRUE(result, err2);
+	Py_DECREF(result);
+
+ err2:
+	pymod_tstate_return();
+ err:
+	pymod_service_free(s);
+	freez(id);
 }
 
 static PyObject *
@@ -672,16 +726,50 @@ p2pship_service_register_default(PyObject *self, PyObject *args)
 }
 
 static PyObject *
-p2pship_service_update_registration(PyObject *self, PyObject *args)
+p2pship_service_register(PyObject *self, PyObject *args)
 {
+	pymod_service_t *s = 0;
+	pymod_ipc_handler_t *ipc = 0;
+	service_type_t t = 0;
+	PyObject *callback = 0, *callback2 = 0;
+	char name[32];
+	char *aor = NULL, *id = 0;
+	
+	if (!PyArg_ParseTuple(args, "siOO:service_service_update_registration", &aor, &t, &callback, &callback2))
+		goto parm_err;
+	
+	ASSERT_TRUE(id = p2pship_service_create_id(aor, t), err);
 
-	// find & remove current (if any)
+	/* create an unique-enough name */
+	sprintf(name, "py_service_%08x", 0);
+	ASSERT_TRUE(ipc = pymod_ipc_new(name, callback, callback2), err);
 
-	/* is this needed? .. perhaps.. */
-/* 	int ident_process_register(char *aor, service_type_t service_type, service_t *service, */
-/* 				   addr_t *addr, int expire, void *pkg) */
+	/* use the old one? ok.. */
+	if ((s = ship_ht_get_string(pymod_default_services, id))) {
+		pymod_ipc_free(s->handler);
+		s->handler = ipc;
+		s->service.service_handler_id = ipc->name;
+	} else {
+		ASSERT_TRUE(s = pymod_service_new(ipc), err);
+		ASSERT_TRUE(ident_process_register(aor, t, &(s->service), NULL, -1, NULL) == 200, err);
+		ship_ht_put_string(pymod_default_services, id, s);
+	}
 
-	PyErr_SetString(PyExc_EnvironmentError, "Not implemented");
+	/* create an unique-enough name */
+	sprintf(s->handler->name, "py_service_%08x", (unsigned int)s);
+	
+	Py_INCREF(Py_None);
+	freez(id);
+	return Py_None;
+ parm_err:
+	return NULL;
+ err:
+	if (s)
+		pymod_service_free(s);
+	else
+		pymod_ipc_free(ipc);
+	PyErr_SetString(PyExc_EnvironmentError, "Error"); // todo: check that all errors are ok
+	freez(id);
 	return NULL;
 }
 
@@ -1473,7 +1561,7 @@ p2pship_get_ident(PyObject *self, PyObject *args)
 	} else {
 		ASSERT_TRUE(ident = ident_find_by_aor(aor), err);
 	}
-	
+
 	ASSERT_TRUE(ret = PyDict_New(), err);
 	ASSERT_TRUE(str = PyString_FromString(zdefault(ident->sip_aor, "")), err);
 	ASSERT_ZERO(PyDict_SetItemString(ret, "aor", str), err);
@@ -1607,7 +1695,7 @@ static PyMethodDef p2pshipMethods[] = {
 
     // service registration, packet transmission
     {"service_register_default",  p2pship_service_register_default, METH_VARARGS, "Registers a default service."},
-    {"service_update_registration",  p2pship_service_update_registration, METH_VARARGS, "Registers a service handler."},
+    {"service_register",  p2pship_service_register, METH_VARARGS, "Registers a service handler."},
     {"service_send",  p2pship_service_send, METH_VARARGS, "Sends a service packet."},
     {"send_packet",  p2pship_send_packet, METH_VARARGS, "Sends a 'RAW' protocol packet."},
 
@@ -1765,7 +1853,7 @@ pymod_close()
 	while ((ptr = ship_ht_pop(pymod_default_services)))
 		pymod_service_free(ptr);
 	ship_ht_free(pymod_default_services);
-
+	pymod_default_services = NULL;
 }
 
 void 
