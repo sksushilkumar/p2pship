@@ -415,3 +415,44 @@ ship_sign(char *subject, int ttl, RSA* signer_key)
 		EVP_PKEY_free(pr_key);
 	return ret;
 }
+
+char *
+ship_get_pubkey(X509 *cert)
+{
+	EVP_PKEY *pkey = NULL;
+	RSA *pu_key = NULL;
+	BIO *bio = NULL;
+	char *tmp = NULL;
+	char *ret = NULL;
+	int bufsize = 0;
+	
+	ASSERT_TRUE(cert, err);
+	ASSERT_TRUE(pkey = X509_get_pubkey(cert), err);
+	ASSERT_TRUE(pu_key = EVP_PKEY_get1_RSA(pkey), err);
+	ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+	ASSERT_TRUE(PEM_write_bio_RSA_PUBKEY(bio, pu_key), err);
+	ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+	tmp[bufsize] = 0;
+
+	ret = strdup(tmp);
+ err:
+	if (pkey) EVP_PKEY_free(pkey);
+	if (pu_key) RSA_free(pu_key);
+	if (bio) BIO_free(bio);
+	return ret;
+}
+
+/* compares 2 keys, returns 0 if same */
+int
+ship_cmp_pubkey(X509 *cert, X509 *cert2)
+{
+	char *k1 = NULL, *k2 = NULL;
+	int ret = -1;
+	ASSERT_TRUE(k1 = ship_get_pubkey(cert), err);
+	ASSERT_TRUE(k2 = ship_get_pubkey(cert2), err);
+	ret = strcmp(k1, k2);
+ err:
+	freez(k1);
+	freez(k2);
+	return ret;
+}

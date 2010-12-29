@@ -736,6 +736,8 @@ X509 *ship_sign(char *subject, int ttl, RSA* signer_key);
 int fwrite_all(const char *data, const int len, FILE *f);
 
 int ship_get_random(unsigned char *random, size_t len);
+int ship_cmp_pubkey(X509 *cert, X509 *cert2);
+char *ship_get_pubkey(X509 *cert);
 
 /**
  * xml handling
@@ -790,6 +792,9 @@ int ship_bloom_combine_bloom(ship_bloom_t *target, ship_bloom_t *source);
 int ship_bloom_dump_size(ship_bloom_t *bloom);
 void ship_bloom_dump(ship_bloom_t *bloom, char *buf);
 ship_bloom_t *ship_bloom_load(char *buf, int buflen);
+
+int ship_bloom_check_cert(ship_bloom_t *bloom, X509 *cert);
+int ship_bloom_add_cert(ship_bloom_t *bloom, X509 *cert);
 #endif
 
 /* packing. should replace lenbufs etc atsome point .. */
