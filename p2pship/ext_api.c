@@ -1228,7 +1228,7 @@ extapi_cb_config_update(processor_config_t *config, char *k, char *v)
 			ASSERT_TRUE((extapi_ss = netio_http_server_create(ss_addr, 
 									  extapi_process_req, NULL)) != -1, err);
 		} else {
-			ASSERT_ZERO((ret = netio_http_server_modif(extapi_ss, ss_addr)) != -1, err);
+			ASSERT_TRUE((ret = netio_http_server_modif(extapi_ss, ss_addr)) != -1, err);
 			extapi_ss = ret;
 		}
 	}
@@ -1241,7 +1241,7 @@ extapi_cb_config_update(processor_config_t *config, char *k, char *v)
 			ASSERT_TRUE((httpproxy_ss = netio_http_server_create(ss_addr, 
 									     httpproxy_process_req, NULL)) != -1, err);
 		} else {
-			ASSERT_ZERO((ret = netio_http_server_modif(httpproxy_ss, ss_addr)) != -1, err);
+			ASSERT_TRUE((ret = netio_http_server_modif(httpproxy_ss, ss_addr)) != -1, err);
 			httpproxy_ss = ret;
 		}
 	} else if (!strcmp(k, P2PSHIP_CONF_HTTPPROXY_REVEAL_ORIGINAL)) {
