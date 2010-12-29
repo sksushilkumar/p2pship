@@ -420,6 +420,7 @@ int ident_data_bb_decode(char *data, int data_len, ship_bloom_t **bloom, int *le
 int ident_data_bb_load_ascii(char *buf, ship_bloom_t *friends[]);
 int ident_data_bb_dump_ascii(ship_bloom_t *friends[], char **buf);
 int ident_data_bb_get_first_level(ship_list_t *buddy_list, char *to_aor);
+int ident_data_bb_get_first_level_cert(ship_list_t *buddy_list, X509 *cert);
 int ident_data_bb_find_connections_on_level(ship_list_t *buddy_list, char *remote_aor, int level, ship_list_t *list);
 #endif
 

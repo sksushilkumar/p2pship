@@ -52,7 +52,8 @@ static int ident_autoreg_save();
 
 static char *idents_file = 0;
 static char *autoreg_file = 0;
-static int indent_allow_untrusted;
+static int ident_allow_untrusted;
+static int ident_trust_friends;
 static int ident_allow_unknown_registrations;
 static int ident_require_authentication;
 static int sipp_ua_mode; /* 0=open 1=relax 2=paranoid */
@@ -92,7 +93,8 @@ static struct service_s bloombuddy_service =
 static void
 ident_cb_config_update(processor_config_t *config, char *k, char *v)
 {
-	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED, &indent_allow_untrusted), err);
+	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_IDENT_TRUST_FRIENDS, &ident_trust_friends), err);
+	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED, &ident_allow_untrusted), err);
 	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_IDENT_ALLOW_UNKNOWN_REGISTRATIONS, 
 					      &ident_allow_unknown_registrations), err);
 	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_IDENT_REQUIRE_AUTHENTICATION, 
@@ -140,6 +142,7 @@ ident_module_init(processor_config_t *config)
 
 	ASSERT_TRUE(default_services = ship_ht_new(), err);
 	ident_cb_config_update(config, NULL, NULL);
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_TRUST_FRIENDS, ident_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED, ident_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_ALLOW_UNKNOWN_REGISTRATIONS, ident_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_REQUIRE_AUTHENTICATION, ident_cb_config_update);
@@ -239,8 +242,6 @@ ident_bb_send_buddies(ident_t *ident, buddy_t *buddy)
 					 buf, blen);
 		freez(buf);
 	}
-
-	//ident_handle_bloombuddy_message(0, 1, 0, 0, 0);
 }
 
 static int
@@ -944,8 +945,8 @@ ident_update_service_registration(ident_t *ident, service_type_t service_type,
 	} else {
 		time_t now;
 
-		LOG_INFO("Should update registration for %s (exp %d)\n", 
-			 ident->sip_aor, expire);
+		LOG_INFO("Should update registration for %s, service type %u (exp %d)\n", 
+			 ident->sip_aor, service_type, expire);
 		
 		if (!s) {
 			ASSERT_TRUE(s = ident_service_new(), err);
@@ -1414,8 +1415,26 @@ ident_cert_is_trusted(X509 *cert)
 			goto err;
 		}
 	} else {
-		ASSERT_TRUE(indent_allow_untrusted, err);
-		/* allow an untrusted peer */
+		int lev = -1;
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+		ident_t *ident = NULL;
+		void *ptr = NULL;
+		
+		/* check whether we have this guy in our bloom filters! */
+		ship_lock(identities);
+		while ((ident = (ident_t*)ship_list_next(identities, &ptr))) {
+			int ilev = 0;
+			ship_lock(ident);
+			ilev = ident_data_bb_get_first_level_cert(ident->buddy_list, cert);
+			ship_unlock(ident);
+			if (lev < 0 || ilev < lev)
+				lev = ilev;
+		}
+		ship_unlock(identities);
+#endif		
+		if (!ident_trust_friends || lev < 1) {
+			ASSERT_TRUE(ident_allow_untrusted, err);
+		}
 	}
 
 	ret = 1;

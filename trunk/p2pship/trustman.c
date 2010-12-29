@@ -422,8 +422,6 @@ trustman_get_valid_trustparams(char *from_aor, char *to_aor)
 		   have any info on this guy */
 		if (ident) {
 			new_len = ident_data_bb_get_first_level(ident->buddy_list, to_aor);
-			if (new_len > -1)
-				new_len += 2;
 		}
 #endif
 		/* actually, as we're checking ident's buddies in
