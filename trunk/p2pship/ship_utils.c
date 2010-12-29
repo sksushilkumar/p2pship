@@ -1654,13 +1654,6 @@ ship_get_homedir_file(char *filename, char **target)
 	if ((pw = getpwuid(getuid())) == NULL || !pw->pw_dir)
 		goto err;
 	
-	/*
-	struct passwd pwd;
-	char buf[2048];
-	if (getpwuid_r(getuid(), &pwd, buf, sizeof(buf), &pw) || !pw->pw_dir)
-		goto err;
-	*/
-	
 	if (!((*target) = mallocz(strlen(pw->pw_dir) + strlen(filename) + 2)))
 		goto err;
 
@@ -2257,7 +2250,8 @@ ship_bloom_free(ship_bloom_t *bloom)
 	free(bloom);
 }
 
-int ship_bloom_add(ship_bloom_t *bloom, const char *s)
+int
+ship_bloom_add(ship_bloom_t *bloom, const char *s)
 {
 	size_t n;
 
@@ -2268,10 +2262,33 @@ int ship_bloom_add(ship_bloom_t *bloom, const char *s)
 	return 0;
 }
 
-int ship_bloom_check(ship_bloom_t *bloom, const char *s)
+int 
+ship_bloom_check_cert(ship_bloom_t *bloom, X509 *cert)
+{
+	char *tmp = ship_get_pubkey(cert);
+	int ret = 0;
+	ret = ship_bloom_check(bloom, tmp);
+	freez(tmp);
+	return ret;
+}
+
+int 
+ship_bloom_add_cert(ship_bloom_t *bloom, X509 *cert)
+{
+	char *tmp = NULL;
+	int ret = -1;
+	ASSERT_TRUE(tmp = ship_get_pubkey(cert), err);
+	ret = ship_bloom_add(bloom, tmp);
+ err:
+	freez(tmp);
+	return ret;
+}
+
+int
+ship_bloom_check(ship_bloom_t *bloom, const char *s)
 {
 	size_t n;
-	if (!bloom)
+	if (!bloom || !s)
 		return 0;
 	for(n=0; n<bloom->nfuncs; ++n) {
 		if(!(GETBIT(bloom->a, bloom->funcs[n](s)%bloom->asize))) return 0;
