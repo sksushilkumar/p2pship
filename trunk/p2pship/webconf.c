@@ -295,7 +295,7 @@ webconf_cb_config_update(processor_config_t *config, char *k, char *v)
 									   webconf_process_req, NULL)) != -1, err);
 		} else {
 			int ret;
-			ASSERT_ZERO((ret = netio_http_server_modif(webconf_ss, ss_addr)) != -1, err);
+			ASSERT_TRUE((ret = netio_http_server_modif(webconf_ss, ss_addr)) != -1, err);
 			webconf_ss = ret;
 		}
 	}
