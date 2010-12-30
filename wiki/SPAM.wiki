@@ -2,4 +2,10 @@
 
 = Introduction =
 
-As we all know, unsolicited email (SPAM), is a considerable problem. Although advanced filtering techniques have been developed, it continues to annoy, decrease productivity and even cause serious harm through embedded viruses, hoaxes and identity theft. One of the first 
+As we all know, unsolicited email (SPAM), is a considerable problem. Although advanced filtering techniques have been developed, it continues to annoy leading to decreased productivity and even causing serious harm through embedded viruses, hoaxes and identity theft. SPAM is possible due to the open and free nature of email. As we're now developing also an open and free communication system, we should think about ways to prevent it from becoming as SPAM-infected as email has turned into.
+
+Luckily, SPAM on internet telephony (SPIT) or instant messaging hasn't really been a big problem. Pert of might be due to it not being as popular and widespread as email just yet, but a large part has to do with it being seen as more close and personal, leading people to explicitly set up whitelists of contacts that are allowed. This combined with atleast rudimentary authorization or source-control (which is almost non-existent in email) has made it hard for spammers to succeed.
+
+But as we're looking into a p2p framework for different types of applications, running in different environments with possible different types of authorization (if at all), we should keep an eye out for SPAM, as the traditional whitelist approach might not always be feasible.
+
+= Overview =
