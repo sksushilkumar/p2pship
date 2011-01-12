@@ -52,6 +52,6 @@ Relation-ship based filtering is actually a subset of this. Basically having a W
 
 == Lots-o-info ==
 
-Something we've been playing around with lately on the UI-side; having the client application just show a bunch of information about the caller (from any source available) to help the user decide whether to take the call. Or just as a reminder about who the caller is.
+Something we've been playing around with lately on the UI-side; having the client application just show a bunch of information about the caller (from any source available) to help the user decide whether to take the call. Or just as a reminder of who the caller is.
 
 We've done some UI testing where sources such as google, twitter, facebook, GoeIP are queried based on the name of the caller. This (we imagine) could reveal associations ("working for plentyoproducts telemarketing") or other information which can help us to accept or reject the call, depending on the situation we are in (not answering a call from someone apparently the CEO of a partner company while in a less-than-appropriate surroundings).
