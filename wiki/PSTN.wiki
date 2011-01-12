@@ -17,7 +17,7 @@ This feature is based on (trusted) gateway nodes that receive the calls (or sign
   PC1 -- call:123456@pots --> PG -- call:123456@pots:from:alice --> GAD -- call:123456:from:accountX --> GW -->
 }}}
 
-The local p2pship proxy configured as a gateway client checks the SIP AORs to which calls are placed. By configuring specific regexp-like patterns (e.g., "*@pots"), it knows which ones are 'normal' p2psip calls, and which ones are meant for an external network.
+The local p2pship proxy configured as a gateway client checks the SIP AORs to which calls are placed. By configuring specific regexp-like patterns (e.g., "`.*@pots`"), it knows which ones are 'normal' p2psip calls, and which ones are meant for an external network.
 
 Those meant for an external network are forwarded to the gateway p2pship client configured for those. This p2pship instance is located so that it has direct access to a gateway adapter (preferably on the same host). When receiving connections, it checks the SIP AORs and matches them through, again, regexp-like strings to know whether to accept them and where to forward them (to which gateway adapter).
 
