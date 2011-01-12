@@ -6,9 +6,37 @@
 
 = Command line options =
 
-_todo_
+Please use the `-h` switch to get a full listing of these. As the number of configurable items has grown, it hasn't seemed useful to implement those as command-line options as most are quite seldomly used anyway.
+
+A couple of useful ones:
+
+`--import [filename]`
+
+Imports the identities and CA certs found in an XML formatted identity file.
+
+`--list`
+
+Lists the installed identities.
+
+`--list-ca`
+
+Lists the CAs installed.
+
+`--list-hits`
+
+Lists the HITs of the HIP stack.
+
+`--shell`
+
+Starts the proxy with a Python (PRE) shell on the console. Useful for testing minor things in the PRE.
+
+`--run [filename]`
+
+Starts the proxy and executes the PRE script found in the given file. Useful when developing new PRE extensions.
 
 = List of built-in settings =
+
+*Note: These may change at times*
 
 *Key* is the key for the settings used in the settings file.
 
