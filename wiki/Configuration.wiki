@@ -34,6 +34,10 @@ Starts the proxy with a Python (PRE) shell on the console. Useful for testing mi
 
 Starts the proxy and executes the PRE script found in the given file. Useful when developing new PRE extensions.
 
+`-q`, `-v`. `-vv`
+
+Changes the logging verbosity. `-q` for no logging, `-v` and `-vv` for more/most logging information.
+
 = List of built-in settings =
 
 *Note: These may change at times*
