@@ -27,7 +27,7 @@ The P2P webcaching is enabled using the option
 --enable-webcache
 }}}
 
-This is currently the only one of the three that is *not* enabled by default. Using P2P web caching results in a fair amount of traffic (updating indexes, fetching pointers) and has a number of privacy implications which has led to it being disabled by default.
+This is currently the only one of the three that is *not* enabled by default. Using P2P web caching results in a fair amount of traffic (updating indexes, fetching pointers) and has a number of privacy implications (namely that it is quite easy to follow which pages you visit by tracking what you announce to have cached) which has led to it being disabled by default.
 
 == Settings ==
 
