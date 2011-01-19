@@ -77,7 +77,7 @@ SIP support for basic centralized conferencing on a P2P network:
 
 == Milestone 3 ==
 
- * Access control and session management
+ * Advanced access control and session management
 
 == Milestone 4 ==
 
