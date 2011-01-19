@@ -1,180 +1,100 @@
-
 import socket
 import threading
 import select
 import time
 import gst
 
-# start of the sip-client apps:
-class Multiplexer:
-    """Simple udp-multiplexer. For now, until we get a real mixing
-    system in place"""
 
-    def __init__(self):
-        self.running = True
-        self.update = True
-        self.ports = {}
-        self.socks = {}
-        self.sockpair = socket.socketpair()
 
-    def do_update(self):
-        self.sockpair[1].send("ping")
-        self.update = True
-
-    def add_recv(self, sport, dport):
-        self.ports[sport].append(("127.0.0.1", dport))
-        info("added recever %d for source %d" % (dport, sport))
-        self.do_update()
-
-    def set_recvs(self, sport, dports):
-        self.ports[sport] = []
-        for p in dports:
-            self.ports[sport].append(("127.0.0.1", p))
-        info("added recevers: %s for source %d" % (str(self.ports[sport]), sport))
-        self.do_update()
-
-    def reset_recvs(self):
-        for p in self.ports.keys():
-            self.ports[p] = []
-        info("reset receivers")
-        self.do_update()
-
-    def remove_src(self, port):
-        sock = None
-        for s in self.socks.keys():
-            if self.socks.get(s) == port:
-                sock = s
-                break
-        if sock is not None:
-            del self.socks[sock]
-            del self.ports[port]
-            self.do_update()
-            sock.close()
-        
-    def add_src(self, sport = 0):
-        return self.add_sock(self.create_sock(sport))
-        
-    def add_sock(self, sock):
-        (addr, sport) = sock.getsockname()
-        self.socks[sock] = sport
-        self.ports[sport] = []
-        info("added source %s" % str(sock.getsockname()))
-        self.do_update()
-        return sport
-    
-    def create_sock(self, port):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(('127.0.0.1', port))
-        return sock
-
-    def start(self):
-        server_thread = threading.Thread(target=self.run)
-        server_thread.setDaemon(True)
-        server_thread.start()
-
-    def run(self):
-        inputs = self.socks.keys()
-        inputs.append(self.sockpair[0])
-        while self.running:
-            try:
-                inp,outp,ex = select.select(inputs,[],[])
-                if self.update:
-                    inputs = self.socks.keys()
-                    inputs.append(self.sockpair[0])
-                    self.update = False
-                    debug("we now have %d mixers .. " % (len(inputs)-1))
-                for s in inp:
-                    data = s.recv(65536)
-                    port = self.socks.get(s)
-                    if port is not None:
-                        recvs = self.ports.get(port)
-                        for recv in recvs:
-                            s.sendto(data, recv)
-            except Exception, ex:
-                warn("got an nio exception %s" % str(ex))
 
 class Mixer:
     """Handles the audiomixing"""
 
     def __init__(self):
-        self.plexer = Multiplexer()
-        self.plexer.start()
         self.aors = {}
+        self.pl = None
         
-    def add(self, aor, addr):
+    def stop(self):
+        if self.pl is not None:
+            self.pl.set_state(gst.STATE_NULL)
+            self.pl = None
+        for aor in self.aors.keys():
+            (sock, saddr, addr) = self.aors[aor]
+            if sock is not None:
+                sock.close()
+                self.aors[aor] = (None, saddr, addr)
+
+    def create_sock(self, addr = '127.0.0.1', port = 0):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((addr, port))
+        return (sock, sock.getsockname())
+    
+    def add(self, aor, addr, sport = 0):
 
         # re-use old if one exists
         if self.aors.has_key(aor):
-            (port, oldaddr, pl) = self.aors[aor]
+            (sock, saddr, oldaddr) = self.aors[aor]
+        elif sport != 0:
+            (sock, saddr) = (None, ('127.0.0.1', sport))
         else:
-            port = self.plexer.add_src()
-            pl = None
+            (sock, saddr) = self.create_sock()
 
-        # this should be reserved - where the data is to be received
-        local_addr = ("127.0.0.1", port)
-        info("Should add an audio-mixing channel for %s receiving at %s, sending to %s" % (aor, str(local_addr), str(addr)))
+        info("Should add an audio-mixing channel for %s receiving at %s, sending to %s" % (aor, str(saddr), str(addr)))
 
-        self.aors[aor] = (port, addr, pl)
-        self.reinit_players()
-        return local_addr
+        self.aors[aor] = (sock, saddr, addr)
+        self.reinit_player()
+        return saddr
         
-    def reinit_players(self):
-        self.plexer.reset_recvs()
-        for aor in self.aors.keys():
-            (port, addr, pl) = self.aors[aor]
-            if pl is not None:
-                pl[0].set_state(gst.STATE_NULL)
-                pl[1].close()
-            debug("reiniting player for %s .. " % aor)
-            self.aors[aor] = (port, addr, self.create_player(aor, port, addr))
-
-    def create_player(self, aor, sport, addr):
-
+    def reinit_player(self):
+        self.stop()
         if len(self.aors) < 2:
             info("not enough participants to create a player!!")
-            return None
-        
+            return False
+
         caps="application/x-rtp,media=(string)audio,clock-rate=(int)8000,encoding-name=(string)PCMA"
-    
+        decbin = "gstrtpbin ! rtppcmadepay ! alawdec ! audioconvert ! audioresample ! audio/x-raw-int,channels=1,rate=8000"
+        encbin = "audioconvert  ! audioresample ! audio/x-raw-int,channels=1,rate=8000 ! alawenc ! rtppcmapay"
+
         line = ''
-        ports = []
-        for a in self.aors.keys():
-            if a == aor:
-                continue
-            (port, altaddr, pl) = self.aors[a]
-            if len(line) == 0:
-                line += 'udpsrc port=0 caps="%s" name=src%d ! gstrtpbin ! rtppcmadepay ! alawdec ! audioconvert ! audioresample ! audio/x-raw-int,channels=1,rate=8000 ! liveadder name=mixer latency=0 ' % (caps, len(ports))
-            else:
-                line += 'udpsrc port=0 caps="%s" name=src%d ! gstrtpbin ! rtppcmadepay ! alawdec ! audioconvert ! audioresample ! audio/x-raw-int,channels=1,rate=8000 ! mixer. ' % (caps, len(ports))
-            ports.append([ port, len(ports) ])
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        line += 'mixer. ! audioconvert  ! audioresample ! audio/x-raw-int,channels=1,rate=8000 ! alawenc ! rtppcmapay ! udpsink host=%s port=%d sockfd=%d ' % (addr[0], addr[1], sock.fileno())
+        for aor in self.aors.keys():
+            (sock, saddr, addr) = self.aors[aor]
+            if sock is None:
+                (sock, saddr) = self.create_sock(saddr[0], saddr[1])
+                self.aors[aor] = (sock, saddr, addr)
 
-        pl = gst.parse_launch(line)
-        pl.set_state(gst.STATE_PLAYING)
-        debug("launched player '%s' for %s" % (line, aor))
+            name = str(saddr[1])
+            # mixer & source
+            line += 'liveadder name=mixer%s ! %s ! udpsink host=%s port=%d sockfd=%d ' % (name, encbin, addr[0], addr[1], sock.fileno())
+            line += 'udpsrc sockfd=%d caps="%s" ! %s ! tee name=src%s ' % (sock.fileno(), caps, decbin, name)
+            for aor2 in self.aors.keys():
+                if aor2 == aor:
+                    continue
+                name2 = str(self.aors[aor2][1][1])
+                line += 'src%s. ! queue ! mixer%s. ' % (name, name2)
 
-        for s in ports:
-            self.plexer.add_recv(s[0], pl.get_by_name("src%d" % s[1]).get_property("port"))
-
-        #ports.append(pl.get_by_name("src%d" % s).get_property("port"))
-        #self.plexer.set_recvs(sport, ports)
-        return (pl, sock)
+        self.pl = gst.parse_launch(line)
+        bus = self.pl.get_bus()
+        bus.add_signal_watch()
+        #bus.connect("message", on_message)
+        self.pl.set_state(gst.STATE_PLAYING)
+        return True
 
     def remove(self, aor):
         info("removing mixers for %s" % aor)
-
         if self.aors.has_key(aor):
-            (port, addr, pl) = self.aors[aor]
-            self.plexer.remove_src(port)
-            if pl is not None:
-                pl[0].set_state(gst.STATE_NULL)
-                pl[1].close()
+            (sock, saddr, addr) = self.aors[aor]
+
+            # todo: remove the mixer for this
+            # remove all sources for this.
+            # if only one left, stop the player!
+            
+            if sock is not None:
+                sock.close()
             del self.aors[aor]
-            self.reinit_players()
+            self.reinit_player()
+
 
 
 class MultipartyHandler(SipHandler):
@@ -185,6 +105,7 @@ class MultipartyHandler(SipHandler):
         self.members = []
         self.title = "anon session"
         self.mixer = Mixer()
+        #self.port = 6700
         
     def send_msg(self, msg, user = None, omit = None):
         if user is not None:
@@ -229,9 +150,14 @@ class MultipartyHandler(SipHandler):
 
     def add_audio_mixer(self, aor, addr):
         return self.mixer.add(aor, addr)
+        #self.port += 1
+        #print "should add mixer for %s, streaming to %s" % (str(aor), str(addr))
+        #print "\n\n** sport: %d, destport: %d **\n" % (self.port, addr[1])
+        #return ("127.0.0.1", self.port)
 
     def remove_mixers(self, aor):
         self.mixer.remove(aor)
+        #print "should remove mixer for %s" % str(aor)
 
     def cancel_got(self, message):
         info("got cancel...")
