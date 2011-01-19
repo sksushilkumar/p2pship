@@ -1,0 +1,25 @@
+#summary News
+
+*30 Dec 2010 / jookos*
+
+Seasons greetings! Have during this month commited the first version of the [Multiparty multiparty] conferencing system (based on PRE) as well as more extensive [SPAM spit/spam] mechanisms.
+
+*9 Dec 2010 / jookos*
+
+Added an experimental package for the Nokia N900 mobile phone. Please check the [http://code.google.com/p/p2pship/downloads/list download] section as well as [N900Notes the release notes].
+
+*8 Oct 2010 / jookos*
+
+The DTN branch has been merged into trunk. The experimental [DTN new connectivity] framework be developed in the `new_conns` branch.
+
+*21 Sep 2010 / jookos*
+
+A [Testbed testbed] has been set up in HIIT. Currently hosting (in addition to person-to-person calling) also the [CoffeeSipper CoffeeSipper] service. More to come!
+
+*19 Aug 2010 / jookos*
+
+A [http://www.facebook.com facebook] version of the p2pweb sharing was forked off the stand-alone site. Please see [P2PSNS the manual] for more info. An instance can (for now..) be found as [http://apps.facebook.com/shipsharing facebook's ShipSharing].
+
+*10 Aug 2010 / jookos*
+
+Added the [DTN DTN] branch to the repository. This is currently the most actively developed branch which is getting the newest features integrated. Although it is bad practice, the service packet ACK/NACKs enabled by the DTN branch has been so useful that it hasn't made sense to use trunk anymore in development. These changes will be marged into trunk pretty soon, dedicating the DTN branch once again to what it was originally created for.
