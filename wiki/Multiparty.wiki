@@ -37,7 +37,20 @@ _todo: describe how to implement additional features to the conferencing system.
 
 _todo: Describe a couple of additional plug-in features that can serve as examples for developers interested in extending the system_
 
-In planning:
+The plan is to build an easy-to-use interface to the conference manager which would allow it to be extended with new functionality dynamically. This system would be based on the [PRE PRE] and would only affect (naturally) the local conference manager in hybrid conferencing topologies.
+
+The system would be based on the IPC calls of the PRE which would allow external (to the conference manager) scripts to create hooks into the conferencing system. These would run in their own Python shell, creating a bit of protection / isolation.
+
+The API would allow extensions to:
+
+ * Receiving notifications on events (new conference, participants joining / leaving, changes in the media handling)
+ * Capture messages in the group chat
+ * Insert messages to the group chat
+ * Capture media streams
+ * Insert media stream
+ * Add / remove participants
+
+==== Plug-ins in planning ====
 
 *audioplay*: The ability to insert audio files into the conference. For instance, typing '/play song1.mp3' into the group chat would cause the p2pship conference manager to insert (play) that audio file just as if it was an additional participant.
 
@@ -47,6 +60,7 @@ In planning:
 
 *taskmanager*: Bot that reacts on certain strings entered in the group chat to automatically form task lists, bug reports, or anything else. Use case: A work-related remote meeting. While discussing matters, todos and tasks are identified. The chair of the meeting enters into the group chat strings like '/task John Check the current sale figures' or '/task Mona Design a new logo for the project by friday'. These would end up in a task manager (which ever you're using) or somewhere else as a task for John, and another for Mona (with a deadline on Friday).
 
+*mediaforward*: Forward media streams from the conference to other sinks. UPNP projectors, external screens, sound systems etc.
 
 = Milestones overview =
 
@@ -82,6 +96,10 @@ SIP support for basic centralized conferencing on a P2P network:
 == Milestone 4 ==
 
  * Support for multi-proxy topology
+
+== Milestone X ==
+
+ * A clear plugin / extensions API, dynamic loading of these
 
 = Current status =
 
