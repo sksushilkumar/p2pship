@@ -7,6 +7,8 @@ Multiparty communication is an important feature of any communication system. By
 
 The goal of the multiparty conferencing effort for p2pship is to create a transparent subsystem which allows also legacy (one-to-one) clients to establish conference calls. Preferably the system will be rather independent from the SIP subsystem, allowing possible future communication protocols (XMPP etc) to join cross-protocol conferences (SIP and XMPP users talking to each other). This will however depend much on the semantics of the protocols.
 
+But the goal is to allow the p2pship provide a similar conferencing service as commercial service providers do, but in a server-less peer-to-peer manner. After all, the goal of the whole project is to gradually replace the need for centralized servers with peer control.
+
 == Conferencing overview ==
 
 _todo: General overview of conferencing alternatives in P2P: Use of centralized peer-server for maintaining the conference. Full-mesh architecture. Opportunistic multi-proxy architecture_
@@ -27,6 +29,25 @@ _todo: how sessions are identified. Protocol specific, SIP for now_
 
 _todo: how to limit participants. In general, and how to translate that into SIP syntax_
 
+== Conferencing API ==
+
+_todo: describe how to implement additional features to the conferencing system. Bots, offloading and other things_
+
+=== Plug-ins / implemented extensions ===
+
+_todo: Describe a couple of additional plug-in features that can serve as examples for developers interested in extending the system_
+
+In planning:
+
+*audioplay*: The ability to insert audio files into the conference. For instance, typing '/play song1.mp3' into the group chat would cause the p2pship conference manager to insert (play) that audio file just as if it was an additional participant.
+
+*videoplay*: Audioplay, but with videos (as if someone made a video call). Sources could be local files, on-line streaming, youtube etc.
+
+*deskshare*: Desktop sharing. The recipients would see this also as if you would have made a video call to them. Excellent for collaboration.
+
+*taskmanager*: Bot that reacts on certain strings entered in the group chat to automatically form task lists, bug reports, or anything else. Use case: A work-related remote meeting. While discussing matters, todos and tasks are identified. The chair of the meeting enters into the group chat strings like '/task John Check the current sale figures' or '/task Mona Design a new logo for the project by friday'. These would end up in a task manager (which ever you're using) or somewhere else as a task for John, and another for Mona (with a deadline on Friday).
+
+
 = Milestones overview =
 
 The first goal is to enable legacy SIP clients to establish conference calls.
@@ -35,7 +56,7 @@ The initial plan is to use a centralized peer-proxy architecture, but hopefully 
 
 The second step is to extend this model so that all participating peers will actually create small 'mini' mixers for the conference call. This can be used as before, having actually just one peer acting as a center and creating the different audiostreams for each user. The mixer within the other participants would be a dummy one; having only one input and one output stream.
 
-But, it would enable also that new peers could join the conference by calling into any one of the participating peers, which would result in that (second host) having two inputs and two outputs (of which the input from the first host would actually contain multiple audiostreams mixed together, which would be mixed with the local source and sent to the new participant).
+But, it would enable also that new peers could join the conference by calling into any one of the participating peers, which would result in that (second host) having two inputs and two outputs (of which the input from the first host would actually contain multiple audiostreams mixed together, which would be mixed with the local source and sent to the new participant). This would be quite useful, as two remote locations only need to be connected through one 'link'. All the other participants would be connected to these link end-points within their organization (through, hopefully, fast LANs).
 
 == Milestone 1 ==
 
@@ -52,7 +73,7 @@ SIP support for basic centralized conferencing on a P2P network:
 
  * ~~Support for audio conferencing~~
 
-*Milestone 2 is functionally complete, pending optimization*
+*Milestone 2 is complete*
 
 == Milestone 3 ==
 
@@ -74,4 +95,4 @@ SIP support for basic centralized conferencing on a P2P network:
  
  * The actual audioprocessing is done with gstreamer's livemixer
  * Python-based currently
- * *very* inefficient. Each stream is multiplexed through UDP and separately decoded for each receiver.
+ * Designed can still be improved. One pipeline per conference, but that pipeline is completely remade each time someone joins or leaves. This results in a small silence in between.
