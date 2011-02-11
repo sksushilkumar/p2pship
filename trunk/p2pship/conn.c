@@ -57,13 +57,14 @@
 #include "ship_utils.h"
 
 
-#define ship_lock_conn(conn) { ship_lock(conn); ship_restrict_locks(conn, identities); ship_restrict_locks(conn, conn_all_conn); }
+//#define ship_lock_conn(conn) { printf("lock conn..\n"); ship_lock(conn); ship_restrict_locks(conn, identities); ship_restrict_locks(conn, conn_all_conn); printf("conn yes..\n"); }
+
+extern ship_obj_list_t *identities;
 
 static int conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait, int flags);
 static int conn_resend_reg_pkg(ident_t *ident);
 static void conn_connection_free(conn_connection_t *conn);
 static int conn_connection_init(conn_connection_t *conn, void *param);
-extern ship_obj_list_t *identities;
 
 SHIP_DEFINE_TYPE(conn_connection);
 
@@ -128,6 +129,26 @@ static conn_packet_t *conn_packet_new_service(const char *to, const char *from,
 SHIP_DEFINE_TYPE(conn_packet);
 static ship_obj_ht_t *conn_waiting_packets = 0;
 
+
+static void 
+ship_unlock_conn(conn_connection_t *conn) 
+{
+	if (conn) {
+		ship_obj_unlockref(conn->ident);
+		conn->ident = NULL;
+		ship_unlock(conn);
+	}
+}
+
+static void 
+ship_lock_conn(conn_connection_t *conn) 
+{ 
+	ship_lock(conn); 
+	ship_restrict_locks(conn, identities); 
+	ship_restrict_locks(conn, conn_all_conn); 
+}
+
+
 /* @sync none
  * frees & closes the given connection. 
  * should not be called directly, but rather through conn_conn_close!
@@ -141,6 +162,8 @@ conn_connection_free(conn_connection_t *conn)
 	conn->socket = -1;
 	processor_signal_wait(conn->wait, -1);
 	conn->wait = NULL;
+	processor_signal_wait(conn->subwait, -1);
+	conn->subwait = NULL;
 
 	freez(conn->sip_aor);
 	freez(conn->local_aor);
@@ -205,8 +228,10 @@ conn_conn_close(conn_connection_t *conn)
 		conn->state = STATE_CLOSING;
 		processor_signal_wait(conn->wait, -1);
 		conn->wait = NULL;
+		processor_signal_wait(conn->subwait, -1);
+		conn->subwait = NULL;
 		
-		ship_unlock(conn);
+		ship_unlock_conn(conn);
 		ship_obj_list_remove(conn_all_conn, conn);
 		ship_lock_conn(conn);
         }        
@@ -220,23 +245,20 @@ conn_conn_close(conn_connection_t *conn)
 static conn_connection_t *
 conn_find_connection_by_aor(char *sip_aor, char *local_aor)
 {
-        int i;
         conn_connection_t *ret = NULL;
-
+	void *ptr = NULL;
         if (!conn_all_conn)
                 return NULL;
 
         ship_lock(conn_all_conn);
-	for (i=0; !ret && i < ship_list_length(conn_all_conn); i++) {
-		conn_connection_t *c = (conn_connection_t *)ship_list_get(conn_all_conn, i);
-		if (c->sip_aor && !strcmp(sip_aor, c->sip_aor) &&
-		    c->local_aor && !strcmp(local_aor, c->local_aor) &&
-		    c->state != STATE_CLOSING) {
-			ret = c;
-			ship_obj_lockref(ret);
-			ship_restrict_locks(ret, identities); 
-			ship_restrict_locks(ret, conn_all_conn); 
-		}
+	while (!ret && (ret = ship_list_next(conn_all_conn, &ptr))) {
+		if (ret->sip_aor && !strcmp(sip_aor, ret->sip_aor) &&
+		    ret->local_aor && !strcmp(local_aor, ret->local_aor) &&
+		    ret->state != STATE_CLOSING) {
+			ship_obj_ref(ret);
+			ship_lock_conn(ret);
+		} else
+			ret = NULL;
 	}
         ship_unlock(conn_all_conn);
 
@@ -248,20 +270,20 @@ conn_find_connection_by_aor(char *sip_aor, char *local_aor)
 static conn_connection_t *
 conn_find_connection_by_socket(int socket)
 {
-        int i;
+	void *ptr = NULL;
         conn_connection_t *ret = NULL;
 
         if (!conn_all_conn)
                 return NULL;
 
         ship_lock(conn_all_conn);
-	for (i=0; !ret && i < ship_list_length(conn_all_conn); i++) {
-		conn_connection_t *c = (conn_connection_t *)ship_list_get(conn_all_conn, i);
-		if (c->socket == socket &&
-		    c->state != STATE_CLOSING) {
-			ret = c;
-			ship_obj_lockref(ret);
-		}
+	while (!ret && (ret = ship_list_next(conn_all_conn, &ptr))) {
+		if (ret->socket == socket &&
+		    ret->state != STATE_CLOSING) {
+			ship_obj_ref(ret);
+			ship_lock_conn(ret);
+		} else
+			ret = NULL;
 	}
         ship_unlock(conn_all_conn);
 
@@ -516,7 +538,14 @@ conn_cb_data_got(int s, char *data, ssize_t datalen)
         if (datalen < 1 || !conn) {
                 if (conn) {
 			LOG_DEBUG("socket %d from %s => %s closed\n", s, conn->local_aor, conn->sip_aor);
-			conn_conn_close(conn);
+			if (conn->state != STATE_CONNECTING && conn->subwait)
+				conn_conn_close(conn);
+			else {
+				netio_close_socket(s);
+				conn->socket = -1;
+				processor_signal_wait(conn->subwait, -4);
+				conn->subwait = NULL;
+			}
                 } else {
 			LOG_DEBUG("socket %d between unknowns closed\n", s);
                         netio_close_socket(s);
@@ -539,7 +568,7 @@ conn_cb_data_got(int s, char *data, ssize_t datalen)
 		/* leave a ref to conn */
                 processor_tasks_add(conn_process_data_do, (void*)conn, 
 				    conn_process_data_done);
-		ship_unlock(conn);
+		ship_unlock_conn(conn);
 		conn = NULL;
         }
  err:
@@ -591,7 +620,7 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 			ident_t *ident = 0;
 			if (conn->local_aor)
 				buf = strdup(conn->local_aor);
-			ship_unlock(conn);
+			ship_unlock_conn(conn);
 			ident = ident_find_by_aor(buf);
 			freez(buf);
 			ship_lock_conn(conn);
@@ -663,7 +692,10 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 			got_useful = 0;
 			break;
 		case PKG_SERVICE:
-			ret = conn_packet_process_data(payload, pkglen, conn);
+			if (conn->state == STATE_CONNECTED)
+				ret = conn_packet_process_data(payload, pkglen, conn);
+			else
+				LOG_ERROR("FAILING service as not connected (%d)!\n", conn->state);
 			break;
 		default:
 			/* ignore */
@@ -689,10 +721,14 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 	conn->ident = NULL;
         if (!ret) {
                 netio_set_active(conn->socket, 1);
-        } else {
+        } else if (conn->state == STATE_CONNECTING && conn->subwait) {
+		/* if we are connecting, don't kill it, but try again (with possibly different address) */
+		processor_signal_wait(conn->subwait, -1);
+		conn->subwait = NULL;
+	} else {
                 conn_conn_close(conn);
 	}
-	ship_unlock(conn); // unreffing is in _done!
+	ship_unlock_conn(conn); // unreffing is in _done!
         return ret;
 }
 
@@ -718,7 +754,7 @@ conn_ensure_unique_conn_lock(conn_connection_t *conn)
 	int ret = -1;
 	
 	/* if quitting or a loopback connection */
-        if (!conn_all_conn || !strcmp(conn->local_aor, conn->sip_aor))
+        if (!conn_all_conn || !conn->local_aor || !conn->sip_aor || !strcmp(conn->local_aor, conn->sip_aor))
                 return 0;
 
 	/* releasing this lock might mean that *this* connection will
@@ -726,7 +762,7 @@ conn_ensure_unique_conn_lock(conn_connection_t *conn)
 	ship_obj_unlockref(conn->ident);
 	conn->ident = NULL;
 	
-	ship_unlock(conn);
+	ship_unlock_conn(conn);
         ship_lock(conn_all_conn);
 	/* ensure that this conn is still valid */
 	if (conn->state != STATE_CLOSING) {
@@ -746,6 +782,34 @@ conn_ensure_unique_conn_lock(conn_connection_t *conn)
 	ship_lock_conn(conn);
         ship_unlock(conn_all_conn);
 	return ret;
+}
+
+static void
+conn_event_cb(char *event, void *eventdata)
+{
+	ship_obj_unref((conn_connection_t*)eventdata);
+}
+
+static int
+conn_handshake_done(conn_connection_t *conn)
+{
+	/* ok, we are connected */
+	if (conn->state == STATE_INIT) {
+		if (conn->local_aor && conn->sip_aor) {
+			conn->state = STATE_CONNECTED;
+			STATS_LOG("incoming conn handshake done\n");
+			ship_obj_ref(conn);
+			processor_event_generate("conn_got", conn, conn_event_cb);
+			return 1;
+		} else
+			return 0;
+	} else if (conn->state == STATE_CONNECTING) {
+		conn->state = STATE_CONNECTED;
+		processor_signal_wait(conn->subwait, 0);
+		conn->subwait = NULL;
+		return 1;
+	} else
+		return 1;
 }
 
 /* handles incoming pkg_reg's (ident registration packages */
@@ -798,7 +862,7 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 	ASSERT_TRUE(reg, err);
 	ASSERT_TRUE(tmp_aor = strdup(reg->sip_aor), err);
 
-	ship_unlock(conn);
+	ship_unlock_conn(conn);
 	import = ident_import_foreign_reg(reg);
 	ship_lock_conn(conn);
 	
@@ -819,9 +883,7 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 				   for the same aor-pair. */                                
 				STATS_LOG("conn handshake done\n");
 				if (!conn_ensure_unique_conn_lock(conn)) {
-                                        conn->state = STATE_CONNECTED;
-					processor_signal_wait(conn->wait, 0);
-					conn->wait = NULL;
+					conn_handshake_done(conn);
 				}
                         }
 			ret = 0;
@@ -832,46 +894,36 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
         return ret;
 }
 
-static void
-conn_event_cb(char *event, void *eventdata)
-{
-	ship_obj_unref((conn_connection_t*)eventdata);
-}
-
 /* handles a target-package */
 static int
 conn_process_pkg_target(char *payload, int pkglen, conn_connection_t *conn)
 {
         int ret = -3;
+	char *reg_str = NULL;
 
 	/* we *should* have received a reg package before this target
 	   one!  here we ensure that this is the only aor conn and that
 	   we really have the aor that the target indicates */
         ASSERT_TRUE(conn->state == STATE_INIT, err);
-	ASSERT_TRUE(conn->sip_aor && !conn->local_aor, err);
+	//ASSERT_TRUE(conn->sip_aor && !conn->local_aor, err);
+	ASSERT_TRUE(!conn->local_aor, err);
 	ASSERT_TRUE(conn->local_aor = strndup(payload, pkglen), err);
 	if (!conn_ensure_unique_conn_lock(conn)) {	
-		char *reg_str = NULL;
 		ident_t *ident = 0;
 		
 		/* this will ref the ident, which is unref'd when returning */
-		ship_unlock(conn);
-		ident = ident_find_by_aor(conn->local_aor); // crash twice
+		ship_unlock_conn(conn);
+		ident = ident_find_by_aor(conn->local_aor);
 		ship_lock_conn(conn);
 		ASSERT_TRUE(conn->ident = ident, err);
 		ASSERT_TRUE(reg_str = ident_get_regxml(conn->ident), err);
 		
 		conn_send_conn(conn, (char*)reg_str, strlen(reg_str), PKG_REG);
-		conn->state = STATE_CONNECTED;
+		conn_handshake_done(conn);
 		ret = 0;
-		
-		/* ok, we are connected */
-		STATS_LOG("incoming conn handshake done\n");
-		ship_obj_ref(conn);
-		processor_event_generate("conn_got", conn, conn_event_cb);
-		freez(reg_str);
 	}
 err:
+	freez(reg_str);
         return ret;
 }
 
@@ -894,7 +946,7 @@ conn_resend_reg_pkg(ident_t *ident)
 			ship_lock_conn(c);
 			if (c->local_aor && !strcmp(ident->sip_aor, c->local_aor))
 				conn_send_conn(c, (char*)data, strlen(data), PKG_REG);
-			ship_unlock(c);
+			ship_unlock_conn(c);
 		}
 		ship_unlock(conn_all_conn);
 	}
@@ -1691,7 +1743,7 @@ conn_get_connected_peers(char *sip_aor, ship_list_t *ret)
 				char *t = strdup(c->sip_aor);
 				ship_list_add(ret, t);
 			}
-			ship_unlock(c);
+			ship_unlock_conn(c);
 		}
 		ship_unlock(conn_all_conn);
 	}
@@ -2005,8 +2057,7 @@ conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait, 
                 if (conn) {
                         if (conn->state == STATE_CONNECTED) {
                                 ret = 0;
-                        } else if (!conn->wait) {
-				
+                        } else if (!conn->wait) {				
 				ship_obj_ref(conn);
 				(*wait) = processor_tasks_add(conn_open_connection_to_do, 
 							      conn,
@@ -2024,13 +2075,17 @@ conn_open_connection_to(char *sip_aor, ident_t *ident, processor_task_t **wait, 
 /* finds from a list of addr's the first one with a valid port number
    (transport address) */
 static addr_t*
-conn_find_first_with_port(ship_list_t *list)
+conn_find_first_with_port(ship_list_t *list, void *from)
 {
 	addr_t *ret = 0;
 	void *ptr = 0;
 	while (!ret && (ret = ship_list_next(list, &ptr))) {
-		if (!ret->port)
+		if (ret == from) {
+			from = NULL;
 			ret = 0;
+		} else if (!ret->port || from) {
+			ret = 0;
+		}
 	}
 	return ret;
 }
@@ -2040,16 +2095,44 @@ int
 conn_can_connect_to(reg_package_t *pkg)
 {
 #ifdef CONFIG_HIP_ENABLED
-	if (conn_find_first_with_port(pkg->hit_addr_list) ||
-	    (conn_allow_nonhip && conn_find_first_with_port(pkg->ip_addr_list)))
+	if (conn_find_first_with_port(pkg->hit_addr_list, NULL) ||
+	    (conn_allow_nonhip && conn_find_first_with_port(pkg->ip_addr_list, NULL)))
 		return 1;
 #else
-	if (conn_find_first_with_port(pkg->ip_addr_list))
+	if (conn_find_first_with_port(pkg->ip_addr_list, NULL))
 		return 1;
 #endif
 	return 0;
 }
 
+/* fetches a connect-to address from the given reg package */
+static addr_t*
+conn_get_next_conn_addr(conn_connection_t *conn, reg_package_t *pkg)
+{
+	addr_t *addr = 0;
+#ifdef CONFIG_HIP_ENABLED
+	/* don't try HIP if we aren't running it */
+	if (hipapi_hip_running()) {
+		LOG_DEBUG("trying to find HIT..\n");
+		addr = conn_find_first_with_port(pkg->hit_addr_list, conn->last_addr);
+		if (addr && !hipapi_has_linkto(addr)) {
+			if (hipapi_establish(addr, pkg->ip_addr_list, pkg->rvs_addr_list)) {
+				LOG_ERROR("HIP connection could not be established.\n");
+				addr = NULL;
+			}
+		}
+	}
+			
+	if (!addr && conn_allow_nonhip) {
+		LOG_DEBUG("using first non-hit ip..\n");
+		addr = conn_find_first_with_port(pkg->ip_addr_list, conn->last_addr);
+	}
+#else
+	addr = conn_find_first_with_port(pkg->ip_addr_list, conn->last_addr);
+#endif
+	conn->last_addr = addr;
+	return addr;
+}
 
 /* @sync ok
    initiates a hip connection to a peer. */
@@ -2058,15 +2141,16 @@ conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_cod
 {
         reg_package_t *pkg = NULL;
         int ret = -2;
-        conn_connection_t * conn = (conn_connection_t*)data;
+        conn_connection_t *conn = (conn_connection_t*)data;
 	ident_t *ident = 0;
 
 	/* we need to lock this as we might get netio callback before
 	   assigning the socket to the conn */
 	ident = ident_find_by_aor(conn->local_aor);
+        ship_lock(conn_all_conn);
 	ship_lock_conn(conn);
 	conn->ident = ident;
-	LOG_DEBUG("Running with wait: %08x and code: %d..\n");
+	LOG_DEBUG("Running with wait: %08x and code: %d..\n", (unsigned int)*wait, wait_for_code);
 	if (!(*wait) || wait_for_code == 0) {
                 int hadwait = 0;
 
@@ -2082,34 +2166,16 @@ conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_cod
                         addr_t *addr = 0;
                         struct sockaddr *sa = 0;
                         socklen_t salen;
-                        
+
+		try_again:
                         ret = -2;
-#ifdef CONFIG_HIP_ENABLED
-			/* don't try HIP if we aren't running it */
-			if (hipapi_hip_running()) {
-				LOG_DEBUG("trying to find HIT..\n");
-				addr = conn_find_first_with_port(pkg->hit_addr_list);
-				if (addr && !hipapi_has_linkto(addr)) {
-					if (hipapi_establish(addr, pkg->ip_addr_list, pkg->rvs_addr_list)) {
-						LOG_ERROR("HIP connection could not be established.\n");
-						addr = NULL;
-					}
-				}
-			}
+			addr = conn_get_next_conn_addr(conn, pkg);
 			
-			if (!addr && conn_allow_nonhip) {
-				LOG_DEBUG("using first non-hit ip..\n");
-				addr = conn_find_first_with_port(pkg->ip_addr_list);
-			}
-#else
-                        addr = conn_find_first_with_port(pkg->ip_addr_list);
-#endif
 			/* mark the registration as faul if it doesn't have this */
                         if (!addr) {
 				LOG_ERROR("No working address / HIT found.\n");
 				pkg->need_update = 1;
-			}
-			if (addr && !ident_addr_addr_to_sa(addr, &sa, &salen)) {
+			} else if (!ident_addr_addr_to_sa(addr, &sa, &salen)) {
 				conn->state = STATE_CONNECTING;
 				time(&conn->last_content);
 
@@ -2122,15 +2188,19 @@ conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_cod
 #endif
 				conn->socket = netio_connto(sa, salen, conn_cb_conn_opened);
 				if (conn->socket != -1) {
-					LOG_DEBUG("waiting for netio connect..\n");
+					LOG_DEBUG("waiting for netio connect.. %d\n", conn->socket);
 					ret = 1;
-					conn->wait = processor_create_wait();
-					(*wait) = conn->wait;
+
+					/* this should be null.. */
+					if (conn->subwait) {
+						PANIC("wait is not null!!\n");
+					}
+					conn->subwait = processor_create_wait();
+					(*wait) = conn->subwait;
 				}
 				
                                 free(sa);
                         }
-			ship_unlock(pkg);
                 } else if (ret == 1 && !hadwait) {
                         LOG_DEBUG("waiting for reg package lookup..\n");
                         ret = 1;
@@ -2138,9 +2208,19 @@ conn_open_connection_to_do(void *data, processor_task_t **wait, int wait_for_cod
 			LOG_DEBUG("error fetching registration package\n");
                         ret = -1;
                 }
-        }
-	ship_obj_unlockref(conn->ident);
-        ship_unlock(conn);
+        } else {
+		/* ok, something went wrong with either the connect or
+		   reg package lookup. if we have a reg package, check
+		   whether there's another address we could use! */
+		if ((pkg = ident_find_foreign_reg(conn->sip_aor))) {
+			LOG_INFO("trying connect again..\n");
+			goto try_again;
+		}
+	}
+	ship_unlock(pkg);
+        ship_unlock(conn_all_conn);
+        ship_unlock_conn(conn);
+
         return ret;
 }
 
@@ -2154,12 +2234,13 @@ conn_open_connection_to_done(void *data, int code)
         LOG_INFO("open connection task done with %d\n", code);
 	ship_lock_conn(conn);
 	
-	conn->wait = NULL;
-	ship_obj_ref(conn);
+	conn->wait = NULL; // so we wouldn't signal twice the completion (in conn_conn_close)
+	ship_obj_ref(conn); // for the event
 	if (code == 0) {
 		conn->state = STATE_CONNECTED;
 		processor_event_generate("conn_made", conn, conn_event_cb);
 	} else if (code < 0) {
+		conn_conn_close(conn);
 		conn->state = STATE_ERROR;
 		processor_event_generate("conn_failed", conn, conn_event_cb);
 	}
@@ -2202,7 +2283,7 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
 				ident_t *ident = NULL;
 				
 				/* first, send reg package, then send target. */
-				ship_unlock(conn);
+				ship_unlock_conn(conn);
 				if ((ident = ident_find_by_aor(conn->local_aor)))
 					reg_str = ident_get_regxml(ident);
 				ship_obj_unlockref(ident);
@@ -2234,9 +2315,8 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
                  * tunnel before notifying the process initiator that
                  * we are connected */
 		if (status) {
-			conn_conn_close(conn);
-			processor_signal_wait(conn->wait, status);
-			conn->wait = NULL;
+			processor_signal_wait(conn->subwait, status);
+			conn->subwait = NULL;
 		}
 		ship_complete();
 		ship_obj_unlockref(conn);

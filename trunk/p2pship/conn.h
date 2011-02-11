@@ -59,6 +59,7 @@ typedef struct conn_connection_s {
 	ship_list_t *processing;
 
         processor_task_t *wait;
+        processor_task_t *subwait;
 
 	/* the last-heard values. first for *anything* */
 	time_t last_heard;
@@ -77,6 +78,8 @@ typedef struct conn_connection_s {
 	/* fragments collected during .. */
 	ship_ht_t *fragments;
 
+	/* the last addr used. This is NOT owned by this, just used for pointer comparison! */
+	void *last_addr;
 } 
 conn_connection_t;
 
@@ -84,10 +87,10 @@ conn_connection_t;
 /* connection state */
 enum {
         STATE_ERROR = -1,
-        STATE_CLOSED = 0,
-        STATE_INIT = 1,
-        STATE_CONNECTED = 2,
-        STATE_CONNECTING = 3,
+        STATE_CLOSED = 0, // when created
+        STATE_INIT = 1, // when first received
+        STATE_CONNECTED = 2, // handshake done
+        STATE_CONNECTING = 3, // when establishing a connection
         STATE_CLOSING = 4
 };
 
