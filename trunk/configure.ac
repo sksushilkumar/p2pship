@@ -1,10 +1,10 @@
 #
 # 
 
-AC_INIT([p2pship], [0.1], [bugs-p2pship@hiit.fi])
+AC_INIT([p2pship], [1.2], [bugs-p2pship@hiit.fi])
 AC_PREREQ(2.59)
 AC_CONFIG_SRCDIR([p2pship/main.c])
-AM_INIT_AUTOMAKE([p2pship], [0.1])
+AM_INIT_AUTOMAKE([p2pship], [1.2])
 
 # we are programming in c
 AC_PROG_CC
