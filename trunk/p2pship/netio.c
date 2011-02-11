@@ -908,41 +908,11 @@ netio_loop(void *data)
 					continue;
 
 				if (!netio_socket_is_readable(e->s)) {
-					LOG_HL("removing offending socket %d!\n", e->s);
+					LOG_WARN("removing offending socket %d!\n", e->s);
 					e->remove = 1;
 				}
-
-				/*
-				if (getpeername(e->s, addr, &addrlen))
-					LOG_HL("STUFF. NOT OK! %d\n", e->s);
-
-				switch (e->type) {
-				case NETIO_SOCK_READ:
-					LOG_WARN("had %d for read, flush %d, %08x\n", e->s, e->flush, e);
-					break;
-				case NETIO_SOCK_WRITE:
-					ship_lock(e->send_queue);
-					LOG_WARN("had %d for write, flush %d, %08x\n", e->s, e->flush, e);
-					if (ship_list_first(e->send_queue))
-						LOG_WARN("send queue had %d for write, flush %d, %08x\n", e->s, e->flush, e);
-					ship_unlock(e->send_queue);
-					break;
-				case NETIO_SOCK_ACCEPT:
-					LOG_WARN("had %d for accept, flush %d, %08x\n", e->s, e->flush, e);
-					break;
-				case NETIO_SOCK_CONNTO:
-					LOG_WARN("had %d for connto, flush %d, %08x\n", e->s, e->flush, e);
-					break;
-				case NETIO_SOCK_PACKET_READ:
-					LOG_WARN("had %d for packet read, flush %d, %08x\n", e->s, e->flush, e);
-					break;
-				}
-
-				*/
 			}
 			ship_unlock(netio_sock_list);
-			// segfault
-			//PANIC("nio error!\n");
 		}
 
                 if (retval > 0) {
