@@ -154,7 +154,6 @@ sipp_get_addr_to_ua(ident_t *ident, addr_t *addr)
 	if (lis) {
 		memcpy(addr, &(lis->addr), sizeof(addr_t));
 		ret = 0;
-		LOG_HL("ok, we are using %s as the addr to the UA!\n", addr->addr);
 	}
 	return ret;
 }
@@ -619,9 +618,7 @@ static void
 sipp_sdp_process_proxy_address(int remotely_got, addr_t *target_addr, const addr_t *original_new_addr, addr_t *new_addr)
 {
 	memcpy(new_addr, original_new_addr, sizeof(*new_addr));
-	
-	LOG_HL("processing %s..\n", target_addr->addr);
-	
+		
 	/* todo gw: if we are in gateway mode, we should not have the
 	   mobility hack enabled ever! */
 	TODO("check whether we are in proxy mode, disable mobility hack\n");
@@ -687,7 +684,6 @@ sipp_sdp_replace_addr_create_proxies(char *bodystr, int bodystrlen, char **newms
 
 	/* end if we don't have anything to modify in the body! */
 	if (!sipp_sdp_extract_all_contacts(bodystr, bodystrlen, targets)) {
-		LOG_HL("nothing to process, ending\n");
 		memcpy(newbodystr, bodystr, bodystrlen);
 		newbodylen = bodystrlen;
 		goto done;
@@ -2165,7 +2161,7 @@ sipp_run_client_handlers(ident_t *ident, const char *remote_aor, addr_t *contact
 	   sip-from, sip-to, message type */
 
 	ASSERT_TRUE(ident && *buf, err);
-	ship_lock(sipp_client_handlers);
+	//ship_lock(sipp_client_handlers);
 	ret = 1;
 	while (ret && *buf && (pack = ship_list_next(sipp_client_handlers, &ptr))) {
 		sipp_client_handler handler;
@@ -2174,7 +2170,7 @@ sipp_run_client_handlers(ident_t *ident, const char *remote_aor, addr_t *contact
 		ship_unpack_keep(pack, &handler, &data);
 		ret = handler(ident, remote_aor, contact_addr, buf, len, data);
 	}
-	ship_unlock(sipp_client_handlers);
+	//ship_unlock(sipp_client_handlers);
 	if (ret)
 		ret = 1;
  err:
