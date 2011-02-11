@@ -27,7 +27,8 @@
 #include "ship_debug.h"
 #include "ship_utils.h"
 
-/* if we're using threaded intepreter instead of multiple ones */
+/* if we're using threaded intepreter instead of multiple ones. this
+   clearly messes up the environments!! do not use. */
 //#define THREADED_INTERPRETER 1
 
 #undef _POSIX_C_SOURCE
@@ -188,6 +189,7 @@ pymod_tstate_ok(PyThreadState *tstate)
 	if (!Py_IsInitialized())
 		return 0;
 
+	ship_check_restricts();
 	PyEval_AcquireLock();
 
 	// check if the thread is alive!
@@ -495,6 +497,7 @@ pymod_config_update(processor_config_t *c, char *k, char *v)
 
 	if ((h = ship_ht_get_string(pymod_config_updaters, k))) {
 		// call the function..
+		ship_check_restricts();
 		ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
 		ASSERT_TRUE(arglist = Py_BuildValue("(ss)", pymod_strip_config_key(k), v), err);
 
@@ -612,7 +615,7 @@ pymod_service_data_received(char *data, int data_len,
 {
 	/* find the service holder .. */
 	pymod_service_t *s = 0;
-	PyObject *arglist, *result;
+	PyObject *arglist = NULL, *result = NULL;
 	char *id = NULL;
 	
 	/* check first if we have a registered one for this */
@@ -634,15 +637,17 @@ pymod_service_data_received(char *data, int data_len,
 		return -1;
 	}
 	
+	ASSERT_TRUE(arglist = Py_BuildValue("(s#ssi)", data, data_len, target->sip_aor, source, service_type), err);
+
+	ship_unlock(target);
 	ASSERT_TRUE(pymod_tstate_ok(s->handler->tstate), err2);
-	ASSERT_TRUE(arglist = Py_BuildValue("(s#ssi)", data, data_len, target->sip_aor, source, service_type), err2);
 	result = PyObject_CallObject(s->handler->callback, arglist);
-	Py_DECREF(arglist);
-	ASSERT_TRUE(result, err2);
-	Py_DECREF(result);
  err2:
 	pymod_tstate_return();
+	ship_lock(target);
  err:
+	Py_XDECREF(arglist);
+	Py_XDECREF(result);
 	freez(id);
 	return 0;
 }
@@ -652,7 +657,7 @@ static void
 pymod_service_service_closed(service_type_t service_type, ident_t *ident, void *pkg)
 {
 	pymod_service_t *s = 0;
-	PyObject *arglist, *result;
+	PyObject *arglist = NULL, *result = NULL;
 	char *id = NULL;
 
 	ASSERT_TRUE(pymod_default_services, err);
@@ -665,16 +670,17 @@ pymod_service_service_closed(service_type_t service_type, ident_t *ident, void *
 	if (!s)
 		goto err;
 	
+	ASSERT_TRUE(arglist = Py_BuildValue("(is)", service_type, ident->sip_aor), err);
+	
+	ship_unlock(ident);
 	ASSERT_TRUE(pymod_tstate_ok(s->handler->tstate), err2);
-	ASSERT_TRUE(arglist = Py_BuildValue("(is)", service_type, ident->sip_aor), err2);
 	result = PyObject_CallObject(s->handler->callback2, arglist);
-	Py_DECREF(arglist);
-	ASSERT_TRUE(result, err2);
-	Py_DECREF(result);
-
  err2:
 	pymod_tstate_return();
+	ship_lock(ident);
  err:
+	Py_XDECREF(arglist);
+	Py_XDECREF(result);
 	pymod_service_free(s);
 	freez(id);
 }
@@ -950,7 +956,6 @@ pymod_http_process_req2(netio_http_conn_t *conn, void *pkg, extapi_http_req_t *r
          hlist) = req
 	*/
 
-	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
 
 	/* build parameters.. */
 
@@ -996,11 +1001,14 @@ pymod_http_process_req2(netio_http_conn_t *conn, void *pkg, extapi_http_req_t *r
 	freez(astr);
 	ASSERT_TRUE(astr = strdup(conn->tracking_id), err);
 	ship_unlock(conn);
+	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err2);
 	result = PyObject_CallObject(h->callback, arglist);
-	conn = netio_http_get_conn_by_id(astr); // dangerous.. should be ship_obj!!
-	ASSERT_TRUE(result, err);
-	ASSERT_TRUE(PyInt_Check(result), err);
+	ASSERT_TRUE(result, err2);
+	ASSERT_TRUE(PyInt_Check(result), err2);
 	funcret = (int)PyInt_AsLong(result);
+ err2:
+	pymod_tstate_return();
+	conn = netio_http_get_conn_by_id(astr); // dangerous.. should be ship_obj!!
  err:
 	Py_XDECREF(val);
 	Py_XDECREF(key);
@@ -1012,7 +1020,6 @@ pymod_http_process_req2(netio_http_conn_t *conn, void *pkg, extapi_http_req_t *r
 	ship_list_free(l);
 	freez(astr);
 
-	pymod_tstate_return();
 	return funcret;
 }
 
@@ -1112,6 +1119,7 @@ pymod_ol_put(char *key, char *data, int timeout,
 	int ret = -1;
 	
 
+	ship_check_restricts();
 	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
 	ASSERT_TRUE(arglist = Py_BuildValue("(ssis)", key, data, timeout, secret), err);
 	result = PyObject_CallObject(h->put, arglist);
@@ -1133,6 +1141,7 @@ pymod_ol_get(char *key, olclient_get_task_t *task)
 	int ret = -1;
 	/* pymod_ol_get_t *wait = NULL; */
 
+	ship_check_restricts();
 	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
 	ASSERT_TRUE(PyCallable_Check(h->get), err);
 
@@ -1159,6 +1168,7 @@ pymod_ol_remove(char *key, char* secret, struct olclient_module* mod)
 	PyObject *result;
 	int ret = -1;
 	
+	ship_check_restricts();
 	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
 	ASSERT_TRUE(arglist = Py_BuildValue("(ss)", key, secret), err);
 	result = PyObject_CallObject(h->remove, arglist);
@@ -1196,6 +1206,7 @@ void pymod_ol_close(struct olclient_module* mod)
 		h = (pymod_ol_handler_t*)ship_list_remove(pymod_ol_clients, mod->module_data);
 
 	ASSERT_TRUE(h, err);
+	ship_check_restricts();
 	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
 	result = PyObject_CallObject(h->close, NULL);
 	ASSERT_TRUE(result, err);
@@ -1336,24 +1347,25 @@ pymod_sipp_client_handler(ident_t *ident, const char *remote_aor, addr_t *contac
 	int ret = -1;
 	char *addr = 0;
 	pymod_ipc_handler_t *h = (pymod_ipc_handler_t*)data;
-	PyObject *arglist;
-	PyObject *result;
+	PyObject *arglist = 0;
+	PyObject *result = 0;
 	
 	ident_addr_addr_to_str(contact_addr, &addr);
 		
 	//ASSERT_TRUE(ship_ht_get(pymod_sipp_client_handlers, h), err);
-	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
 	ASSERT_TRUE(arglist = Py_BuildValue("(ssss#)", ident->sip_aor, remote_aor, addr, *buf, *len), err);
+
+	ship_unlock(ident);
+	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err2);
 	result = PyObject_CallObject(h->callback, arglist);
-	Py_DECREF(arglist);
-	ASSERT_TRUE(result, err);
+	ASSERT_TRUE(result, err2);
 
 	if (PyString_Check(result)) {
 		char *nbuf = 0;
 		int nlen = 0;
 		if (PyString_AsStringAndSize(result, &nbuf, &nlen) != -1) {
 			freez(addr);
-			ASSERT_TRUE(addr = mallocz(nlen+1), err);
+			ASSERT_TRUE(addr = mallocz(nlen+1), err2);
 			memcpy(addr, nbuf, nlen);
 			freez(*buf);
 			*buf = addr;
@@ -1364,10 +1376,13 @@ pymod_sipp_client_handler(ident_t *ident, const char *remote_aor, addr_t *contac
 			ret = -1;
 	} else
 		ret = 0; /* done with it! */
-	
-	Py_DECREF(result);
- err:
+
+ err2:
 	pymod_tstate_return();
+	ship_lock(ident);
+ err:
+	Py_XDECREF(arglist);
+	Py_XDECREF(result);
 	freez(addr);
 	return ret;
 }
@@ -1815,7 +1830,8 @@ pymod_close()
 	//PyThreadState_Swap(NULL);
 	//PyThreadState_Delete(mainThreadState); // can't del the main thread
 	pymod_alive = 0;
-	Py_Finalize();
+	if (Py_IsInitialized())
+		Py_Finalize();
 	/* close the ol's */
 	ship_list_empty_with(pymod_ol_clients, pymod_ol_free);
 	ship_list_free(pymod_ol_clients);
@@ -1891,6 +1907,7 @@ pymod_thread_kill(processor_worker_t *w)
 		*/
 
 
+		ship_check_restricts();
 		pymod_tstate_ok(ts);
    		PyEval_ReleaseLock();
 	}
@@ -1905,17 +1922,13 @@ pymod_run_file_thread(processor_worker_t *w)
 
 	if ((fp = fopen(fn, "r"))) {
 		PyThreadState *myThreadState = NULL;
-		//PyInterpreterState *mainInterpreterState = NULL;
 
 		/* Create a local thread state for each new thread */
 		PyEval_AcquireLock();
 
 #ifdef THREADED_INTERPRETER
-		//mainInterpreterState = mainThreadState->interp;
-		myThreadState = PyThreadState_New(mainThreadState->interp); //mainInterpreterState);
+		myThreadState = PyThreadState_New(mainThreadState->interp);
 		PyThreadState_Swap(myThreadState);
-		//PyEval_InitThreads();
-
 #else
 		myThreadState = Py_NewInterpreter();
 #endif
