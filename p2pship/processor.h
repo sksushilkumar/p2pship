@@ -60,11 +60,17 @@ struct processor_task_s
         void (*cb_processor_complete) (void *qt, int code);
 
         void *data;
+
+	/* the code signalled to this wait */
         int status_code;
+
 	unsigned long created;
 	int timeout;
 	
+	/* the waited for object */
         processor_task_t *wait_for;
+
+	/* the code in which the waited for ended with */
 	int wait_for_code;
 };
 

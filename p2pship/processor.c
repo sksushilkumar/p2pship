@@ -314,7 +314,7 @@ processor_shutdown()
 		COND_WAKEUP_ALL(processor_tasks_cond, processor_tasks_lock);
 		LOG_DEBUG("interrupted\n");
 #ifdef CONFIG_START_GTK
-		gtk_exit(0);
+		gtk_main_quit();
 #endif
 	} else {
 		LOG_WARN("forcing exit\n");
@@ -675,7 +675,7 @@ processor_thread_run(processor_worker_t* data)
                         LOG_VDEBUG("processing an event...\n");
                         if (qt->func)
                                 qt->status_code = qt->func(qt->data, &(qt->wait_for), qt->wait_for_code);
-
+			
 			/* debugging: check that we do not have any restricts any more!
 			   ..that would mean an un-released lock */
 			ship_check_restricts();
