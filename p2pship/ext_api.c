@@ -432,7 +432,20 @@ extapi_http_sent(char *to, char *from, service_type_t service,
 	if (code) {
 		netio_http_conn_t *conn = netio_http_get_conn_by_id(ptr);
 		if (conn) {
-			extapi_http_proxy_response(conn, 404, "Not Found", "Not found\n");
+			switch (code) {
+			case -3:
+				extapi_http_proxy_response(conn, 404, "Not Found", "Not found. The request timed out.\n");
+				break;
+			case -2:
+				extapi_http_proxy_response(conn, 404, "Not Found", "Not found. The service is not running.\n");
+				break;
+			case -1:
+				extapi_http_proxy_response(conn, 404, "Not Found", "Not found. Could not connect.\n");
+				break;
+			default:
+				extapi_http_proxy_response(conn, 404, "Not Found", "Not found\n");
+				break;
+			}
 			netio_http_conn_close(conn);
 		}
 	}
