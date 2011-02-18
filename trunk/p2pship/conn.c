@@ -604,10 +604,10 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
         char *buf = 0;
         int type, pkglen = 0;
         conn_connection_t *conn;
-	
+
 	conn = (conn_connection_t *)data;
 	ship_lock_conn(conn);
-	
+
 	conn->ident = NULL;
 	ASSERT_TRUE(conn->state != STATE_CLOSING, err);
         do {
@@ -1348,6 +1348,8 @@ conn_packet_process_data(char *payload, int pkglen, conn_connection_t *conn)
 		LOG_DEBUG("processed it with %d\n", ret);
 		if (ret < 1)
 			conn_send_ack(p, ret, "he23o", 6);
+		/* don't kill the connection just because of a misguided request! */
+		ret = 0;
 	} else {
 		LOG_WARN("invalid packet!\n");
 	}
