@@ -149,6 +149,26 @@ ship_printf(int timed, int error, const char *template, ...)
 #endif
 }
 
+/* this is only for local debugging. prints out a byte array */
+void
+ship_printf_bytearr(const void *arr, const int arrlen, const char *template, ...)
+{
+	int i;
+	va_list ap;
+	va_start(ap, template);
+	vfprintf(stderr, template, ap);
+	va_end(ap);
+
+	fprintf(stderr, "\n");
+	for (i=0; i < arrlen; i++) {
+		if (i % 16 == 0)
+			fprintf(stderr, "0x%02x:  ", i);
+		fprintf(stderr, "%02x ", (0xff & ((const char*)arr)[i]));
+		if (i % 16 == 15)
+			fprintf(stderr, "\n");
+	}
+	fprintf(stderr, "\n");
+}
 
 int 
 ship_locked(void *lock)
@@ -786,6 +806,27 @@ append_mem(const char *str, int strlen, char *buf, int *buflen, int *datalen)
 	memcpy(buf + *datalen, str, strlen);
 	*datalen += strlen;
 	return buf;
+}
+
+int 
+append_str2(char **str, char *buf)
+{
+	void *tmp = 0;
+	if (!buf)
+		return 0;
+	
+	if (!*str) {
+		ASSERT_TRUE(tmp = strdup(buf), err);
+	} else {
+		ASSERT_TRUE(tmp = mallocz(strlen(*str) + strlen(buf) + 1), err);
+		strcat(tmp, *str);
+		strcat(tmp, buf);
+		free(*str);
+	}
+	*str = tmp;
+	return 0;
+ err:
+	return -1;
 }
 
 char *
@@ -1832,6 +1873,20 @@ ship_xml_get_child_field_dup(xmlNodePtr node, char *key)
 	return NULL;
 }
 
+/* checks if an attribute is a certain value */
+int
+ship_xml_attr_is(xmlNodePtr node, char *key, char *value)
+{
+	int ret = 0;
+	xmlChar *result = 0;
+	result = xmlGetProp(node, (unsigned char*)key);
+	if (result && !strcmp((char*)result, value))
+		ret = 1;
+	if (result)
+		xmlFree(result);
+	return ret;
+}
+
 /* fetches a child's value */
 char*
 ship_xml_get_child_field(xmlNodePtr node, char *key)
@@ -2080,7 +2135,8 @@ ship_pack(char *fmt, ...)
 			break;
 		case 's':
 			vm = (char*)va_arg(ap, char*);
-			s = strlen((char*)vm)+1;
+			if (vm)
+				s = strlen((char*)vm)+1;
 			break;
 		case 'p':
 			ret[p] = (void*)va_arg(ap, void*);
