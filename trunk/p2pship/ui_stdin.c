@@ -51,7 +51,10 @@ ui_stdin_query_ident_operation(ident_t *ident, const char *operation,
 {
 
 	USER_PRINT("Identity: %s <%s>\n", ident->username, ident->sip_aor);
-	ident_data_print_cert("\t", ident->cert);
+	if (ident_is_self_signed(ident))
+		USER_PRINT("\tIdentity is self-signed\n");
+	else
+		ident_data_print_cert("\t", ident->cert);
 	return ui_stdin_query_operation(operation, true_op, false_op);
 }
 
