@@ -194,7 +194,7 @@ ident_addr_str_to_addr(char *str, addr_t* addr)
                         } else
                                 v = ke+1;
                         
-                        if (!len_memcmp("type", k, ke-k)) {
+                        if (!len_memcmp("transport", k, ke-k)) {
                                 if (!len_memcmp("udp", v, ve-v)) {
                                         addr->type = IPPROTO_UDP;
                                 } else if (!len_memcmp("tcp", v, ve-v)) {
@@ -217,9 +217,10 @@ int
 ident_addr_addr_to_str(addr_t* addr, char **str)
 {
 	int hasparam = 0;
-        char *ret = (char*)mallocz((2 * IDENT_ADDR_MAX_LEN) + 50);
-        if (!ret)
-                return -4;
+        char *ret = 0;
+
+	ASSERT_TRUE(addr, err);
+	ASSERT_TRUE(ret = (char*)mallocz((2 * IDENT_ADDR_MAX_LEN) + 50), err);
 
         if (addr->family == AF_INET6)
                 strcat(ret, "[");
@@ -235,11 +236,11 @@ ident_addr_addr_to_str(addr_t* addr, char **str)
                 /* no type without port! */
                 switch (addr->type) {
                 case IPPROTO_TCP:
-                        strcat(ret, ";type=tcp");
+                        strcat(ret, ";transport=tcp");
                         hasparam = 1;
 			break;
                 case IPPROTO_UDP:
-                        strcat(ret, ";type=udp");
+                        strcat(ret, ";transport=udp");
                         hasparam = 1;
                         break;
                 case IPPROTO_NONE:
@@ -255,7 +256,11 @@ ident_addr_addr_to_str(addr_t* addr, char **str)
 	}
 
         (*str) = ret;
-        return 0;
+ err:
+	if (ret)
+		return 0;
+	else 
+		return -1;
 }
 
 static int
