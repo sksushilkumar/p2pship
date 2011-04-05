@@ -27,6 +27,9 @@
 #include "addrbook.h"
 #include "ui.h"
 #include "mc.h"
+#ifdef DO_STATS
+#include "access_control.h"
+#endif
 
 /* the pp packets */
 #define PP_MSG_ACK 1
@@ -35,9 +38,6 @@
 ship_obj_list_t *identities = 0;
 static ship_list_t *foreign_idents = 0;
 static ship_list_t *cas = 0;
-
-/* whether we have advertised our public profile */
-static int public_put = 0;
 
 /* the service handlers */
 static ship_ht_t *ident_service_handlers = 0;
@@ -49,6 +49,11 @@ static int ident_reregister_all();
 static int ident_update_registration(ident_t *ident);
 static void ident_cb_conn_events(char *event, void *data, void *eventdata);
 static int ident_autoreg_save();
+
+static int ident_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *key);
+static int ident_getsub_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
+				  void *param, ident_get_cb callback, const int subscribe);
+static int ident_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, const char *value, const int timeout);
 
 static char *idents_file = 0;
 static char *autoreg_file = 0;
@@ -68,6 +73,11 @@ static ship_ht_t *default_services = 0;
 
 /* whether to ignore all validities for peer certs */
 static int ignore_cert_validity = 0;
+
+#ifdef CONFIG_OP_ENABLED
+/* whether we should use op identities for previously unknown identities */
+static int use_op_for_unknown = 0;
+#endif
 
 static struct service_s privacy_pairing_service =
 {
@@ -103,7 +113,10 @@ ident_cb_config_update(processor_config_t *config, char *k, char *v)
 					      &ignore_cert_validity), err);
 	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_IDENT_RENEGOTIATE_SECRET,
 					      &renegotiate_secret), err);
-
+#ifdef CONFIG_OP_ENABLED
+	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_IDENT_USE_OP_FOR_UNKNOWN,
+					      &use_op_for_unknown), err);
+#endif
 	/* re-register all if ua mode change */
 	ASSERT_ZERO(processor_config_get_enum(config, P2PSHIP_CONF_IDENT_UA_MODE, &sipp_ua_mode), err);
 	if (k && !strcmp(k, P2PSHIP_CONF_IDENT_UA_MODE))
@@ -149,6 +162,10 @@ ident_module_init(processor_config_t *config)
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_IGNORE_CERT_VALIDITY, ident_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_UA_MODE, ident_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_RENEGOTIATE_SECRET, ident_cb_config_update);
+#ifdef CONFIG_OP_ENABLED
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_USE_OP_FOR_UNKNOWN, ident_cb_config_update);
+#endif
+
 	ASSERT_ZERO(processor_config_get_string(config, P2PSHIP_CONF_IDENTS_FILE, &idents_file), err);
 	ASSERT_ZERO(processor_config_get_string(config, P2PSHIP_CONF_AUTOREG_FILE, &autoreg_file), err);
 
@@ -894,19 +911,26 @@ ident_register_new_empty_ident(char *sip_aor)
 		ASSERT_TRUE(ret = (ident_t*)ship_obj_new(TYPE_ident, sip_aor), err);
 		ASSERT_TRUE(ret->username = strdup(sip_aor), err);
 		
-		/* fill private key and certificate. */
-		ASSERT_TRUE(ret->private_key = ship_create_private_key(), err);
-		ASSERT_TRUE(ret->cert = ship_sign(sip_aor,
-						  365*60*60*24, ret->private_key), err);
-		
-		
+#ifdef CONFIG_OP_ENABLED
+		if (use_op_for_unknown) {
+			IDENT_SET_FLAG(ret, IDENT_FLAG_OP_IDENT);
+			IDENT_SET_FLAG(ret, IDENT_FLAG_SELF_SIGNED);
+		} else {
+#endif
+			/* fill private key and certificate. */
+			ASSERT_TRUE(ret->private_key = ship_create_private_key(), err);
+			ASSERT_TRUE(ret->cert = ship_create_selfsigned_cert(sip_aor,
+									    365*60*60*24, ret->private_key), err);
+			IDENT_SET_FLAG(ret, IDENT_FLAG_SELF_SIGNED);
+#ifdef CONFIG_OP_ENABLED
+		}
+		/* now when we can choose whether to use op or not, we should NOT save */
+		IDENT_SET_FLAG(ret, IDENT_FLAG_NO_SAVE);
+#endif		
  		ship_lock(ret);
  		ship_restrict_locks(ret, identities);
 		ship_obj_list_add(identities, ret);
 
-		/* ..and flag it so that it doesn't get saved! */
-		/* actually, we may want to save this after all! */
-		//ret->do_not_save = 1;
 		processor_run_async((void (*)(void))ident_save_identities);
 	}
 	goto end;
@@ -1196,52 +1220,16 @@ ident_update_registration_do(void *data, processor_task_t **wait, int wait_for_c
 	time_t timeleft;
 	char *aor = data;
 	ident_t *ident = 0;
-	void *ptr = 0;
-	buddy_t *buddy = NULL;
 	
 	ASSERT_TRUE(ident = ident_find_by_aor(aor), err);
 	timeleft = ident_registration_timeleft(ident);
 	LOG_INFO("Should update registration for %s\n", ident->sip_aor);
 	
 	if (!timeleft) {
-		unsigned char *hmac_key64 = NULL;
-		
-		while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
-			if (buddy->shared_secret) {
-				hmac_key64 = ship_hmac_sha1_base64(ident->sip_aor, buddy->shared_secret);	
-				if (hmac_key64) {
-					olclient_remove((char *)hmac_key64, NULL);
-					free(hmac_key64);
-				}
-			}
-		}
-		
-		/* do this even though we are in paranoid.. ? */
-		if (public_put) {
-			olclient_remove(ident->sip_aor, NULL);
-			public_put = 0;
-		}
+		ident_remove_for_all_buddies(ident, ident->sip_aor);
 	} else {
 		ASSERT_ZERO(ident_create_new_reg(ident), err);
-
-		while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
-			if (buddy->shared_secret && buddy->cert) {
-				olclient_put_anonymous_signed_for_someone_with_secret(ident->sip_aor, ident->reg->cached_xml, 
-										      ident, buddy, buddy->shared_secret, timeleft, 
-										      processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
-				LOG_DEBUG("secret reg done for %s to buddy %s\n", ident->sip_aor, buddy->sip_aor);
-			}
-		}
-
-		if (sipp_ua_mode != PARANOID) {
-			public_put = 1;
-			olclient_put(ident->sip_aor, ident->reg->cached_xml, timeleft, 
-				     processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
-			LOG_DEBUG("public reg for %s done\n", ident->sip_aor);
-		} else if (public_put) {
-			olclient_remove(ident->sip_aor, NULL);
-			public_put = 0;
-		}
+		ASSERT_ZERO(ident_put_for_all_buddies(ident, ident->sip_aor, ident->reg->cached_xml, timeleft), err);
 	}
 			
 	ident_autoreg_save();
@@ -1250,6 +1238,186 @@ err:
 	ship_obj_unlockref(ident);
 	return ret;
 	
+}
+
+/*
+ *
+ * the gets, puts and removes wrt buddies. these should only be used when dealing with the overlays
+ *
+ *
+ * the _aors applies the privacy policies (incl fallbacks), the without tries stubbornly the private methods!
+ */
+
+static int
+ident_getsub_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
+		       void *param, ident_get_cb callback, const int subscribe)
+{
+	/* check shared secrets etc */
+	ASSERT_TRUES(buddy->cert, err, "Buddy has no certificate!\n");
+	ASSERT_TRUES(buddy->shared_secret, err, "Buddy has no shared secret!\n");
+	ASSERT_ZERO(olclient_getsub_anonymous_signed_for_someone_with_secret(key, buddy, ident, buddy->shared_secret,
+									     param, callback, subscribe), err);
+	return 0;
+ err:
+	return -1;
+}
+
+int 
+ident_getsub_open(ident_t *ident, const char *key, void *param, ident_get_cb callback, const int subscribe)
+{
+	return olclient_getsub(key, param, callback, subscribe);
+}
+
+/* gets data according to the current privacy policies. */
+int
+ident_getsub_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key, 
+			      void *param, ident_get_cb callback, const int subscribe)
+{
+	int get_open = 1;
+	buddy_t *buddy = NULL;
+	
+	/* check shared secrets etc */
+	buddy = ident_buddy_find(ident, buddy_aor);
+
+	switch (sipp_ua_mode) {
+	case PARANOID:
+		ASSERT_TRUES(buddy, err, "Buddy not found\n");
+		get_open = 0;
+		break;
+	case RELAX:
+		if (buddy && buddy->cert && buddy->shared_secret) {
+			get_open = 0;
+			break;
+		}
+		// do the following:
+	case OPEN:
+	default:
+		get_open = 1;
+	}
+
+	if (get_open) {
+		LOG_INFO("%s is getting data from the peer %s openly\n", ident->sip_aor, buddy_aor);
+		ASSERT_ZERO(ident_getsub_open(ident, key, param, callback, subscribe), err);
+	} else {
+		LOG_INFO("%s is getting data from the peer %s secretly\n", ident->sip_aor, buddy->sip_aor);
+		ASSERT_ZERO(ident_getsub_for_buddy(ident, buddy, key, param, callback, subscribe), err);
+	}
+
+	return 0;
+ err:
+	return -1;
+}
+
+/*
+ * remove 
+ */
+
+int
+ident_remove_open(ident_t *ident, const char* key)
+{
+	return olclient_remove(key, processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
+}
+
+int
+ident_remove_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key)
+{
+	buddy_t *buddy = NULL;
+
+	buddy = ident_buddy_find(ident, buddy_aor);
+	if (buddy)
+		ident_remove_for_buddy(ident, buddy, key);
+	
+	if (sipp_ua_mode != PARANOID)
+		ident_remove_open(ident, key);
+	return 0;
+}
+
+/* removes a piece of data wrt a buddy / privacy */
+int
+ident_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *key)
+{
+	ASSERT_TRUES(buddy->shared_secret, err, "Missing secret for buddy\n");
+	ASSERT_ZERO(olclient_remove_with_secret(ident->sip_aor, buddy->shared_secret, 
+						processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET)), err);
+	return 0;
+ err:
+	return -1;
+}
+
+int
+ident_remove_for_all_buddies(ident_t *ident, const char *key)
+{
+	buddy_t *buddy = NULL;
+	void *ptr = NULL;
+
+	while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
+		if (ident_remove_for_buddy(ident, buddy, key)) {
+			LOG_WARN("Remove for buddy %s by %s failed\n", buddy->name, ident->sip_aor);
+		}
+	}
+	
+	if (sipp_ua_mode != PARANOID)
+		ident_remove_open(ident, key);
+	return 0;
+}
+
+/*
+ * put
+ */
+
+int
+ident_put_open(ident_t *ident, const char *key, const char *value, const int timeout)
+{
+	return olclient_put(key, value, timeout, 
+			    processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
+}
+
+/* puts a piece of data out to a buddy, according to the current
+   privacy policies */
+int
+ident_put_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key, const char *value, const int timeout)
+{
+	buddy_t *buddy = NULL;
+
+	buddy = ident_buddy_find(ident, buddy_aor);
+	if (buddy)
+		ident_put_for_buddy(ident, buddy, key, value, timeout);
+	
+	if (sipp_ua_mode != PARANOID)
+		ident_put_open(ident, key, value, timeout);
+	return 0;
+}
+
+int
+ident_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, const char *value, const int timeout)
+{
+	ASSERT_TRUES(buddy->shared_secret && buddy->cert, err, "Missing cert or secret for buddy\n");
+	ASSERT_ZERO(olclient_put_anonymous_signed_for_someone_with_secret(key, value, 
+									  ident, buddy, buddy->shared_secret, timeout,
+									  processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET)), err);
+	LOG_DEBUG("secret put done for %s to buddy %s\n", ident->sip_aor, buddy->sip_aor);
+	return 0;
+ err:
+	return -1;
+}
+
+int
+ident_put_for_all_buddies(ident_t *ident, const char *key, const char *value, const int timeout)
+{
+	buddy_t *buddy = NULL;
+	void *ptr = NULL;
+	
+	while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
+		if (ident_put_for_buddy(ident, buddy, key, value, timeout)) {
+			LOG_WARN("Put for buddy %s by %s failed\n", buddy->name, ident->sip_aor);
+		}
+	}
+		
+	if (sipp_ua_mode != PARANOID) {
+		ident_put_open(ident, key, value, timeout);
+		LOG_DEBUG("public put for %s done\n", ident->sip_aor);
+	}
+	return 0;
 }
 
 /* this should probably be called async! */
@@ -1325,7 +1493,6 @@ ident_update_buddy_cert(void *aor, processor_task_t **wait, int wait_for_code)
 
 	/* make a copy of the cert & name & aor of the user. add to
 	   all your contacts! */
-
  	ASSERT_TRUE(reg = ident_find_foreign_reg(aor), err);
 	ASSERT_TRUE(name = strdup(reg->name), err);
 	ASSERT_TRUE(cert = X509_dup(reg->cert), err);
@@ -1339,7 +1506,7 @@ ident_update_buddy_cert(void *aor, processor_task_t **wait, int wait_for_code)
 		buddy_t *buddy = 0;
 		
 		ship_lock(ident);
-		if (strcmp(ident->sip_aor, aor) && 
+		if (/* strcmp(ident->sip_aor, aor) &&  */ // do update its own!
 		    (buddy = ident_buddy_find_or_create(ident, aor))) {
 			X509 *c2 = 0;
 
@@ -1355,6 +1522,7 @@ ident_update_buddy_cert(void *aor, processor_task_t **wait, int wait_for_code)
 			/* always replace the cert.. */
 			if ((c2 = X509_dup(cert))) {
 				LOG_DEBUG("replacing the certificate for %s's buddy %s\n", ident->sip_aor, aor);
+
 				if (buddy->cert)
 					X509_free(buddy->cert);
 				buddy->cert = c2;
@@ -1378,27 +1546,23 @@ ident_update_buddy_cert_done(void *qt, int code)
 	freez(qt);
 }
 
-
 int
 ident_cert_is_valid(X509 *cert)
 {
 	int ret = 0;
+	time_t start, end, now;
+	now = time(NULL);
+	
+	/* still/yet valid? (the cert) */
+	ASSERT_ZERO(ident_data_x509_get_validity(cert, &start, &end), err);
+	ASSERT_TRUE(((start - TIME_APPROX) <= now) && ((end + TIME_APPROX) >= now), err);
 
-	if (!ignore_cert_validity) {
-		time_t start, end, now;
-		now = time(NULL);
-		
-		/* still/yet valid? (the cert) */
-		ASSERT_ZERO(ident_data_x509_get_validity(cert, &start, &end), err);
-		ASSERT_TRUE(((start - TIME_APPROX) <= now) && ((end + TIME_APPROX) >= now), err);
-	}
 	ret = 1;
  err:
 	return ret;
 }
 
-
-int
+static int
 ident_cert_is_trusted(X509 *cert)
 {
 	ca_t *ca;
@@ -1433,7 +1597,7 @@ ident_cert_is_trusted(X509 *cert)
 		ship_unlock(identities);
 #endif		
 		if (!ident_trust_friends || lev < 1) {
-			ASSERT_TRUE(ident_allow_untrusted, err);
+			ASSERT_TRUES(ident_allow_untrusted, err, "Could not establish trust in the cert\n");
 		}
 	}
 
@@ -1442,6 +1606,18 @@ ident_cert_is_trusted(X509 *cert)
 	return ret;
 }
 
+int
+ident_remote_cert_is_acceptable(X509 *cert)
+{
+	int ret = 0;
+	
+	if (!ignore_cert_validity)
+		ASSERT_TRUE(ident_cert_is_valid(cert), err);
+	ASSERT_TRUES(ident_cert_is_trusted(cert), err, "Certificate not acceptable as it is not trusted\n");
+	ret = 1;
+ err:
+	return ret;
+}
 
 /* this function imports the given reg package.  it performs all sort
  * of checks according to current policies - whether the package is
@@ -1464,19 +1640,17 @@ ident_import_foreign_reg(reg_package_t *reg)
 	void *last = NULL;
 	reg_package_t *r;
 	int import = 1;
-	
+
+	/* ignore cert validity goes for reg package as well.. */
 	if (!ignore_cert_validity) {
 		time_t now;
 		now = time(NULL);
 		
 		/* still valid? (the reg package) */
 		ASSERT_TRUE(((reg->created - TIME_APPROX) <= now) && ((reg->valid + TIME_APPROX) >= now), err);
-		
-		/* still/yet valid? (the cert) */
-		ASSERT_TRUE(ident_cert_is_valid(reg->cert), err);
 	}
 	
-	ASSERT_TRUE(ident_cert_is_trusted(reg->cert), err);
+	ASSERT_TRUE(ident_remote_cert_is_acceptable(reg->cert), err);
 	
         /* ok, seemengly valid. check still if we have a newer one */
 	ship_lock(foreign_idents);
@@ -1568,18 +1742,22 @@ ident_cb_lookup_registration(char *key, char *buf, char *signer, void *param, in
 {
 	int imported = 0;
         processor_task_t *val = (processor_task_t *)param;
+	char *sip_aor = 0;
 	
         LOG_INFO("lookup for %s callback with code %d.\n", key, status);
         if (buf) {
                 reg_package_t *reg = NULL;
 		LOG_VDEBUG("Got data: '%s'\n", buf);
-		ident_reg_xml_to_struct(&reg, buf);
+		ASSERT_ZEROS(ident_reg_xml_to_struct(&reg, buf), err, "Malformatted reg package '%s'!\n", buf);
+		ASSERT_TRUE(sip_aor = strdupz(reg->sip_aor), err);
+		
                 if (reg && !ident_import_foreign_reg(reg)) {
                         status = 0;
                         imported = 1;
                 }
+		reg = NULL;
         }
-        
+ err:
         /* signal done if we got *any* reg package, even though not
 	   the newest */
 	if (imported || status != 1) {
@@ -1587,17 +1765,18 @@ ident_cb_lookup_registration(char *key, char *buf, char *signer, void *param, in
 			status = -1;
 
 		/* mark the end time of the lookup! */
-		LOG_DEBUG("ended lookup for %s as imported: %d and status: %d\n", key, imported, status);
-		STATS_LOG("ended lookup for %s\n", key);
+		LOG_DEBUG("ended lookup for %s/%s as imported: %d and status: %d\n", sip_aor, key, imported, status);
+		STATS_LOG("ended lookup for %s\n", sip_aor);
 #ifdef CONFIG_SIP_ENABLED
 #ifdef DO_STATS
-		ac_packetfilter_stats_event(NULL, key, "lookup_end");
+		ac_packetfilter_stats_event(NULL, sip_aor, "lookup_end");
 #endif		
 #endif
 		/* might be that val isn't anymore a valid event, but
 		   doesn't matter, the processor checks that */
 		processor_signal_wait(val, status);
 	}
+	freez(sip_aor);
 }
 
 int
@@ -1627,9 +1806,7 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
 
                 if (!val) {
                         ret = -4;
-		} else {   
-			buddy_t *remote_user = NULL;
-                     
+		} else if (ident && wait) {   
 			(*wait) = val;
 
 			/* mark start of fetch! */
@@ -1639,39 +1816,16 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
 			ac_packetfilter_stats_event(NULL, remote_aor, "lookup_start");
 #endif
 #endif                    
-                	  
 			/* find the buddy for that user */
-			remote_user = ident_buddy_find(ident, remote_aor);
-			
-			/* here: add some logic for querying the user
-			   whether we have a shared secret! */
-			if (remote_user) {
-				if (!remote_user->cert)
-					remote_user = NULL;
-				else if (!remote_user->shared_secret) {
-					/* .. query? no, just use open mode automatically */
-					remote_user = NULL;
-				}
-			}
-				
-			if (remote_user &&
-			    (sipp_ua_mode == PARANOID || sipp_ua_mode == RELAX)) {
-				LOG_DEBUG("finding the peer %s secretly\n", remote_aor);
-				if (!olclient_get_anonymous_signed_for_someone_with_secret(remote_aor, remote_user, ident, remote_user->shared_secret,
-											   val, ident_cb_lookup_registration))
-					ret = 1;
-			} else if (sipp_ua_mode != PARANOID) {
-				/* we cant search for anything signed here (we don't have the buddy's cert!) */
-				LOG_DEBUG("finding the peer %s openly\n", remote_aor);
-				if (!olclient_get(remote_aor, val, ident_cb_lookup_registration))
-					ret = 1;
-			}
-			
-			if (ret != 1) {
-				LOG_DEBUG("Something went wrong when initializing the lookup!\n", remote_aor);
+			if (!ident_get_for_buddy_by_aor(ident, remote_aor, remote_aor, val, ident_cb_lookup_registration))
+				ret = 1;
+			else {
+				LOG_WARN("Something went wrong when initializing the lookup - too strict mode, no cert/secret?\n", remote_aor);
 				processor_signal_wait(val, -2);
 				ret = -2;
 			}
+		} else {
+			ret = -1;
 		}
 	} else {
                 ret = 0;
@@ -1997,16 +2151,20 @@ ident_import_ident_cas(ship_list_t *newi, ship_list_t *newc, int query, int modi
 			q = "import";
 		}
 		
-		ca = ident_get_issuer_ca(ident->cert);
-		if (ca) {	
-			if (!ident_data_x509_check_signature(ident->cert, ca->cert)) {
-				USER_ERROR("Warning: Signature invalid\n");
+		if (ident->cert) {
+			ca = ident_get_issuer_ca(ident->cert);
+			if (ca) {	
+				if (!ident_data_x509_check_signature(ident->cert, ca->cert)) {
+					USER_ERROR("Warning: Signature invalid\n");
+				}
+				ship_unlock(ca);
+			} else {
+				USER_ERROR("Warning: Identity not issued by a trusted CA\n");
 			}
-			ship_unlock(ca);
+			ca = NULL;
 		} else {
-			USER_ERROR("Warning: Identity not issued by a trusted CA\n");
+			LOG_WARN("No certificate attached!\n");
 		}
-		ca = NULL;
 
 		if (!query || ui_query_ident_operation(ident, q, "yes", "no")) {
 			ship_lock(identities);
