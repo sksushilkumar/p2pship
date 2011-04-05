@@ -63,7 +63,7 @@ hipapi_init(processor_config_t *config)
 
 	ASSERT_TRUE(rvs_arr = ship_list_new(), err);
 	ASSERT_ZERO(hipapi_update_rvs_registration(), err);
-	ASSERT_ZERO(processor_tasks_add_periodic(hipapi_update_rvs_registration, RVS_UPDATE_PERIOD*1000), err);
+	ASSERT_ZERO(processor_tasks_add_periodic(hipapi_update_rvs_registration, NULL, RVS_UPDATE_PERIOD*1000), err);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_NAT_TRAVERSAL, hipapi_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_RVS, hipapi_cb_config_update);
 	
@@ -86,7 +86,7 @@ hipapi_close()
 }
 
 static int 
-hipapi_update_rvs_registration()
+hipapi_update_rvs_registration(void *data)
 {
 	char *str = 0;
 	int ret = -1;
@@ -462,8 +462,8 @@ hipapi_register() {
 int 
 hipapi_clear_sas()
 {
-	TODO("we should reset the SAs!\n");
-	return 0;
+	char *arr[3] = { "hipconf", "rst", "all"};
+	return hip_do_hipconf(3, arr, 1);
 }
 
 /* this function creates a mapping from a HIT to a locator so that the

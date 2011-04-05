@@ -66,6 +66,7 @@ int hipapi_establish(addr_t *remote_hit, ship_list_t *ips, ship_list_t *rvs);
 int hipapi_hip_running();
 
 int hipapi_getrvs(ship_list_t *list);
+int hipapi_clear_sas();
 
 int hipapi_create_peer_hit_locator_mapping(char *sip_aor, addr_t *hit);
 int conn_connection_uses_hip(char *remote_aor, char *local_aor);
