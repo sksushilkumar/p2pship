@@ -18,7 +18,7 @@ def get_default_ident(webapi = p2pship_web):
     if i > -1:
         js = json.read(s[len(token):])
         for ident in js:
-            if js[ident][7] == "default":
+            if js[ident][4] == "default":
                 return ident
     return ""
 
