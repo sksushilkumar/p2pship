@@ -21,6 +21,7 @@
 
 #include "ship_utils.h"
 #include "processor_config.h"
+#include "ident.h"
 
 /* This represents all we know about a relationship with another person */
 typedef struct trustparams_s {
@@ -31,12 +32,13 @@ typedef struct trustparams_s {
 	char *from_aor;
 	char *to_aor;
 
+	/*
+	 * these are all pathfinder-related stuff
+	 */
+
 	/* the params blob */
 	char *params;
 	int params_len;
-
-	/* the pathfinder info */
-	int pathfinder_len;
 
 	/* sending - related flags */
 	int current_sent;
@@ -45,25 +47,58 @@ typedef struct trustparams_s {
 
 	/* when these expire! */
 	time_t expires;
+#ifdef CONFIG_OP_ENABLED
+	/*
+	 * these are the op ident things
+	 */
+	time_t op_expires;
+	char *op_cert;
+	int op_send;
+#endif
 } trustparams_t;
 
-trustparams_t *trustman_get_valid_trustparams(char *from_aor, char *to_aor);
-trustparams_t *trustman_get_create_trustparams(char *from_aor, char *to_aor);
+/* these are the ones we get from someone else.. */
+typedef struct trustparams_remote_s 
+{
+	ship_lock_t lock;
+
+	/* from.. to */
+	char *from_aor;
+	char *to_aor;
+
+	/*
+	 * these are all pathfinder-related stuff
+	 */
+
+	/* the pathfinder info */
+	int pathfinder_len;
+
+	/* when these expire! */
+	time_t expires;
+
+#ifdef CONFIG_OP_ENABLED
+	/*
+	 * these are the op ident things
+	 */
+	time_t op_expires;
+	char *op_identity;
+	char *op_key;
+#endif
+} trustparams_remote_t;
 
 /* returns the address of the pathfinder */
 char *trustman_get_pathfinder();
+char *trustman_op_get_verification_key(char *from_aor, char *to_aor);
+int trustman_get_pathlen(char *from_aor, char *to_aor);
 
 void trustman_close();
 int trustman_init(processor_config_t *config);
-int trustman_handle_trustparams(char *from_aor, char *to_aor, char *payload, int pkglen);
+
 int trustman_mark_current_trust_sent(char *from_aor, char *to_aor);
+int trustman_mark_send_trust_to(ident_t *ident, char *to_aor);
 
 int trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from_aor, char *to_aor, 
 									  char *params, int param_len,
 									  void *data), 
 			       void *data);
-
-char *trustman_get_pathfinder();
-int trustman_mark_send_trust_to(char *from_aor, char *to_aor);
-
 #endif

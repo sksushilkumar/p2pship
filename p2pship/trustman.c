@@ -26,6 +26,9 @@
 #include "ident.h"
 #include "addrbook.h"
 #include "netio_http.h"
+#ifdef CONFIG_OP_ENABLED
+#include <opconn.h>
+#endif
 
 #define trustman_pf_get_template "http://%s/pathlength/from/%s/to/%s/"
 
@@ -35,9 +38,14 @@
 //#define BLOCKING_TRUSTFETCH
 
 static ship_list_t *params_ht = NULL;
+static ship_list_t *params_remote_ht = NULL;
 static char *pathfinder = 0;
 static int trustman_fetch_params(trustparams_t *params);
 static trustparams_t *trustman_get_trustparams(char *from_aor, char *to_aor);
+static trustparams_t *trustman_get_create_trustparams(char *from_aor, char *to_aor);
+static trustparams_remote_t *trustman_get_create_remote_trustparams(char *from_aor, char *to_aor);
+static int trustman_handle_trustparams(char *from_aor, char *to_aor, char *payload, int pkglen);
+
 
 static void
 trustman_trustparams_free(trustparams_t *params)
@@ -49,6 +57,9 @@ trustman_trustparams_free(trustparams_t *params)
 	freez(params->params);
 	ship_list_empty_free(params->queued_packets);
 	ship_list_free(params->queued_packets);
+#ifdef CONFIG_OP_ENABLED
+	freez(params->op_cert);
+#endif
 	freez(params);
 }
 
@@ -60,10 +71,38 @@ trustman_trustparams_new(char *from_aor, char *to_aor)
 	ASSERT_TRUE(params->from_aor = strdup(from_aor), err);
 	ASSERT_TRUE(params->to_aor = strdup(to_aor), err);
 	ASSERT_TRUE(params->queued_packets = ship_list_new(), err);
-	params->pathfinder_len = -1;
 	return params;
  err:
 	trustman_trustparams_free(params);
+	return 0;
+}
+
+static void
+trustman_trustparams_remote_free(trustparams_remote_t *params)
+{
+	if (!params)
+		return;
+	ship_lock_free(&params->lock);
+	freez(params->from_aor);
+	freez(params->to_aor);
+#ifdef CONFIG_OP_ENABLED
+	freez(params->op_identity);
+	freez(params->op_key);
+#endif
+	freez(params);
+}
+
+static trustparams_remote_t *
+trustman_trustparams_remote_new(char *from_aor, char *to_aor)
+{
+	trustparams_remote_t *params = 0;
+	ASSERT_TRUE(params = mallocz(sizeof(trustparams_remote_t)), err);
+	ASSERT_TRUE(params->from_aor = strdup(from_aor), err);
+	ASSERT_TRUE(params->to_aor = strdup(to_aor), err);
+	ASSERT_ZERO(ship_lock_new(&params->lock), err);
+	return params;
+ err:
+	trustman_trustparams_remote_free(params);
 	return 0;
 }
 
@@ -94,6 +133,7 @@ int
 trustman_init(processor_config_t *config)
 {
 	ASSERT_TRUE(params_ht = ship_list_new(), err);
+	ASSERT_TRUE(params_remote_ht = ship_list_new(), err);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_PATHFINDER, trustman_cb_config_update);
 	processor_config_set_dynamic(config, P2PSHIP_CONF_USE_PATHFINDER);
 	trustman_cb_config_update(config, NULL, NULL);
@@ -108,6 +148,7 @@ void
 trustman_close()
 {
 	trustparams_t *param = NULL;
+	trustparams_remote_t *paramr = NULL;
 	ship_list_t *list = params_ht;
 
 	ship_lock(params_ht);
@@ -120,6 +161,17 @@ trustman_close()
 	}
 	ship_list_free(list);
 	freez(pathfinder);
+
+	list = params_remote_ht;
+	ship_lock(params_remote_ht);
+	params_remote_ht = NULL;
+	ship_unlock(list);
+	while ((paramr = ship_list_pop(list))) {
+		ship_lock(paramr);
+		ship_unlock(paramr);
+		trustman_trustparams_remote_free(paramr);
+	}
+	ship_list_free(list);
 }
 
 /* marks that we have sent the current trust parameters */
@@ -139,18 +191,22 @@ trustman_mark_current_trust_sent(char *from_aor, char *to_aor)
 
 /* marks that the given remote person should be provided trust parameters */
 int
-trustman_mark_send_trust_to(char *from_aor, char *to_aor)
+trustman_mark_send_trust_to(ident_t *ident, char *to_aor)
 {
 	/* find aor - to_aor */
-	trustparams_t *params = trustman_get_create_trustparams(from_aor, to_aor);
-	if (params) {
-		params->send_flag = 1;
-		trustman_fetch_params(params);
-		ship_unlock(params->queued_packets);
-		return 0;
-	} else {
-		return -1;
-	}
+	trustparams_t *params = 0;
+	ASSERT_TRUE(params = trustman_get_create_trustparams(ident->sip_aor, to_aor), err);
+	params->send_flag = 1;
+	trustman_fetch_params(params);
+	ship_unlock(params->queued_packets);
+	
+#ifdef CONFIG_OP_ENABLED
+	if (ident_is_op_verify(ident))
+		params->op_send = 1;
+#endif
+	return 0;
+ err:
+	return -1;
 }
 
 static void 
@@ -163,30 +219,25 @@ trustman_fetch_params_cb(char *url, int respcode, char *data, int data_len, void
 	
 	if (!params_ht)
 		return;
-	
+
 	LOG_INFO("Got trust parameters (code %d) for %s -> %s\n", respcode, params->from_aor, params->to_aor);
 	ship_lock(params->queued_packets);
 	freez(params->params);
 	params->params_len = 0;
 	time(&(params->expires));
 	if (data && data_len) {
-		params->params = mallocz(data_len+1);
+		params->params = mallocz(data_len+1+32);
 		if (params->params) {
-			int plen = -1;
-			
-			memcpy(params->params, data, data_len);
-			params->params_len = data_len;
+			/* mm.. hope the data is in asciiz */
+			strcpy(params->params, "pathlen:");
+			strcat(params->params, data);
+			params->params_len = strlen(params->params);
 			params->current_sent = 0;
 			
 			/* todo: here we should parse the
 			   data. timeouts etcetc.. */
 
-			if (sscanf(data, "%d", &params->pathfinder_len) != 1)
-				params->pathfinder_len = -1;
-
-			plen = atoi(data);
-			if (plen > 0)
-				params->expires += 30;
+			params->expires += 30;
 		}
 	} else {
 		/* put some timeout here for nulls.. */
@@ -298,9 +349,34 @@ trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from
 	/* do we know *anything* about any trust params to send? */
 
 	params = trustman_get_trustparams(from_aor, to_aor);
-	if (params && 
-	    params->send_flag) {
+	if (params && params->send_flag) {
 		
+#ifdef CONFIG_OP_ENABLED
+		time_t now;
+		now = time(0);
+		if (params->op_send && (now > params->op_expires)) {
+			/* fetch, send, set new expires */
+			freez(params->op_cert);
+			if(!opconn_request_cert(from_aor, &(params->op_cert))) {
+				X509 *cert = 0;
+				time_t start, end;
+				char *tmp = 0;
+				
+				ASSERT_TRUE(cert = ship_parse_cert(params->op_cert), op_err);
+				ASSERT_ZERO(ident_data_x509_get_validity(cert, &start, &end), op_err);
+				params->op_expires = end;
+				LOG_INFO("got a cert for another %d seconds..\n", end-now);
+				ASSERT_TRUE(tmp = mallocz(strlen(params->op_cert) + 32), op_err);
+				strcpy(tmp, "op_cert:");
+				strcat(tmp, params->op_cert);
+				func(from_aor, to_aor, tmp, strlen(tmp), NULL);
+			op_err:
+				freez(tmp);
+				if (cert) X509_free(cert);
+			}
+		}
+#endif
+
 		/* check for expired, initiate fetch if necessary */
 		trustman_fetch_params(params);
 		if (!params->current_sent && params->params) {
@@ -308,6 +384,7 @@ trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from
 			ASSERT_TRUE(params_copy = mallocz(params->params_len + 1), err);
 			memcpy(params_copy, params->params, params->params_len);
 			params_len = params->params_len;
+			//ret = func(from_aor, to_aor, params->params, params->params_len, NULL);
 		} else if (!params->params && params->requesting) {
 			/* ..wait for trust params */
 			void **ptr = mallocz(2*sizeof(void*));
@@ -340,29 +417,68 @@ trustman_check_trustparams(char *from_aor, char *to_aor, int (*func) (char *from
 int
 trustman_handle_trustparams(char *from_aor, char *to_aor, char *payload, int pkglen)
 {
-	trustparams_t *params = 0;
-	char *tmp = 0;
+	trustparams_remote_t *params = 0;
+	char *tmp = 0, *data = 0;
+	X509 *cert = 0;
 
 	/* save trust params somewhere as from_aor - to_aor.. */
 	if ((tmp = mallocz(pkglen+1)))
 		memcpy(tmp, payload, pkglen);
 	
+	/* to ensure we have asciiz now */
+	ASSERT_TRUE(tmp = mallocz(pkglen+1), err);
+	memcpy(tmp, payload, pkglen);
+	
 	LOG_DEBUG("Got remotely trust parameters: '%s'\n", tmp);
-	params = trustman_get_create_trustparams(from_aor, to_aor);
-	if (params && tmp) {
-		freez(params->params);
-		params->params = tmp;
-		params->params_len = pkglen;
-		
+	ASSERT_TRUE(params = trustman_get_create_remote_trustparams(from_aor, to_aor), err);
+	data = strstr(payload, ":");
+	ASSERT_TRUE(data, err);
+	data[0] = 0;
+	data++;
+	
+	/* interpret the trustparameters we got */
+	if (!strcmp(payload, "pathlen")) {
+		LOG_INFO("got pathfinder length\n");
+			
 		/* when should these expire? */
 		params->expires = time(0) + 30;
-		
-		if (sscanf(tmp, "%d", &params->pathfinder_len) != 1)
+		if (sscanf(data, "%d", &params->pathfinder_len) != 1)
 			params->pathfinder_len = -1;
-		ship_unlock(params->queued_packets);
-		tmp = 0;
+#ifdef CONFIG_OP_ENABLED
+	} else if (!strcmp(payload, "op_cert")) {
+		time_t start = 0;
+			
+		LOG_INFO("got an op certificate\n");
+		ASSERT_TRUE(cert = ship_parse_cert(data), err);
+		if (1 || ident_data_x509_check_signature(cert, cert)) {
+			freez(tmp);
+			
+			ASSERT_TRUE(tmp = ident_data_x509_get_cn(X509_get_subject_name(cert)), err);
+			if (strcmp(from_aor, tmp)) {
+				LOG_WARN("got cert for mismatching identity (%s / %s)!\n",
+					 from_aor, tmp);
+				ASSERT_TRUE(0, err);
+			}
+			
+			freez(params->op_identity);
+			freez(params->op_key);
+			params->op_expires = 0;
+
+			params->op_identity = tmp;
+			tmp = 0;
+			ASSERT_ZERO(ident_data_x509_get_validity(cert, &start, &params->op_expires), err);
+			ASSERT_TRUE(params->op_key = ident_data_get_pkey_base64(cert), err);
+			
+			LOG_INFO("got cert for '%s' valid until %d, key: '%s'\n", params->op_identity, 
+				 params->op_expires, params->op_key);
+		} else {
+			LOG_WARN("invalid signature, now self-signed\n");
+		}
+#endif
 	}
-	
+ err:
+	if (cert) X509_free(cert);
+	ship_unlock(params);
 	freez(tmp);
 	return 0;
 }
@@ -385,27 +501,26 @@ trustman_get_trustparams(char *from_aor, char *to_aor)
 	}
 	
 	if (params)
-			ship_lock(params->queued_packets);
+		ship_lock(params->queued_packets);
 	
 	ship_unlock(params_ht);
 	return params;
 }
 
-/* this one is for 'external' use. It fetches the instance for the
-   given aor pair from the cache (if exists), perhaps adding something
-   to that, and checking the validity of the parameters. */
-trustparams_t *
-trustman_get_valid_trustparams(char *from_aor, char *to_aor)
-{
-	trustparams_t *params = 0;
-	time_t now;
-	int has_valid = 0;
 
+/* returns the pathlen between two, used for checking the path we have
+   got from someone else */
+int
+trustman_get_pathlen(char *from_aor, char *to_aor)
+{
+	trustparams_remote_t *params = 0;
+	time_t now;
+	int ret = -1;
+	int has_valid = 0;
 	ident_t *ident = ident_find_by_aor(from_aor);
 	
-	ship_lock(params_ht);
-	params = trustman_get_trustparams(from_aor, to_aor);
-
+	params = trustman_get_create_remote_trustparams(from_aor, to_aor);
+	
 	/* check the validity */
 	time(&now);
 	if (params && (now < params->expires)) {
@@ -429,28 +544,72 @@ trustman_get_valid_trustparams(char *from_aor, char *to_aor)
 		if (addrbook_has_contact(to_aor, from_aor))
 			new_len = 1;
 
-		if (new_len > -1) {
-			if (!params && (params = trustman_trustparams_new(from_aor, to_aor))) {
-				ship_lock(params->queued_packets);
-				ship_list_add(params_ht, params);
-			}
-			
-			if (params) {
-				params->pathfinder_len = new_len;
-				params->expires = now + 30;
-			}
-		} else if (params) {
-			ship_unlock(params->queued_packets);
-			params = 0;
+		if ((new_len > -1) && params) {
+			params->pathfinder_len = new_len;
+			params->expires = now + 30;
 		}
 	}
-	ship_unlock(params_ht);
+
+	if (params) {
+		ret = params->pathfinder_len;
+		ship_unlock(params);
+	}
 	ship_obj_unlockref(ident);
+	return ret;
+}
+
+#ifdef CONFIG_OP_ENABLED
+/* returns a copy of the key (if any) which the user was veirfied
+   with */
+char *
+trustman_op_get_verification_key(char *from_aor, char *to_aor)
+{
+	trustparams_remote_t *params = 0;
+	time_t now;
+	char *ret = 0;
+	
+	ASSERT_TRUE(params = trustman_get_create_remote_trustparams(from_aor, to_aor), err);
+	/* check the validity */
+	time(&now);
+	if (params->op_key && now < params->op_expires)
+		ret = strdup(params->op_key);
+ err:
+	ship_unlock(params);
+	return ret;
+}
+#endif
+
+static trustparams_remote_t *
+trustman_get_create_remote_trustparams(char *from_aor, char *to_aor)
+{
+	trustparams_remote_t *params = 0;
+	void *ptr = 0;
+
+	ship_lock(params_remote_ht);
+	while (!params && (params = ship_list_next(params_remote_ht, &ptr))) {
+		if (strcmp(from_aor, params->from_aor) ||
+		    strcmp(to_aor, params->to_aor))
+			params = 0;
+	}
+
+	if (!params) { 
+		if ((params = trustman_trustparams_remote_new(from_aor, to_aor))) {
+			ship_list_add(params_remote_ht, params);
+		}
+	}
+	
+	if (params)
+		ship_lock(params);
+
+	ship_unlock(params_remote_ht);
+	
+	if (!params) {
+		LOG_WARN("Couldn't create new trust params!\n");
+	}
 	return params;
 }
 
-
-trustparams_t *
+static trustparams_t *
 trustman_get_create_trustparams(char *from_aor, char *to_aor)
 {
 	trustparams_t *params = 0;
