@@ -72,6 +72,7 @@ static char* DEFAULT_CONFIGURATION[] =
 #ifdef CONFIG_PYTHON_ENABLED
 		P2PSHIP_CONF_START_SHELL, "no", "Start Python shell on stdin", "bool", 0,
 		P2PSHIP_CONF_RUN_SCRIPT, "", "Run a script at startup", "string", 0,
+		P2PSHIP_CONF_STARTUP_SCRIPTS, "yes", "Start Python scripts", "bool", 0,
 #endif
 
 #ifdef CONFIG_SIP_ENABLED
@@ -171,6 +172,10 @@ static char* DEFAULT_CONFIGURATION[] =
 		P2PSHIP_CONF_PYTHON_PACKAGES_DIR, DEFAULT_PYTHON_PACKAGES_DIR, "Python application packages location", "file", 0,
 #endif
 
+#ifdef CONFIG_OP_ENABLED
+		P2PSHIP_CONF_IDENT_USE_OP_FOR_UNKNOWN, "yes", "Try to use OP identities for unkown registrations", "bool", 0,
+		P2PSHIP_CONF_IDENT_FILTERING, "none", "How to react to OP identities", "enum:block_unkown,none,allow_known", 0,
+#endif
 		0, 0, 0, 0, 0
  	};
 
