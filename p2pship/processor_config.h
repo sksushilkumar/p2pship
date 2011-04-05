@@ -59,6 +59,7 @@
 #ifdef CONFIG_PYTHON_ENABLED
 #define P2PSHIP_CONF_START_SHELL "py_start_shell"
 #define P2PSHIP_CONF_RUN_SCRIPT "py_run_script"
+#define P2PSHIP_CONF_STARTUP_SCRIPTS "py_startup_scripts"
 
 #define P2PSHIP_CONF_PYTHON_LIB_DIR "py_lib"
 #define P2PSHIP_CONF_PYTHON_SCRIPTS_DIR "py_scripts"
@@ -131,6 +132,10 @@
 #define P2PSHIP_CONF_REMOTE_DEBUG "remote_debug"
 #endif
 
+#ifdef CONFIG_OP_ENABLED
+#define P2PSHIP_CONF_IDENT_USE_OP_FOR_UNKNOWN "use_op_for_unknown"
+#define P2PSHIP_CONF_IDENT_FILTERING "op_filtering"
+#endif
 
 
 typedef ship_list_t processor_config_t;
