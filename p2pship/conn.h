@@ -99,9 +99,7 @@ enum {
         PKG_UNKNOWN = 0,
         PKG_REG = 81,
         PKG_TARGET = 82,
-        /* PKG_SIP = 84, // should be service */
         PKG_MP = 85, // shouldn't exist. or 'tunnel' more generically
-/*         PKG_TRUST = 86, // should be service */
 	PKG_PING = 87,
         PKG_SERVICE = 88
 };
@@ -204,6 +202,8 @@ int conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, co
 int conn_getips(ship_list_t *ips, char **ifaces, int c, int port);
 int conn_get_lo(addr_t *addr);
 int conn_can_send_to(addr_t *from, addr_t *to);
+
+void conn_close_all();
 
 /* weird little one that should be obsoleted */
 int conn_send_mp_to(char *sip_aor, ident_t *ident,

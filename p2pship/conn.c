@@ -55,7 +55,9 @@
 #include "sipp_mp.h"
 #include "trustman.h"
 #include "ship_utils.h"
-
+#ifdef DO_STATS
+#include "access_control.h"
+#endif
 
 //#define ship_lock_conn(conn) { printf("lock conn..\n"); ship_lock(conn); ship_restrict_locks(conn, identities); ship_restrict_locks(conn, conn_all_conn); printf("conn yes..\n"); }
 
@@ -425,6 +427,22 @@ conn_rebind()
         return ret;
 }
 
+/*
+ * closes all open connections.
+ */
+void
+conn_close_all()
+{
+	conn_connection_t *conn = 0;
+	ship_lock(conn_all_conn);
+	while ((conn = ship_list_pop(conn_all_conn))) {
+		ship_obj_ref(conn);
+		conn_conn_close(conn);
+		ship_obj_unref(conn);
+	}
+	ship_unlock(conn_all_conn);
+}
+
 /* @sync none
  * closes the conn module. closes all conns. 
  */
@@ -513,7 +531,7 @@ conn_init(processor_config_t *config)
 
 	ASSERT_TRUE(conn_waiting_packets = ship_obj_ht_new(), err);
 
-	ASSERT_ZERO(processor_tasks_add_periodic(conn_periodic, 5000), err);
+	ASSERT_ZERO(processor_tasks_add_periodic(conn_periodic, NULL, 5000), err);
 
         LOG_INFO("Started ship listener\n");
         return 0;
@@ -694,8 +712,13 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 		case PKG_SERVICE:
 			if (conn->state == STATE_CONNECTED)
 				ret = conn_packet_process_data(payload, pkglen, conn);
-			else
+			else {
 				LOG_ERROR("FAILING service as not connected (%d)!\n", conn->state);
+
+				/* dont kill the connection just yet. */
+				ret = 0;
+				got_useful = 0;
+			}
 			break;
 		default:
 			/* ignore */
@@ -703,15 +726,15 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 			got_useful = 0;
 			ret = 0;
 			break;
-                        
-			if (ret) {
-                                LOG_WARN("processing of message type %d failed (code %d)!\n", type, ret);
-                        } else {
-				LOG_VDEBUG("processing of message type %d ok!\n", type);
-				if (got_useful)
-					time(&conn->last_content);
-                        }
                 }
+
+		if (ret) {
+			LOG_WARN("processing of message type %d failed (code %d)!\n", type, ret);
+		} else {
+			LOG_VDEBUG("processing of message type %d ok!\n", type);
+			if (got_useful)
+				time(&conn->last_content);
+		}
         } while (!ret);
 	
  err:
@@ -864,6 +887,7 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 
 	ship_unlock_conn(conn);
 	import = ident_import_foreign_reg(reg);
+	reg = NULL; // it's gone either way
 	ship_lock_conn(conn);
 	
         if (!import) {
@@ -1409,7 +1433,7 @@ conn_send_service_package_to(conn_packet_t *p)
 	
 #ifdef CONFIG_SIP_ENABLED
 #ifdef DO_STATS
-	if (service == SERVICE_TYPE_SIP) {
+	if (p->service == SERVICE_TYPE_SIP) {
 		STATS_LOG("sip message from %s to %s\n", p->from, p->to);
 		ac_packetfilter_stats_event(p->from, p->to, "sip_sent");
 	}
@@ -1595,7 +1619,7 @@ conn_sendto(char *sip_aor, char *from, char *buf, size_t len, int type)
 
 /* periodic update of the connection */
 static int
-conn_periodic()
+conn_periodic(void *data)
 {
 	time_t now;
         conn_connection_t *conn;
@@ -2104,6 +2128,7 @@ conn_can_connect_to(reg_package_t *pkg)
 	if (conn_find_first_with_port(pkg->ip_addr_list, NULL))
 		return 1;
 #endif
+	LOG_WARN("registration package for %s doesn't contain any valid transport addresses!\n", pkg->sip_aor);
 	return 0;
 }
 
