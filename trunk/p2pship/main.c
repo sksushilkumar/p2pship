@@ -230,6 +230,7 @@ main(int argc, char **argv)
 #ifdef CONFIG_PYTHON_ENABLED
                         {"shell", no_argument, 0, 0},
                         {"run", required_argument, 0, 0},
+                        {"no-scripts", no_argument, 0, 0},
 #endif
 #ifdef CONFIG_SIP_ENABLED
                         {"proxy-iface", required_argument, 0, 0},
@@ -302,6 +303,8 @@ main(int argc, char **argv)
 				processor_config_set_true(config, P2PSHIP_CONF_START_SHELL);
                         } else if (!strcmp(long_options[index].name, "run")) {
 				processor_config_set_string(config, P2PSHIP_CONF_RUN_SCRIPT, optarg);
+                        } else if (!strcmp(long_options[index].name, "no-scripts")) {
+				processor_config_set_false(config, P2PSHIP_CONF_STARTUP_SCRIPTS);
 #endif
 #ifdef CONFIG_SIP_ENABLED
                         } else if (!strcmp(long_options[index].name, "proxy-iface")) {
@@ -571,6 +574,8 @@ main(int argc, char **argv)
 #endif
 	case ACTION_NONE:
 	default: {
+		struct rlimit rl;
+		
 #ifdef CONFIG_PYTHON_ENABLED
 		if (processor_config_is_true(config, P2PSHIP_CONF_START_SHELL))
 			processor_config_set_false(config, P2PSHIP_CONF_DAEMON);
@@ -581,6 +586,23 @@ main(int argc, char **argv)
 				goto err;			
 		}
 		
+		/* check the stack size */
+		
+		int result;
+
+		if (!(result = getrlimit(RLIMIT_STACK, &rl))) {
+			const rlim_t stacksize = 32L * 1024L * 1024L;
+			if (rl.rlim_cur < stacksize) {
+				LOG_INFO("increasing stack size to %d\n", stacksize);
+				rl.rlim_cur = stacksize;
+				if (setrlimit(RLIMIT_STACK, &rl)) {
+					LOG_ERROR("could not set new stack size!\n");
+				}
+			}
+		} else {
+			LOG_ERROR("error checking stack size\n");
+		}
+
 		if (processor_init_modules(config) ||
 		    (load_autoreg && ident_autoreg_load())) {
 			USER_ERROR("Error initializing system\n");
