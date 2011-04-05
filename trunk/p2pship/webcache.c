@@ -1208,7 +1208,7 @@ webcache_p2p_update()
 			strcpy(buf, WEBCACHE_KEY_PREFIX);
 			strcat(buf, e->url);
 			resourcefetch_remove(e->filename);
-			olclient_remove(buf, NULL);
+			olclient_remove(buf, processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
 			free(buf);
 		}
 	}
