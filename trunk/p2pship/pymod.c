@@ -30,6 +30,7 @@
 /* if we're using threaded intepreter instead of multiple ones. this
    clearly messes up the environments!! do not use. */
 //#define THREADED_INTERPRETER 1
+#define NEW_KILL 1
 
 #undef _POSIX_C_SOURCE
 #include <Python.h>
@@ -52,6 +53,9 @@ static ship_ht_t *pymod_sipp_client_handlers = 0;
 
 /* whether still alive */
 static int pymod_alive = 0;
+
+/* dummy list for locking the gil */
+static ship_list_t *pymod_gil_lock = NULL;
 
 #define PYTHON_WORKER_TYPE "py-runner"
 
@@ -116,6 +120,8 @@ pymod_ipc_free(void *ol)
 	}
 }
 
+static pymod_ipc_handler_t* pymod_ipc_new(const char *name, PyObject *callback, PyObject *callback2);
+
 /* init the service registrations */
 static ship_ht_t *pymod_default_services = 0;
 
@@ -169,9 +175,10 @@ pymod_ol_free(void *ol)
 	}
 }
 
+static PyGILState_STATE gstate;
 
 static void
-pymod_tstate_return()
+pymod_tstate_return(PyThreadState *tstate)
 {
 	/* should we clear the error or invalidate the whole app? */
 	if (PyErr_Occurred()) {
@@ -179,8 +186,20 @@ pymod_tstate_return()
 		PyErr_Print();
 		PyErr_Clear();
 	}
-	PyThreadState_Swap(NULL);
-	PyEval_ReleaseLock();
+	// gil
+	//PyThreadState_Swap(NULL);
+
+	// save & restore 
+	//PyEval_SaveThread();
+
+	//PyEval_ReleaseThread(tstate);
+
+	// these combined are the same as releasethread
+	//PyThreadState_Swap(NULL);
+	//PyEval_ReleaseLock();
+
+	PyGILState_Release(gstate);
+	ship_unlock(pymod_gil_lock);
 }
 
 static int
@@ -189,14 +208,63 @@ pymod_tstate_ok(PyThreadState *tstate)
 	if (!Py_IsInitialized())
 		return 0;
 
+	/* we should have *no* locks at this stage! */
 	ship_check_restricts();
-	PyEval_AcquireLock();
 
+	ship_wait("Getting Python GIL");
+	
+	ship_lock(pymod_gil_lock);
+	if (gstate) {
+		
+	}
+	
+	// new try..
+	gstate = PyGILState_Ensure();
+#ifndef THREADED_INTERPRETER
+	//PyThreadState_Get()->interp = tstate->interp;
+#endif	
+	/*
+	//PyEval_RestoreThread(tstate);
+	
+	{
+		PyThreadState *ts;
+		ts = PyGILState_GetThisThreadState();
+		printf("got %08x when tstate %08x\n", 
+		       (unsigned int)ts, (unsigned int)tstate);
+		
+		if (!ts) {
+			PyGILState_STATE gstate;
+			printf("aqui..\n");
+			gstate = PyGILState_Ensure(); // Is tis necessary?
+			printf("aqui.. done\n");
+			
+			ts = PyGILState_GetThisThreadState();
+			printf("now2 i'm %08x when tstate %08x\n", 
+			       (unsigned int)ts, (unsigned int)tstate);
+
+			PyGILState_Release(gstate);
+
+
+			
+			
+		}
+	}
+
+	PyEval_AcquireThread(tstate);
+	*/
+
+
+	//PyEval_AcquireLock();
+	//PyThreadState_Swap(tstate);
+	ship_complete();
+	
 	// check if the thread is alive!
-	PyThreadState_Swap(tstate);
-	if (!PyThreadState_GetDict() || PyErr_Occurred())
+	if (!PyThreadState_GetDict() || PyErr_Occurred()) {
+		ship_unlock(pymod_gil_lock);
 		return 0;
+	}
 	if (!pymod_alive) {
+		ship_unlock(pymod_gil_lock);
 		PyErr_SetString(PyExc_EnvironmentError, "p2pship proxy is closing");
 		return 0;
 	}
@@ -208,7 +276,7 @@ pymod_get_current_state()
 {
 	pymod_state_t *ret = (pymod_state_t *)ship_ht_get_ptr(pymod_states, PyThreadState_Get());
 	if (!ret)
-		LOG_ERROR("No state found for 0x%08x\n", PyThreadState_Get());
+		LOG_DEBUG("No state found for 0x%08x\n", PyThreadState_Get());
 	return ret;
 }
 
@@ -218,6 +286,112 @@ pymod_get_current_state()
  *
  *
  */
+
+static PyObject *
+p2pship_reserve_state(PyObject *self, PyObject *args)
+{
+	PyEval_AcquireLock();
+	Py_INCREF(Py_None);
+	return Py_None;
+}
+
+static PyObject *
+p2pship_release_state(PyObject *self, PyObject *args)
+{
+	PyEval_ReleaseLock();
+	Py_INCREF(Py_None);
+	return Py_None;
+}
+
+
+static int 
+pymod_call_async_do(void *data, processor_task_t **wait, int wait_for_code)
+{
+	pymod_ipc_handler_t *h = data;
+	PyObject *result = 0, *arglist = 0;
+	
+	ship_check_restricts();
+	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
+	ASSERT_TRUE(arglist = Py_BuildValue("(O)", h->callback2), err);
+	
+	result = PyObject_CallObject(h->callback, arglist);
+	Py_DECREF(arglist);
+	ASSERT_TRUE(result, err);
+	Py_DECREF(result);
+ err:
+	pymod_tstate_return(h->tstate);
+	return 0;
+}
+
+static void
+pymod_call_async_done(void *qt, int code)
+{
+	pymod_ipc_free(qt);
+}
+
+static PyObject *
+p2pship_call_async(PyObject *self, PyObject *args)
+{
+	PyObject *func = 0, *data = 0;
+	pymod_ipc_handler_t *h = 0;
+	processor_task_t *task = NULL;
+	
+	if (!PyArg_ParseTuple(args, "OO:call_async", &func, &data))
+		goto err;
+	
+	ASSERT_TRUE(h = pymod_ipc_new("safe_call", func, data), err);
+	ASSERT_TRUE(task = processor_tasks_add(pymod_call_async_do, h,
+					       pymod_call_async_done), err);
+	
+	Py_INCREF(Py_None);
+	return Py_None;
+ err:
+	pymod_ipc_free(h);
+	return NULL;
+}
+
+
+static int 
+pymod_periodic(void* data)
+{
+	pymod_ipc_handler_t *h = (pymod_ipc_handler_t *)data;
+	PyObject *result = 0, *arglist = 0;
+	int ret = 0;
+	
+	ship_check_restricts();
+	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
+
+	ASSERT_TRUE(arglist = Py_BuildValue("(O)", h->callback2), err);
+	result = PyObject_CallObject(h->callback, arglist);
+	Py_DECREF(arglist);
+	ASSERT_TRUE(result, err);
+	if (PyBool_Check(result) && (PyInt_AsLong(result) == 0)) {
+		ret = -1;
+	}
+	Py_DECREF(result);
+ err:
+	pymod_tstate_return(h->tstate);
+	return ret;
+}
+
+static PyObject *
+p2pship_call_periodically(PyObject *self, PyObject *args)
+{
+	PyObject *func = 0, *data = 0;
+	pymod_ipc_handler_t *h = 0;
+	int period;
+	
+	if (!PyArg_ParseTuple(args, "OOi:call_periodically", &func, &data, &period))
+		goto err;
+	
+	ASSERT_TRUE(h = pymod_ipc_new("periodic_call", func, data), err);
+	ASSERT_ZERO(processor_tasks_add_periodic(pymod_periodic, h, period), err);
+	Py_INCREF(Py_None);
+	return Py_None;
+ err:
+	pymod_ipc_free(h);
+	return NULL;
+}
 
 /* changes the name of the application */
 static PyObject *
@@ -263,8 +437,11 @@ p2pship_log(PyObject *self, PyObject *args)
 	if (!PyArg_ParseTuple(args, "is", &level, &str))
 		return NULL;
 	
-	if ((state = pymod_get_current_state()))
+	if ((state = pymod_get_current_state())) {
 		LOG_CUSTOM(level, "PythonApp(%s): %s", state->name, str);
+	} else {
+		LOG_CUSTOM(level, "PythonApp(UNKNOWN): %s", str);
+	}
 	Py_INCREF(Py_None);
 	return Py_None;
 }
@@ -506,7 +683,7 @@ pymod_config_update(processor_config_t *c, char *k, char *v)
 		ASSERT_TRUE(result, err);
 		Py_DECREF(result);
 	err:
-		pymod_tstate_return();
+		pymod_tstate_return(h->tstate);
 	}
 }
 
@@ -643,7 +820,7 @@ pymod_service_data_received(char *data, int data_len,
 	ASSERT_TRUE(pymod_tstate_ok(s->handler->tstate), err2);
 	result = PyObject_CallObject(s->handler->callback, arglist);
  err2:
-	pymod_tstate_return();
+	pymod_tstate_return(s->handler->tstate);
 	ship_lock(target);
  err:
 	Py_XDECREF(arglist);
@@ -676,7 +853,7 @@ pymod_service_service_closed(service_type_t service_type, ident_t *ident, void *
 	ASSERT_TRUE(pymod_tstate_ok(s->handler->tstate), err2);
 	result = PyObject_CallObject(s->handler->callback2, arglist);
  err2:
-	pymod_tstate_return();
+	pymod_tstate_return(s->handler->tstate);
 	ship_lock(ident);
  err:
 	Py_XDECREF(arglist);
@@ -1007,7 +1184,7 @@ pymod_http_process_req2(netio_http_conn_t *conn, void *pkg, extapi_http_req_t *r
 	ASSERT_TRUE(PyInt_Check(result), err2);
 	funcret = (int)PyInt_AsLong(result);
  err2:
-	pymod_tstate_return();
+	pymod_tstate_return(h->tstate);
 	conn = netio_http_get_conn_by_id(astr); // dangerous.. should be ship_obj!!
  err:
 	Py_XDECREF(val);
@@ -1054,6 +1231,7 @@ p2pship_http_register(PyObject *self, PyObject *args)
 	} else {
 		s = netio_http_server_create((char*)addr, pymod_http_process_req, h);
 	}
+
 	if (s != -1) {
 		ship_ht_put_int(pymod_http_servers, s, h);
 		h = 0;
@@ -1128,7 +1306,7 @@ pymod_ol_put(char *key, char *data, int timeout,
 	Py_DECREF(result);
 	ret = 0;
  err:
-	pymod_tstate_return();
+	pymod_tstate_return(h->tstate);
 	return ret;
 }
 
@@ -1155,7 +1333,7 @@ pymod_ol_get(char *key, olclient_get_task_t *task)
 	ASSERT_TRUE(result, err);
 	Py_DECREF(result);
  err:
-	pymod_tstate_return();
+	pymod_tstate_return(h->tstate);
 	/* pymod_ol_get_free(wait); */
 	return ret;
 }
@@ -1177,7 +1355,7 @@ pymod_ol_remove(char *key, char* secret, struct olclient_module* mod)
 	Py_DECREF(result);
 	ret = 0;
  err:
-	pymod_tstate_return();
+	pymod_tstate_return(h->tstate);
 	return ret;
 }
 
@@ -1213,7 +1391,7 @@ void pymod_ol_close(struct olclient_module* mod)
 	Py_DECREF(result);
 	ret = 0;
  err:
-	pymod_tstate_return();
+	pymod_tstate_return(h->tstate);
 	pymod_ol_free(h);
 }
 
@@ -1310,7 +1488,7 @@ p2pship_ol_data_got(PyObject *self, PyObject *args)
 	ship_lock(pymod_ol_gets);
 	if ((task = ship_ht_get_string(pymod_ol_gets, id))) {
 		if (task->callback) {
-			task->callback((data? strdup(data):NULL), code, task);//->lookup, wait->mod);
+			task->callback((data? strdup(data):NULL), code, task);
 			if (code < 1) {
 				task->callback = NULL;
 				ship_ht_remove_string(pymod_ol_gets, task->id);
@@ -1378,7 +1556,7 @@ pymod_sipp_client_handler(ident_t *ident, const char *remote_aor, addr_t *contac
 		ret = 0; /* done with it! */
 
  err2:
-	pymod_tstate_return();
+	pymod_tstate_return(h->tstate);
 	ship_lock(ident);
  err:
 	Py_XDECREF(arglist);
@@ -1387,24 +1565,84 @@ pymod_sipp_client_handler(ident_t *ident, const char *remote_aor, addr_t *contac
 	return ret;
 }
 
+
+static int
+pymod_sipp_request_handler(ident_t *ident, const char *local_aor, const char *remote_aor, 
+			   sipp_request_t *req, char *buf, int len,
+			   int *response_code, void *data)
+{
+	int ret = -1;
+	pymod_ipc_handler_t *h = (pymod_ipc_handler_t*)data;
+	PyObject *arglist = 0;
+	PyObject *result = 0;
+			
+	ASSERT_TRUE(arglist = Py_BuildValue("(sss#i)", local_aor, remote_aor, buf, len, *response_code), err);
+	ship_unlock(ident);
+	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err2);
+	result = PyObject_CallObject(h->callback, arglist);
+	ASSERT_TRUE(result, err2);
+
+	if (PyInt_Check(result)) {
+		int retval = (int)PyInt_AsLong(result);
+		if (retval > -1) {
+			*response_code = retval;
+			ret = 0; /* done! */
+		} else
+			ret = 1;
+	} else
+		ret = 1; /* continue.. */
+	
+ err2:
+	pymod_tstate_return(h->tstate);
+	ship_lock(ident);
+ err:
+	Py_XDECREF(arglist);
+	Py_XDECREF(result);
+	return ret;
+}
+
+
 static PyObject *
-p2pship_sip_route(PyObject *self, PyObject *args)
+p2pship_sip_route_as_local(PyObject *self, PyObject *args)
 {
 	char *msg;
 	int len = 0;
 	PyObject *ret = 0;
 	addr_t addr;
 	
-	if (!PyArg_ParseTuple(args, "s#:sip_route", &msg, &len))
+	if (!PyArg_ParseTuple(args, "s#:sip_route_as_local", &msg, &len))
 		goto err;
 	
 	bzero(&addr, sizeof(addr));
-	sipp_handle_message(msg, len, NULL, &addr);
+	sipp_handle_local_message(msg, len, NULL, &addr, 0);
 	ret = Py_None;
  err:
 	Py_XINCREF(ret);
 	return ret;
 }
+
+static PyObject *
+p2pship_sip_route_as_remote(PyObject *self, PyObject *args)
+{
+	char *msg, *local_aor, *remote_aor;
+	int len = 0;
+	PyObject *ret = 0;
+	ident_t *ident = 0;
+	
+	if (!PyArg_ParseTuple(args, "sss#:sip_route_as_remote", &local_aor, &remote_aor, &msg, &len))
+		goto err;
+
+	LOG_DEBUG("route as remote from %s (remote) to %s (local)\n", remote_aor, local_aor);
+	/* get the ident to whom we should route this message */
+	ASSERT_TRUE(ident = ident_find_by_aor(local_aor), err);
+	ASSERT_ZERO(sipp_handle_remote_message(msg, len, ident, remote_aor, 0), err);
+	ret = Py_None;
+ err:
+	ship_obj_unlockref(ident);
+	Py_XINCREF(ret);
+	return ret;
+}
+
 
 static PyObject *
 p2pship_register_sip_client_handler(PyObject *self, PyObject *args)
@@ -1421,7 +1659,7 @@ p2pship_register_sip_client_handler(PyObject *self, PyObject *args)
 	LOG_DEBUG("registering sip client handler for %s..\n", name);
 	ASSERT_TRUE(h = pymod_ipc_new(name, callback, NULL), err);
 	ship_ht_put_string(pymod_sipp_client_handlers, name, h);
-	sipp_register_client_handler(pymod_sipp_client_handler, h);
+	sipp_register_hook(pymod_sipp_client_handler, NULL, h);
 
 	LOG_DEBUG("registered sip client handler for %s done\n", name);
 	Py_INCREF(Py_None);
@@ -1429,6 +1667,65 @@ p2pship_register_sip_client_handler(PyObject *self, PyObject *args)
  err:
 	return NULL;
 }	
+
+
+static PyObject *
+p2pship_register_sip_request_handler(PyObject *self, PyObject *args)
+{
+	PyObject *callback = 0;
+	char *name = 0;
+	pymod_ipc_handler_t *h = 0;
+
+	if (!PyArg_ParseTuple(args, "sO:register_sip_request_handler", &name, &callback))
+		goto err;
+
+	ASSERT_ZERO(ship_ht_get_string(pymod_sipp_client_handlers, name), err);
+
+	LOG_DEBUG("registering sip request handler for %s..\n", name);
+	ASSERT_TRUE(h = pymod_ipc_new(name, callback, NULL), err);
+	ship_ht_put_string(pymod_sipp_client_handlers, name, h);
+	sipp_register_hook(NULL, pymod_sipp_request_handler, h);
+
+	LOG_DEBUG("registered sip request handler for %s done\n", name);
+	Py_INCREF(Py_None);
+	return Py_None;
+ err:
+	return NULL;
+}
+
+/**
+ * returns the local SIP proxy's contact address for the given user.
+ * The default if None
+ */
+static PyObject *
+p2pship_sip_get_local_contact(PyObject *self, PyObject *args)
+{
+	char *aor = 0, *str = 0;
+	addr_t addr;
+	ident_t *ident = 0;
+	PyObject *ret = 0;
+
+	if (!PyArg_ParseTuple(args, "|s:sip_get_local_contact", &aor)) {
+		goto end;
+	}
+
+	if (aor && strlen(aor)) {
+		ASSERT_TRUE(ident = ident_find_by_aor(aor), err);
+	}
+	bzero(&addr, sizeof(addr));
+	sipp_get_addr_to_ua_or_default(ident, &addr);
+	ASSERT_ZERO(ident_addr_addr_to_str(&addr, &str), err);
+	ASSERT_TRUE(ret = Py_BuildValue("s", str), err);
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+ end:
+	ship_obj_unlockref(ident);
+	freez(str);
+	Py_XINCREF(ret);
+	return ret;
+}
+
 #endif
 
 
@@ -1542,7 +1839,7 @@ p2pship_get_idents(PyObject *self, PyObject *args)
 	while ((ident = ship_list_next(idents, &ptr))) {
 		ASSERT_TRUE(str = PyString_FromString(ident->sip_aor), err);
 		ASSERT_ZERO(PyList_Append(ret, str), err);
-		Py_XDECREF(str);
+		str = NULL;
 	}
 	goto end;
  err:
@@ -1554,6 +1851,10 @@ p2pship_get_idents(PyObject *self, PyObject *args)
 	ship_unlock(idents);
 	return ret;
 }	
+
+
+//#pragma GCC diagnostic push
+//#pragma GCC diagnostic ignore "-fno-strict-aliasing"
 
 /* returns an identity object. if aor = null, then the default one */
 static PyObject *
@@ -1580,19 +1881,19 @@ p2pship_get_ident(PyObject *self, PyObject *args)
 	ASSERT_TRUE(ret = PyDict_New(), err);
 	ASSERT_TRUE(str = PyString_FromString(zdefault(ident->sip_aor, "")), err);
 	ASSERT_ZERO(PyDict_SetItemString(ret, "aor", str), err);
-	Py_XDECREF(str);
+	str = NULL; //Py_XDECREF(str);
 
 	ASSERT_TRUE(str = PyString_FromString(zdefault(ident->username, "")), err);
 	ASSERT_ZERO(PyDict_SetItemString(ret, "name", str), err);
-	Py_XDECREF(str);
+	str = NULL; //Py_XDECREF(str);
 	
 	ASSERT_TRUE(str = PyString_FromString(zdefault(ident->password, "")), err);
 	ASSERT_ZERO(PyDict_SetItemString(ret, "password", str), err);
-	Py_XDECREF(str);
+	str = NULL; //Py_XDECREF(str);
 	
 	ASSERT_TRUE(str = PyString_FromString(zdefault(ident->status, "")), err);
 	ASSERT_ZERO(PyDict_SetItemString(ret, "status", str), err);
-	Py_XDECREF(str);
+	//Py_XDECREF(str);
 	str = NULL;
 
 	/* cert */
@@ -1603,7 +1904,7 @@ p2pship_get_ident(PyObject *self, PyObject *args)
 
 	ASSERT_TRUE(str = PyString_FromString(cert), err);
 	ASSERT_ZERO(PyDict_SetItemString(ret, "cert", str), err);
-	Py_XDECREF(str);
+	//Py_XDECREF(str);
 	str = NULL;
 
 	/* key */
@@ -1615,26 +1916,25 @@ p2pship_get_ident(PyObject *self, PyObject *args)
 
 	ASSERT_TRUE(str = PyString_FromString(cert), err);
 	ASSERT_ZERO(PyDict_SetItemString(ret, "key", str), err);
-	Py_XDECREF(str);
+	//Py_XDECREF(str);
 	str = NULL;
 	
 	/* buddies */
 	ASSERT_TRUE(buds = PyList_New(0), err);
-	ASSERT_ZERO(PyDict_SetItemString(ret, "buddies", buds), err);
 	while ((buddy = ship_list_next(ident->buddy_list, &ptr))) {
 		ASSERT_TRUE(bud = PyDict_New(), err);
 
 		ASSERT_TRUE(str = PyString_FromString(zdefault(buddy->sip_aor, "")), err);
 		ASSERT_ZERO(PyDict_SetItemString(bud, "aor", str), err);
-		Py_XDECREF(str);
+		str = NULL; //Py_XDECREF(str);
 
 		ASSERT_TRUE(str = PyString_FromString(zdefault(buddy->name, "")), err);
 		ASSERT_ZERO(PyDict_SetItemString(bud, "name", str), err);
-		Py_XDECREF(str);
+		str = NULL; //Py_XDECREF(str);
 
 		ASSERT_TRUE(str = PyString_FromString(zdefault(buddy->shared_secret, "")), err);
 		ASSERT_ZERO(PyDict_SetItemString(bud, "secret", str), err);
-		Py_XDECREF(str);
+		//Py_XDECREF(str);
 		str = NULL;
 
 		if (buddy->cert) {
@@ -1646,24 +1946,23 @@ p2pship_get_ident(PyObject *self, PyObject *args)
 			
 			ASSERT_TRUE(str = PyString_FromString(cert), err);
 			ASSERT_ZERO(PyDict_SetItemString(bud, "cert", str), err);
-			Py_XDECREF(str);
+			//Py_XDECREF(str);
 			str = NULL;
 		}
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 		/* won't compile on maemo due to dereferencing of the _PyTrue_Struct */
-		//#pragma GCC diagnostic push
-		//#pragma GCC diagnostic ignored "-fno-strict-aliasing"
-		if (buddy->is_friend)
-			str = Py_True;
-		else
-			str = Py_False;
+		if (buddy->is_friend) {
+			str = PyInt_FromLong((long)1);
+		} else {
+			str = PyInt_FromLong((long)0);
+		}
 		ASSERT_ZERO(PyDict_SetItemString(bud, "friend", str), err);
-		//#pragma GCC diagnostic pop
 #endif		
 		ASSERT_ZERO(PyList_Append(buds, bud), err);
-		Py_XDECREF(bud);
+		bud = NULL; //Py_XDECREF(bud);
 	}
-	Py_XDECREF(buds);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "buddies", buds), err);
+	buds = NULL; //Py_XDECREF(buds);
 	goto end;
  err:
 	Py_XDECREF(str);
@@ -1677,8 +1976,202 @@ p2pship_get_ident(PyObject *self, PyObject *args)
 	ship_obj_unlockref(ident);
 	return ret;
 }	
+//#pragma GCC diagnostic pop
+
+/* returns a reg packet that .. is ref'd */
+static PyObject *
+pymod_create_reg(reg_package_t *reg)
+{
+	char *astr = 0;
+	addr_t *addr = 0;
+	PyObject *ret = NULL, *str = NULL, *l = NULL;
+	BIO *bio = NULL;
+	char *cert = NULL;
+	int bufsize;
+	void *ptr = 0;
+
+	ASSERT_TRUE(ret = PyDict_New(), err);
+	ASSERT_TRUE(str = PyString_FromString(zdefault(reg->sip_aor, "")), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "aor", str), err);
+	str = NULL; //Py_XDECREF(str);
+
+	ASSERT_TRUE(str = PyString_FromString(zdefault(reg->name, "")), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "name", str), err);
+	str = NULL; //Py_XDECREF(str);
+	
+	ASSERT_TRUE(str = PyInt_FromLong((long)reg->created), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "created", str), err);
+	str = NULL; //Py_XDECREF(str);
+
+	ASSERT_TRUE(str = PyInt_FromLong((long)reg->valid), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "valid", str), err);
+	str = NULL; //Py_XDECREF(str);
+	
+	ASSERT_TRUE(str = PyString_FromString(zdefault(reg->status, "")), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "status", str), err);
+	str = NULL; //Py_XDECREF(str);
+
+	/* cert */
+	ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+	ASSERT_TRUE(PEM_write_bio_X509(bio, reg->cert), err);
+	ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &cert), err);
+	cert[bufsize] = 0;
+
+	ASSERT_TRUE(str = PyString_FromString(cert), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "cert", str), err);
+	str = NULL; //Py_XDECREF(str);
+	
+	/* the addresses */
+	ASSERT_TRUE(l = PyList_New(0), err);
+	//Py_XDECREF(l);
+	//l = NULL;
+	while ((addr = ship_list_next(reg->ip_addr_list, &ptr))) {
+		ASSERT_ZERO(ident_addr_addr_to_str(addr, &astr), err);
+		ASSERT_TRUE(str = PyString_FromString(zdefault(astr, "")), err);
+		freez(astr);
+		
+		ASSERT_ZERO(PyList_Append(l, str), err);
+		//Py_XDECREF(str);
+		str = NULL;
+	}
+	ASSERT_ZERO(PyDict_SetItemString(ret, "ip", l), err);
+	goto end;
+ err:
+	Py_XDECREF(str);
+ 	Py_XDECREF(ret);
+ 	Py_XDECREF(l);
+	Py_INCREF(Py_None);
+	ret = Py_None;
+ end:
+	freez(astr);
+	return ret;
+}
+
+static PyObject *
+p2pship_import_reg(PyObject *self, PyObject *args)
+{
+	const char *regxml = 0;
+	reg_package_t *reg = 0;
+	PyObject *ret = NULL;
+	
+	if (!PyArg_ParseTuple(args, "s", &regxml))
+		goto end;
+	
+	ASSERT_ZEROS(ident_reg_xml_to_struct(&reg, regxml), err, "Malformatted reg package '%s'!\n", regxml);
+	ASSERT_TRUE(ret = pymod_create_reg(reg), err);
+	if (ident_import_foreign_reg(reg)) {
+		Py_XDECREF(ret);
+		ret = Py_None;
+		Py_XINCREF(ret);
+	}
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+ end:
+	return ret;
+}	
+
+static PyObject *
+p2pship_get_reg(PyObject *self, PyObject *args)
+{
+	char *local = 0, *remote = 0;
+	reg_package_t *reg = 0;
+	PyObject *ret = NULL, *callback = NULL;
+	
+	if (!PyArg_ParseTuple(args, "s|sO", &remote, &local, &callback))
+		goto end;
+	
+	// todo: support for async!
+	//ASSERT_ZERO(ident_lookup_registration(NULL, remote, &reg, NULL), err);
+
+	if ((reg = ident_find_foreign_reg(remote))) {
+		ASSERT_TRUE(ret = pymod_create_reg(reg), err);
+	} else {
+		ret = Py_None;
+		Py_INCREF(ret);
+	}
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+ end:
+	ship_unlock(reg);
+	return ret;
+}	
 
 
+/*
+ * ol-identity handling
+ */
+
+static void 
+pymod_getsub_cb(char *key, char *data, char *signer, void *param, int status)
+{
+	pymod_ipc_handler_t *h = param;
+	PyObject *result = 0, *arglist = 0;
+	
+	if (status < 0 || !data || !key)
+		goto end;
+	
+	ship_check_restricts();
+	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
+	ASSERT_TRUE(arglist = Py_BuildValue("(ssO)", key, data, h->callback2), err);
+	
+	result = PyObject_CallObject(h->callback, arglist);
+	Py_DECREF(arglist);
+	ASSERT_TRUE(result, err);
+	Py_DECREF(result);
+ err:
+	pymod_tstate_return(h->tstate);
+ end:
+	if (status < 1) {
+		pymod_ipc_free(h);	
+	}
+}
+
+/* gets something. params: local ident aor, remote aor, data key, callback, callback data */
+static PyObject *
+p2pship_ol_ident_getsub(PyObject *self, PyObject *args, const int subscribe)
+{
+	const char *local_aor = 0, *remote_aor = 0, *key = 0;
+	PyObject *callback = NULL, *ret = NULL, *data = NULL;
+	pymod_ipc_handler_t *h = NULL;
+	ident_t *ident = NULL;
+	
+	if (!PyArg_ParseTuple(args, "sssO|O", &local_aor, &remote_aor, &key, &callback, &data))
+		goto end;
+	
+	if (!local_aor || strlen(local_aor) == 0) {
+		ASSERT_TRUE(ident = ident_get_default_ident(), err);
+	} else {
+		ASSERT_TRUE(ident = ident_find_by_aor(local_aor), err);
+	}
+
+	ASSERT_TRUE(h = pymod_ipc_new("ident_get", callback, data), err);
+	ASSERT_ZERO(ident_getsub_for_buddy_by_aor(ident, remote_aor, key, h, pymod_getsub_cb, subscribe), err);
+
+	Py_INCREF(Py_None);
+	ret = Py_None;
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+	pymod_ipc_free(h);
+ end:
+	ship_obj_unlockref(ident);
+	return ret;
+
+}
+
+static PyObject *
+p2pship_ol_ident_get(PyObject *self, PyObject *args)
+{
+	return p2pship_ol_ident_getsub(self, args, 0);
+}
+
+static PyObject *
+p2pship_ol_ident_subscribe(PyObject *self, PyObject *args)
+{
+	return p2pship_ol_ident_getsub(self, args, 1);
+}
 
 /* init the extensions */
 static PyMethodDef p2pshipMethods[] = {
@@ -1687,6 +2180,12 @@ static PyMethodDef p2pshipMethods[] = {
     {"register_ol_handler",  (PyCFunction)p2pship_register_ol_handler, METH_VARARGS | METH_KEYWORDS, "Registers an overlay handler."},
     {"ol_data_got",  p2pship_ol_data_got, METH_VARARGS, "Receives data from the overlay handler."},
     {"get_data_dir",  p2pship_get_data_dir, METH_VARARGS, "Gets the default data directory."},
+
+    // use of the overlay management - identity specific
+    {"ol_ident_get",  p2pship_ol_ident_get, METH_VARARGS, "Gets overlay data according to identity policies."},
+    {"ol_ident_subscribe",  p2pship_ol_ident_subscribe, METH_VARARGS, "Subscribes to overlay data according to identity policies."},
+    //{"ol_ident_put",  p2pship_ol_ident_put, METH_VARARGS, "Puts overlay data according to identity policies."},
+    //{"ol_ident_rm",  p2pship_ol_ident_rm, METH_VARARGS, "Removes overlay data according to identity policies."},
 
     {"register_ipc_handler",  p2pship_register_ipc_handler, METH_VARARGS, "Registers an IPC handler."},
     {"call_ipc_handler",  p2pship_call_ipc_handler, METH_VARARGS, "Calls an IPC handler."},
@@ -1723,12 +2222,21 @@ static PyMethodDef p2pshipMethods[] = {
     // identity handling
     {"get_idents",  p2pship_get_idents, METH_VARARGS, "Returns a list of the local identitie's aors."},
     {"get_ident",  p2pship_get_ident, METH_VARARGS, "Returns an identity object."},
+    {"import_reg", p2pship_import_reg, METH_VARARGS, "Imports a registration packet XML."},
+    {"get_reg", p2pship_get_reg, METH_VARARGS, "Requests a registration packet for a peer."},
+
+    // experimental
+    {"reserve_state",  p2pship_reserve_state, METH_NOARGS, "Reserves the Python intepreter state."},
+    {"release_state",  p2pship_release_state, METH_NOARGS, "Reserves the Python intepreter state."},
+    {"call_async",  p2pship_call_async, METH_VARARGS, "Calls a function asynchronously."},
+    {"call_periodically",  p2pship_call_periodically, METH_VARARGS, "Calls a function periodically."},
 
 #ifdef CONFIG_SIP_ENABLED
+    {"register_sip_request_handler",  p2pship_register_sip_request_handler, METH_VARARGS, "Registers a SIP request handler"},
     {"register_sip_client_handler",  p2pship_register_sip_client_handler, METH_VARARGS, "Registers a SIP client handler"},
-    {"sip_route",  p2pship_sip_route, METH_VARARGS, "Routes a SIP message as if originated from local."},
-
-
+    {"sip_route_as_local",  p2pship_sip_route_as_local, METH_VARARGS, "Routes a SIP message as if originated from local."},
+    {"sip_route_as_remote",  p2pship_sip_route_as_remote, METH_VARARGS, "Routes a SIP message as if originated from remote."},
+    {"sip_get_local_contact",  p2pship_sip_get_local_contact, METH_VARARGS, "Returns the local proxy address, as seen by the user."},
 #endif
 
     {NULL, NULL, 0, NULL}        /* Sentinel */
@@ -1773,11 +2281,9 @@ static int
 pymod_init(processor_config_t *config)
 {
 	int ret = -1;
-	char *dir = NULL;
-	ship_list_t *list = NULL;
-	char *fn = NULL;
 	pymod_state_t *state = NULL;
 
+	ASSERT_TRUE(pymod_gil_lock = ship_list_new(), err);
 	ASSERT_TRUE(pymod_ol_clients = ship_list_new(), err);
 	ASSERT_TRUE(pymod_ol_gets = ship_ht_new(), err);
 	ASSERT_TRUE(pymod_ipc_handlers = ship_ht_new(), err);
@@ -1801,17 +2307,8 @@ pymod_init(processor_config_t *config)
 	pymod_alive = 1;
 	PyEval_ReleaseLock();
 
-	/* load scripts */
-	ASSERT_TRUE(dir = processor_config_string(processor_get_config(), P2PSHIP_CONF_PYTHON_SCRIPTS_DIR), err);
-	ASSERT_TRUE(list = ship_list_dir(dir, "*.py", 1), err);
-	while ((fn = ship_list_pop(list))) {
-		ASSERT_ZERO(pymod_run_file(fn), err);
-		freez(fn);
-	}
 	ret = 0;
  err:
-	ship_list_empty_free(list);
-	ship_list_free(list);
 	return ret;
 }
 
@@ -1830,8 +2327,7 @@ pymod_close()
 	//PyThreadState_Swap(NULL);
 	//PyThreadState_Delete(mainThreadState); // can't del the main thread
 	pymod_alive = 0;
-	if (Py_IsInitialized())
-		Py_Finalize();
+
 	/* close the ol's */
 	ship_list_empty_with(pymod_ol_clients, pymod_ol_free);
 	ship_list_free(pymod_ol_clients);
@@ -1870,6 +2366,11 @@ pymod_close()
 		pymod_service_free(ptr);
 	ship_ht_free(pymod_default_services);
 	pymod_default_services = NULL;
+
+	ship_list_free(pymod_gil_lock);
+
+	if (Py_IsInitialized())
+		Py_Finalize();
 }
 
 void 
@@ -1894,21 +2395,19 @@ pymod_thread_kill(processor_worker_t *w)
 	pymod_alive = 0;
 	if (w->extra) {
 		PyThreadState *ts = (PyThreadState *)w->extra;
-		/*
-  		PyEval_AcquireLock();
 
-  		PyThreadState_Clear(ts);
-  		PyThreadState_Delete(ts);
-   		//PyThreadState_Swap(ts);
-
-		//PyRun_SimpleString("exit(0)\n");
+#ifdef NEW_KILL
+		PyEval_AcquireThread(ts);
+  		//PyEval_AcquireLock();
+		PyErr_SetString(PyExc_EnvironmentError, "p2pship proxy is closing");
+  		PyEval_ReleaseThread(ts);
    		//Py_EndInterpreter(ts);
-   		PyEval_ReleaseLock();
-		*/
-
-
-		ship_check_restricts();
+   		PyThreadState_Swap(NULL);
+		//PyThreadState_Clear(ts);
+  		PyThreadState_Delete(ts);
+#else
 		pymod_tstate_ok(ts);
+#endif
    		PyEval_ReleaseLock();
 	}
 }
@@ -1916,12 +2415,14 @@ pymod_thread_kill(processor_worker_t *w)
 static void
 pymod_run_file_thread(processor_worker_t *w)
 {
+	//PyGILState_STATE gstate;
 	char *fn = (char*)w->data;
 	FILE *fp = 0;
 	pymod_state_t *state = NULL;
 
 	if ((fp = fopen(fn, "r"))) {
 		PyThreadState *myThreadState = NULL;
+
 
 		/* Create a local thread state for each new thread */
 		PyEval_AcquireLock();
@@ -1937,19 +2438,28 @@ pymod_run_file_thread(processor_worker_t *w)
 		if ((state = pymod_state_new(fn, myThreadState, NULL)))
 			ship_ht_put_ptr(pymod_states, state->tstate, state);
 
+#ifndef THREADED_INTERPRETER
 		initp2pship();
+#endif
 		PyRun_SimpleFile(fp, fn);
+#ifndef NEW_KILL
 		if (pymod_alive) {
 			/* ended already? */
 			LOG_DEBUG("EOF of '%s' detected, idling..\n", fn);
+			
 			PyRun_SimpleString("import time\nwhile True: time.sleep(0.2)\n");
 			//PyRun_SimpleString("import signal\nsignal.pause()\n");
 		}
+  		PyEval_ReleaseThread(myThreadState);
 		PyThreadState_Swap(NULL);
 		//#ifndef THREADED_INTERPRETER
-		PyThreadState_Clear(myThreadState);
+		//PyThreadState_Clear(myThreadState);
 		PyThreadState_Delete(myThreadState);
 		//#endif
+#else
+		PyThreadState_Swap(NULL);
+		PyThreadState_Delete(myThreadState);
+#endif
 		PyEval_ReleaseLock();
 
 		fclose(fp);
@@ -1987,14 +2497,31 @@ pymod_start_plugins()
 {
 	char *file = 0;
 	int ret = -1;
+	char *dir = NULL;
+	char *fn = NULL;
+	ship_list_t *list = NULL;
 
-	/* check first the run-script */
+	if (processor_config_is_false(processor_get_config(), P2PSHIP_CONF_STARTUP_SCRIPTS)) {
+		LOG_INFO("skipping Python startup scripts\n");
+		return 0;
+	}
+
+	/* load scripts */
+	ASSERT_TRUE(dir = processor_config_string(processor_get_config(), P2PSHIP_CONF_PYTHON_SCRIPTS_DIR), err);
+	ASSERT_TRUE(list = ship_list_dir(dir, "*.py", 1), err);
+	while ((fn = ship_list_pop(list))) {
+		ASSERT_ZERO(pymod_run_file(fn), err);
+		freez(fn);
+	}
+
 	if (!processor_config_get_string(processor_get_config(), P2PSHIP_CONF_RUN_SCRIPT, &file)) {
 		ASSERT_ZERO(pymod_run_file(file), err);
 	}
 
 	ret = 0;
  err:
+	ship_list_empty_free(list);
+	ship_list_free(list);
 	return ret;
 }
 
