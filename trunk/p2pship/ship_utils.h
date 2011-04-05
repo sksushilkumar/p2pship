@@ -90,6 +90,8 @@ void __NON_INSTRUMENT_FUNCTION__ ship_remote_report(const char *template, ...);
  */
 void __NON_INSTRUMENT_FUNCTION__ ship_printf(int timed, int error, const char *template, ...);
 
+void ship_printf_bytearr(const void *arr, const int arrlen, const char *template, ...);
+
 /* normal */
 #define USER_ERROR(fmt, args...) {\
 ship_printf(0, 1, fmt, ##args);\
@@ -413,7 +415,7 @@ typedef ship_list_t ship_obj_list_t;
 
 #define ship_obj_list_add(list, obj) { ship_obj_ref(obj); ship_list_add(list, obj); }
 #define ship_obj_list_new() ship_list_new()
-#define ship_obj_list_remove(list, obj) { void *__o = ship_list_remove(list, obj); ship_obj_unref(__o); }
+//#define ship_obj_list_remove(list, obj) { void *__o = ship_list_remove(list, obj); ship_obj_unref(__o); }
 #define ship_obj_list_free(list) { ship_obj_t *_obj; while (list && (_obj = ship_list_pop(list))) { ship_obj_unref(_obj); } ship_list_free(list); }
 #define ship_obj_list_clear(list) { ship_obj_t *_obj; while ((_obj = ship_list_pop(list))) { ship_obj_unref(_obj); } }
 
@@ -559,6 +561,12 @@ ship_list_t*  __NON_INSTRUMENT_FUNCTION__ ship_list_new();
 void * __NON_INSTRUMENT_FUNCTION__ _ship_list_remove(int _l, ship_list_t *list, void *data);
 #define ship_list_remove(args...) _ship_list_remove(1, ##args)
 
+static inline void *ship_obj_list_remove(ship_list_t *list, void *data) {
+	void *__o = _ship_list_remove(1, list, data); 
+	ship_obj_unref(__o); 
+	return __o;
+}
+
 /*  */
 void * __NON_INSTRUMENT_FUNCTION__ _ship_list_find(int _l, ship_list_t *list, void *data);
 #define ship_list_find(args...) _ship_list_find(1, ##args)
@@ -669,6 +677,7 @@ char *__NON_INSTRUMENT_FUNCTION__ strstr_after(char *str, char *token);
 char *__NON_INSTRUMENT_FUNCTION__ memmem_after(char *str, int len, char *token, int len2);
 char *__NON_INSTRUMENT_FUNCTION__ append_mem(const char *str, int strlen, char *buf, int *buflen, int *datalen);
 char *__NON_INSTRUMENT_FUNCTION__ append_str(const char *str, char *buf, int *buflen, int *datalen);
+int __NON_INSTRUMENT_FUNCTION__ append_str2(char **str, char *buf);
 char *combine_str(const char *str1, const char *str2);
 char *replace_end(char *str, int *buflen, int *datalen, char *end, char *newend);
 
@@ -717,7 +726,7 @@ int ship_move(const char *from, const char *to);
  */
 int ship_get_random (unsigned char *random, size_t len);
 int ship_hash (const char *algo, unsigned char *data, unsigned char **hash);
-unsigned char *ship_hmac_sha1_base64(char *key, char *secret);
+char *ship_hmac_sha1_base64(const char *key, const char *secret);
 unsigned char *ship_encrypt (const char *algo, unsigned char *key, unsigned char *iv, unsigned char *text, int *clen);
 unsigned char *ship_decrypt (const char *algo, unsigned char *key, unsigned char *iv, unsigned char *cipher, int clen);
 /* encrypt string & encode to based64 format */
@@ -731,7 +740,8 @@ int ship_rsa_private_decrypt ( RSA* pr_key, unsigned char *cipher, unsigned char
 unsigned char *ship_timestamp (int timeout);
 
 RSA *ship_create_private_key();
-X509 *ship_sign(char *subject, int ttl, RSA* signer_key);
+X509 *ship_create_selfsigned_cert(char *subject, int ttl, RSA* signer_key);
+X509 *ship_parse_cert(char *subject);
 
 int fwrite_all(const char *data, const int len, FILE *f);
 
@@ -760,6 +770,8 @@ int ship_xml_get_child_addr_list(xmlNodePtr node, char *key, ship_list_t *addr_l
 
 /* static int ship_xml_get_xpath_addr_list(xmlDocPtr doc, char *key, ship_list_t *addr_list); */
 char* ship_xml_get_xpath_string_req(xmlDocPtr doc, char *key, int req);
+
+int ship_xml_attr_is(xmlNodePtr node, char *key, char *value);
 
 /* returns an xml field value using xpath */
 #define ship_xml_get_xpath_field(doc, key) ship_xml_get_string_req(doc, key, 0)
