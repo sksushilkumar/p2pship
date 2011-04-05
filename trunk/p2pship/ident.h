@@ -231,6 +231,34 @@ typedef struct buddy_s
 }
 buddy_t;
 
+/* whether this is a on-the-fly ident, not to be saved in the xml
+   file */
+#define IDENT_FLAG_NO_SAVE 2
+/* is an identity whose keys are managed by the op system */
+
+#ifdef CONFIG_OP_ENABLED
+#define IDENT_FLAG_OP_IDENT 4
+/* is an identity that should use the op system as additional
+   credentials */
+#define IDENT_FLAG_OP_VERIFY 8
+#endif
+
+/* if the ident has a self-signed cert (do not save the cert and
+   possible to re-create it */
+#define IDENT_FLAG_SELF_SIGNED 16
+
+#define IDENT_HAS_FLAG(ident, flag) ((ident)->flags & flag)
+#define IDENT_SET_FLAG(ident, flag) ((ident)->flags |= flag)
+#define IDENT_CLEAR_FLAG(ident, flag) ((ident)->flags &= ~flag)
+
+#define ident_is_modified(ident) IDENT_HAS_FLAG(ident, IDENT_FLAG_MODIFIED)
+#define ident_is_no_save(ident) IDENT_HAS_FLAG(ident, IDENT_FLAG_NO_SAVE)
+#ifdef CONFIG_OP_ENABLED
+#define ident_is_op_ident(ident) IDENT_HAS_FLAG(ident, IDENT_FLAG_OP_IDENT)
+#define ident_is_op_verify(ident) IDENT_HAS_FLAG(ident, IDENT_FLAG_OP_VERIFY)
+#endif
+#define ident_is_self_signed(ident) IDENT_HAS_FLAG(ident, IDENT_FLAG_SELF_SIGNED)
+
 /* An local identity */
 typedef struct ident_s
 {
@@ -239,6 +267,11 @@ typedef struct ident_s
 	char *sip_aor;
 	char *username;
 	char *password;
+
+	/* todo op: we should have some sort of flag here indicating
+	   whether the key should be taken from op */
+
+	unsigned int flags;
 
 	RSA *private_key;
 	X509 *cert;
@@ -259,10 +292,6 @@ typedef struct ident_s
 	/* indicates that the ident has changed after being saved /
 	   loaded from file */
 	int modified;
-
-	/* whether this is a on-the-fly ident, not to be saved in the
-	   xml file */
-	int do_not_save;
 	
 }
 ident_t;
@@ -283,8 +312,10 @@ typedef struct ident_service_s
 	
 	service_t *service;
 
-	/* to's: */
+	/* for how long, < 0 for 'forever' */
 	int expire;
+	
+	/* when registered. this+expire-now() = timeleft */
 	time_t reg_time;
 
         /* this is the contact address which the sip application gives,
@@ -359,7 +390,6 @@ char *ident_get_status(char *aor);
 void ident_reg_free(reg_package_t *reg) ;
 reg_package_t *ident_reg_new(ident_t *ident);
 int ident_reg_xml_to_struct(reg_package_t **__reg, const char *data);
-int ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur);
 int ident_ca_xml_to_struct(ca_t **__ca, xmlNodePtr cur);
 int ident_contact_xml_to_struct(contact_t **__contact, xmlNodePtr cur);
 
@@ -375,6 +405,8 @@ void ident_contact_free(contact_t *contact);
 /* ca data type handling */
 void ident_ca_free(ca_t *ca);
 ca_t* ident_ca_new(char *name);
+
+int ident_data_check_cert(ident_t *ident);
 
 char *ident_data_x509_get_serial(X509 *cert);
 char *ident_data_x509_get_name_digest(X509_NAME *name);
@@ -400,12 +432,12 @@ int ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text);
 int ident_create_new_reg(ident_t *ident);
 int ident_create_reg_xml(reg_package_t *reg, ident_t *ident, char **text);
 
-int ident_cert_is_trusted(X509 *cert);
 int ident_cert_is_valid(X509 *cert);
+int ident_remote_cert_is_acceptable(X509 *cert);
 
 
 /* buddy */
-buddy_t *ident_buddy_find(ident_t *ident, char *sip_aor);
+buddy_t *ident_buddy_find(ident_t *ident, const char *sip_aor);
 buddy_t *ident_buddy_new(char *name, char *sip_aor, char *shared_secret);
 buddy_t *ident_buddy_find_or_create(ident_t *ident, char *sip_aor);
 
@@ -413,6 +445,7 @@ buddy_t *ident_buddy_find_or_create(ident_t *ident, char *sip_aor);
 
 char *ident_data_x509_get_cn(X509_NAME* name);
 int ident_data_x509_get_validity(X509 *cert, time_t *start, time_t *end);
+char *ident_data_get_pkey_base64(X509 *cert);
 
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 int ident_data_bb_encode(ship_list_t *buddy_list, buddy_t *buddy, char **buf, int *buflen, int level);
@@ -429,5 +462,26 @@ void ident_data_dump_cas_json(ship_list_t *cas, char **msg);
 
 void ident_set_status(char *aor, char *status);
 int ident_has_ident(const char* aor, const char *password);
+
+/** overlay puts / gets with regards to buddies & privacy policies **/
+int ident_put_open(ident_t *ident, const char *key, const char *value, const int timeout);
+int ident_put_for_all_buddies(ident_t *ident, const char *key, const char *value, const int timeout);
+int ident_put_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key, const char *value, const int timeout);
+
+int ident_remove_open(ident_t *ident, const char* key);
+int ident_remove_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key);
+int ident_remove_for_all_buddies(ident_t *ident, const char *key);
+
+/* ident_get_cb == olclient_get_cb */
+typedef void (*ident_get_cb) (char *key, char *data, char *signer, void *param, int status);
+int ident_getsub_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key,
+				  void *param, ident_get_cb callback, const int subscribe);
+int ident_getsub_open(ident_t *ident, const char *key, 
+		      void *param, ident_get_cb callback, const int subscribe);
+
+#define ident_get_for_buddy_by_aor(ident, buddy_aor, key, param, callback) ident_getsub_for_buddy_by_aor(ident, buddy_aor, key, param, callback, 0)
+#define ident_get_open(ident, key, param, callback) ident_getsub_open(ident, key, param, callback, 0)
+#define ident_subscribe_for_buddy_by_aor(ident, buddy_aor, key, param, callback) ident_getsub_for_buddy_by_aor(ident, buddy_aor, key, param, callback, 1)
+#define ident_subscribe_open(ident, key, param, callback) ident_getsub_open(ident, key, param, callback, 1)
 
 #endif
