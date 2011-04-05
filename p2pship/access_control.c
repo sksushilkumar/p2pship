@@ -21,10 +21,17 @@
 #include <osipparser2/osip_message.h>
 #include <osip2/osip.h>
 #include <osipparser2/sdp_message.h>
+#ifdef CONFIG_OP_ENABLED
+#include <opconn.h>
+#endif
 #include "sipp.h"
 #include "trustman.h"
 #include "processor.h"
 #include "netio_http.h"
+#ifdef CONFIG_HIP_ENABLED
+#include "hipapi.h"
+#endif
+#include "conn.h"
 
 //#define AC_HTTP_PF
 
@@ -39,6 +46,9 @@ static void ac_packetfilter_stats(ac_sip_t *asip);
 #endif
 static void ac_packetfilter_blacklist(ac_sip_t *asip);
 static void ac_packetfilter_whitelist(ac_sip_t *asip);
+#ifdef CONFIG_OP_ENABLED
+static void ac_packetfilter_op(ac_sip_t *asip);
+#endif
 
 /* white / blacklists */
 static ship_ht_t *white_list = 0;
@@ -50,6 +60,10 @@ static char *bl_file = 0;
 static char *http_ac = 0;
 #endif
 static int max_path = 0;
+
+#ifdef CONFIG_OP_ENABLED
+static int op_filtering = 1;
+#endif
 
 /*
  * the stats- related stuff 
@@ -128,7 +142,6 @@ pdd_new_stat(osip_message_t *sip, char *from, char *to)
 void
 ac_packetfilter_stats_remote_event(char *local_aor, char *remote_aor, char *callid, unsigned long time, char *event)
 {
-	void *ptr = 0;
 	pdd_stat_t *stat;
 	LOG_DEBUG("got remote event '%s' for %s => %s at %u\n", event, local_aor, remote_aor, time);
 	
@@ -161,11 +174,11 @@ ac_packetfilter_stats_event(char *local_aor, char *remote_aor, char *event)
 	LOG_DEBUG("got event '%s' for %s => %s at %u\n", event, local_aor, remote_aor, time);
 	
 	/* find the relevant ones .. */
-	if (!stats) 
+	if (!stats || !remote_aor)
 		return;
 
 	ship_lock(stats);
-	while (stat = ship_ht_next(stats, &ptr)) {
+	while ((stat = ship_ht_next(stats, &ptr))) {
 		if ((!local_aor || !strcmp(stat->from, local_aor)) &&
 		    !strcmp(remote_aor, stat->to)) {
 			unsigned long *val = 0;
@@ -195,6 +208,9 @@ ac_cb_config_update(processor_config_t *config, char *k, char *v)
 	processor_config_get_bool(config, P2PSHIP_CONF_PDD_RESET_MODE, &pdd_reset_mode);
 	processor_config_get_bool(config, P2PSHIP_CONF_PDD_LOG, &pdd_log);
 #endif
+#ifdef CONFIG_OP_ENABLED
+	processor_config_get_enum(config, P2PSHIP_CONF_IDENT_FILTERING, &op_filtering);
+#endif
 	ASSERT_ZERO(processor_config_get_int(config, P2PSHIP_CONF_AC_MAX_PATH, &max_path), err);
 #ifdef AC_HTTP_PF
 	freez(http_ac);
@@ -218,9 +234,9 @@ ac_stats_handle_message(char *data, int data_len,
 	tmp = mallocz(data_len + 1);
 	memcpy(tmp, data, data_len);
 	if (tmp && sscanf(tmp, "%u", &time) == 1) {
-		if (event = strchr(tmp, ':')) {
+		if ((event = strchr(tmp, ':'))) {
 			event++;
-			if (callid = strchr(event, ':')) {
+			if ((callid = strchr(event, ':'))) {
 				callid[0] = 0;
 				callid++;
 				ac_packetfilter_stats_remote_event(target->sip_aor, source, callid, time, event);
@@ -333,6 +349,9 @@ ac_init(processor_config_t *config)
 
 	ac_cb_config_update(config, NULL, NULL);
 
+#ifdef CONFIG_OP_ENABLED
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_FILTERING, ac_cb_config_update);
+#endif
 #ifdef DO_STATS
 	ASSERT_TRUE(stats = ship_ht_new(), err);
 	ASSERT_TRUE(done_stats = ship_list_new(), err);
@@ -482,33 +501,40 @@ ac_start_packetfilter_done(void *data, int code)
 
 
 static void
-ac_start_packetfilter(ac_sip_t *asip)
+ac_start_packetfilter(ac_sip_t *asip, const int filter)
 {
 	/* create queue of filters */
-	ship_list_add(asip->filters, ac_packetfilter_debug);
 #ifdef DO_STATS
 	ship_list_add(asip->filters, ac_packetfilter_stats);
 #endif
-	ship_list_add(asip->filters, ac_packetfilter_simple);
-	ship_list_add(asip->filters, ac_packetfilter_blacklist);
-	ship_list_add(asip->filters, ac_packetfilter_whitelist);
-	ship_list_add(asip->filters, ac_packetfilter_trust);
+	ship_list_add(asip->filters, ac_packetfilter_debug);
+	if (filter) {
+		ship_list_add(asip->filters, ac_packetfilter_simple);
+		ship_list_add(asip->filters, ac_packetfilter_blacklist);
+		ship_list_add(asip->filters, ac_packetfilter_whitelist);
+		ship_list_add(asip->filters, ac_packetfilter_trust);
 #ifdef AC_HTTP_PF
-	ship_list_add(asip->filters, ac_packetfilter_http);
+		ship_list_add(asip->filters, ac_packetfilter_http);
 #endif
+#ifdef CONFIG_OP_ENABLED
+		ship_list_add(asip->filters, ac_packetfilter_op);
+#endif
+	}
+	
 	/* do this async! */
 	processor_tasks_add(ac_start_packetfilter_do, 
 			    asip,
 			    ac_start_packetfilter_done);	
 }
 
-int 
+int
 ac_packetfilter_remote(char *local_aor, char *remote_aor, osip_event_t *evt, 
-		       void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict))
+		       void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict),
+		       const int filter)
 {
 	ac_sip_t *asip = 0;
 	if ((asip = ac_sip_new(local_aor, remote_aor, 1, evt, evt, func))) {
-		ac_start_packetfilter(asip);
+		ac_start_packetfilter(asip, filter);
 		return 0;
 	} else {
 		return -1;
@@ -517,13 +543,14 @@ ac_packetfilter_remote(char *local_aor, char *remote_aor, osip_event_t *evt,
 
 int 
 ac_packetfilter_local(sipp_request_t *req, 
-		      void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict))
+		      void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict),
+		      const int filter)
 {
 	int ret = -1;
 	ac_sip_t *asip = 0;
 
 	if ((asip = ac_sip_new(req->local_aor, req->remote_aor, 0, req, req->evt, func))) {
-		ac_start_packetfilter(asip);
+		ac_start_packetfilter(asip, filter);
 		ret = 0;
 	}	
 	return ret;
@@ -532,12 +559,17 @@ ac_packetfilter_local(sipp_request_t *req,
 static void 
 ac_packetfilter_debug(ac_sip_t *asip)
 {
-	
-	LOG_INFO("PACKETFILTERING: Got a %s %s from %s to %s (channel %s:%s)\n", 
-		 asip->evt->sip->sip_method, (MSG_IS_RESPONSE(asip->evt->sip)? "response":"request"),
-		 asip->from, asip->to,
-		 asip->local, asip->remote);
-
+	if (MSG_IS_RESPONSE(asip->evt->sip)) {
+		LOG_INFO("PACKETFILTERING: Got a %d response from %s to %s (channel %s:%s, remotely got: %d)\n", 
+			 osip_message_get_status_code(asip->evt->sip),
+			 asip->from, asip->to,
+			 asip->local, asip->remote, asip->remotely_got);
+	} else {
+		LOG_INFO("PACKETFILTERING: Got a %s request from %s to %s (channel %s:%s, remotely got: %d)\n", 
+			 asip->evt->sip->sip_method,
+			 asip->from, asip->to,
+			 asip->local, asip->remote, asip->remotely_got);
+	}
 	ac_next_packetfilter(asip);
 }
 
@@ -552,26 +584,82 @@ ac_packetfilter_trust(ac_sip_t *asip)
 	if (asip->remotely_got && 
 	    !MSG_IS_RESPONSE(sip) && 
 	    (MSG_IS_INVITE(sip) || MSG_IS_MESSAGE(sip))) {
+
 		/* check max path */
 		if (max_path > 0) {
-			trustparams_t *params = 0;
+			int pathlen = -1;
 
 			/* the default unless proven otherwise.. */
 			asip->verdict = AC_VERDICT_REJECT;
-			if ((params = trustman_get_valid_trustparams(asip->from, asip->to))) {
-				LOG_DEBUG("Will check params, trust path data: %d, limit: %d\n", params->pathfinder_len, max_path);
-				if ((params->pathfinder_len > -1) && (params->pathfinder_len <= max_path)) {
-					asip->verdict = AC_VERDICT_NONE;
-				}
+			pathlen = trustman_get_pathlen(asip->from, asip->to);
+			
+			LOG_DEBUG("Will check params, trust path data: %d, limit: %d\n", pathlen, max_path);
+			if ((pathlen > -1) && (pathlen <= max_path)) {
+				asip->verdict = AC_VERDICT_NONE;
 			} else {
 				LOG_DEBUG("No trust parameters got, skipping as we require max %d\n", max_path);
 			}
-			if (params)
-				ship_unlock(params->queued_packets);
 		}
 	}
 	ac_next_packetfilter(asip);
 }
+
+#ifdef CONFIG_OP_ENABLED
+static void 
+ac_packetfilter_op(ac_sip_t *asip)
+{
+	osip_message_t* sip = asip->evt->sip;
+
+	LOG_DEBUG("Performing op ac on %s->%s\n", asip->from, asip->to);
+
+	/* filter only inbound, non-response sessions */
+	if (asip->remotely_got && 
+	    !MSG_IS_RESPONSE(sip) && 
+	    (MSG_IS_INVITE(sip) || MSG_IS_MESSAGE(sip))) {
+		int is_known = 0;
+		char* key = 0;
+		reg_package_t *reg = 0;
+
+		/* check identity key */
+		if ((reg = ident_find_foreign_reg(asip->from))) {
+			key = ident_data_get_pkey_base64(reg->cert);
+			if (key) 
+				opconn_known(key, &is_known);
+			if (is_known)
+				LOG_DEBUG("we know the user's key\n");
+			freez(key);
+			ship_unlock(reg);
+		}
+
+		/* check trustman info */
+		if (!is_known) {
+			key = trustman_op_get_verification_key(asip->from, asip->to);
+			if (key)
+				opconn_known(key, &is_known);
+			if (is_known)
+				LOG_DEBUG("we know the verificator of the user's key\n");
+			freez(key);
+		}
+		
+		switch (op_filtering) {
+		case 0:
+			/* block unknown */
+			if (!is_known) //is_unknown)
+				asip->verdict = AC_VERDICT_REJECT;
+			break;
+		case 2:
+			/* allow known */
+			if (is_known)
+				asip->verdict = AC_VERDICT_ALLOW;
+			break;
+		default:
+			/* nothing / unknkown */
+			break;
+		}
+	}
+	ac_next_packetfilter(asip);
+}
+#endif
 
 static void 
 ac_packetfilter_blacklist(ac_sip_t *asip)
@@ -606,7 +694,7 @@ ac_packetfilter_simple(ac_sip_t *asip)
 	osip_message_t* sip = asip->evt->sip;
 	int code = osip_message_get_status_code(sip);
 
-	LOG_DEBUG("Performing simple ac on %s->%s\n", asip->from, asip->to);
+	LOG_DEBUG("Performing simple ac on %s->%s, remote: %d\n", asip->from, asip->to, asip->remotely_got);
 	/* filter only inbound */
 	if (asip->remotely_got) {
 		
@@ -646,6 +734,8 @@ ac_packetfilter_simple(ac_sip_t *asip)
 
 		} else if (MSG_IS_INVITE(sip) || MSG_IS_MESSAGE(sip)) {
 			/* hm, nothing.. */
+			// } else if (MSG_IS_NOTIFY(sip)) {
+			
 		} else {
 			/* todo: what about OPTIONS? */
 			LOG_WARN("Got unsupported request\n");
@@ -692,15 +782,17 @@ static void
 ac_packetfilter_http(ac_sip_t *asip)
 {
 	char *data = 0, *tmp = 0;
-	trustparams_t *params = 0;
+	int pathlen = -1;
 	int len = 0, size = 0;
+	char buf[32];
 
 	if (!http_ac || !strlen(http_ac))
 		goto err;
 	
 	LOG_DEBUG("Performing http ac on %s->%s\n", asip->from, asip->to);
-	params = trustman_get_valid_trustparams(asip->from, asip->to);
-	
+	pathlen = trustman_get_pathlen(asip->from, asip->to);
+	sprintf(buf, "%d", pathlen);
+
 	/* create a nice post param packet from this */
 	ASSERT_TRUE((tmp = ship_addparam_urlencode("p2pship_ver", "1", data, &size, &len)) && (data = tmp), err);
 	ASSERT_TRUE((tmp = ship_addparam_urlencode("from", asip->from, data, &size, &len)) && (data = tmp), err);
@@ -711,8 +803,7 @@ ac_packetfilter_http(ac_sip_t *asip)
 						   data, &size, &len)) && (data = tmp), err);
 	ASSERT_TRUE((tmp = ship_addparam_urlencode("local", (asip->local?asip->local:""), data, &size, &len)) && (data = tmp), err);
 	ASSERT_TRUE((tmp = ship_addparam_urlencode("remote", (asip->remote?asip->remote:""), data, &size, &len)) && (data = tmp), err);
-	ASSERT_TRUE((tmp = ship_addparam_urlencode("trust", (params && params->params? params->params:""), 
-						   data, &size, &len)) && (data = tmp), err);
+	ASSERT_TRUE((tmp = ship_addparam_urlencode("pathlen", buf, data, &size, &len)) && (data = tmp), err);
 	
 	if (!netio_http_post_host(http_ac,
 				  "/validate", "",
@@ -722,8 +813,6 @@ ac_packetfilter_http(ac_sip_t *asip)
 	}
  err:
 	freez(data);
-	if (params)
-		ship_unlock(params->queued_packets);
 	if (asip)
 		ac_next_packetfilter(asip);
 }
@@ -751,7 +840,6 @@ ac_packetfilter_stats(ac_sip_t *asip)
 			if (code != 100 && 
 			    (stat = ship_ht_get_string(stats, callid)) &&
 			    !stat->end) {
-				unsigned long s, ds;
 				
 				stat->end = ship_systemtimemillis();
 				LOG_INFO("Got PDD for %s %s -> %s (status %d) in %u.%03u seconds..\n",
@@ -798,6 +886,7 @@ ac_packetfilter_stats(ac_sip_t *asip)
 				hipapi_clear_sas();
 #endif
 				ident_reset_foreign_regs();
+				conn_close_all();
 			}
 
 			callid = sipp_get_call_id(sip);
@@ -833,12 +922,13 @@ ac_send_stats(char *remote, char *local,
 	char *buf = mallocz(strlen(callid) + strlen(event) + 64);
 	if (buf) {
 		LOG_DEBUG("sending remote stat %s\n", event);
-		sprintf(buf, "%u:%s:%s", time, event, callid);
-		conn_queue_to_peer(remote, local,
-				   SERVICE_TYPE_STATS,
-				   buf, strlen(buf), NULL, NULL);
+		sprintf(buf, "%u:%s:%s", (unsigned int)time, event, callid);
+		conn_send_simple(remote, local,
+				 SERVICE_TYPE_STATS,
+				 buf, strlen(buf));
 		freez(buf);
 	}
+	return 0;
 }
 
 static int 
@@ -862,11 +952,11 @@ pdd_record_pdd(pdd_stat_t *stat)
 
 	ASSERT_TRUE(tmp = mallocz(strlen(stat->from) + strlen(stat->to) + strlen(stat->msg_type) + 128), err);
 	sprintf(tmp, "%s, %s, %s, %d, %u, %u, %u, %u, %u, %u\n",
-		stat->from, stat->to, stat->msg_type, stat->created, 
+		stat->from, stat->to, stat->msg_type, (int)stat->created, 
 		total, lookup, connect, auth, remote,
-		total - lookup - connect - auth - remote);
+		(int)(total - lookup - connect - auth - remote));
 	
-	if (f = fopen(filename, "a")) {
+	if ((f = fopen(filename, "a"))) {
 		fwrite(tmp, sizeof(char), strlen(tmp), f);
 		fclose(f);
 	}
@@ -895,16 +985,16 @@ stats_dump_json(char **str)
 	
 	ship_lock(done_stats);
 	ASSERT_TRUE(buf = append_str("var p2pship_pdds = [\n", buf, &buflen, &datalen), err);
-	while (stat = ship_list_next(done_stats, &ptr)) {
+	while ((stat = ship_list_next(done_stats, &ptr))) {
 		int len = strlen(stat->from) + strlen(stat->to) + strlen(stat->msg_type) + 128;
 		
 		ASSERT_TRUE(tmp = mallocz(len), err);
 		sprintf(tmp, " [ \"%s\", \"%s\", \"%s\", \"%d\", \"%u\", \"%u\", \"%u\", \"%u\", \"%u\" ],\n",
-			stat->from, stat->to, stat->msg_type, stat->created, 
-			stat->end - stat->start, stat->lookup_done - stat->lookup_start, 
-			stat->connect_done - stat->connect_start,
-			(stat->connect_done? stat->sip_sent - stat->connect_done : 0),
-			stat->remote_done - stat->remote_start);
+			stat->from, stat->to, stat->msg_type, (int)stat->created, 
+			(unsigned int)(stat->end - stat->start), (unsigned int)(stat->lookup_done - stat->lookup_start), 
+			(unsigned int)(stat->connect_done - stat->connect_start),
+			(unsigned int)(stat->connect_done? stat->sip_sent - stat->connect_done : 0),
+			(unsigned int)(stat->remote_done - stat->remote_start));
 		ASSERT_TRUE(buf = append_str(tmp, buf, &buflen, &datalen), err);
 		freez(tmp);
 	}
