@@ -17,13 +17,16 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #define _GNU_SOURCE
-#include "ident.h"
 #include "ship_utils.h"
+#include <time.h>
+#include <string.h>
+#ifdef CONFIG_OP_ENABLED
+#include <opconn.h>
+#endif
+#include "ident.h"
 #include "processor.h"
 #include "ship_debug.h"
 #include "ident.h"
-#include <time.h>
-#include <string.h>
 #include "p2pship_version.h"
 #include "conn.h"
 
@@ -31,6 +34,7 @@ static void ident_free(ident_t *ident);
 static int ident_init(ident_t *ret, char *sip_aor);
 
 static void ident_data_bb_add_buddy_to_bloom(ship_bloom_t *bloom, buddy_t *buddy);
+static int ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur);
 
 SHIP_DEFINE_TYPE(ident);
 
@@ -122,7 +126,7 @@ ident_buddy_find_or_create(ident_t *ident, char *sip_aor)
 }
 
 buddy_t *
-ident_buddy_find(ident_t *ident, char *sip_aor)
+ident_buddy_find(ident_t *ident, const char *sip_aor)
 {
 	void *ptr = 0;
 	buddy_t *ret = 0;
@@ -136,7 +140,6 @@ static int
 ident_buddy_xml_to_struct(buddy_t **__buddy, xmlNodePtr cur)
 {
 	char *name = NULL, *sip_aor = NULL, *shared_secret = NULL, *certificate = NULL;
-   	BIO *bio_cert = NULL;
    	int ret = -1;
    	buddy_t *buddy = NULL;
    		
@@ -151,9 +154,7 @@ ident_buddy_xml_to_struct(buddy_t **__buddy, xmlNodePtr cur)
    	ASSERT_TRUE(buddy = ident_buddy_new(name, sip_aor, shared_secret), err);
 
    	if ((certificate = ship_xml_get_child_field(cur, "certificate"))) {
-		ASSERT_TRUE(bio_cert = BIO_new(BIO_s_mem()), err);
-		ASSERT_TRUE(BIO_puts(bio_cert, certificate) > 0, err);
-		ASSERT_TRUE(buddy->cert = PEM_read_bio_X509(bio_cert, NULL, NULL, NULL), err);
+		ASSERT_TRUE(buddy->cert = ship_parse_cert(certificate), err);
    	}
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 	freez(name);
@@ -173,7 +174,6 @@ ident_buddy_xml_to_struct(buddy_t **__buddy, xmlNodePtr cur)
  
  err:
     	
- 	if (bio_cert) BIO_free(bio_cert);
 	freez(name);
 	freez(sip_aor);
 	freez(shared_secret);
@@ -382,6 +382,40 @@ ident_contact_new()
         return 0;
 }
 
+/* checks that our local certificate is still ok. called when it is
+   going to be put somewhere (reg packet etc). If not ok, then try to
+   create a new one */
+int
+ident_data_check_cert(ident_t *ident)
+{
+	char *data = 0;
+	int ret = -1;
+	if (!ident->cert || !ident_cert_is_valid(ident->cert)) {
+		if (!ident_is_self_signed(ident)) {
+			LOG_ERROR("The certificate for %s is not valid!\n", ident->sip_aor);
+			/* we don't want no trouble .. */
+#ifdef CONFIG_OP_ENABLED
+		} else if (ident_is_op_ident(ident)) {
+			/* get the op system to create a self-signed cert with me as subject */
+			if (ident->cert) X509_free(ident->cert);
+			ident->cert = NULL;
+			ASSERT_ZERO(opconn_init(), err);
+			ASSERT_ZERO(opconn_request_cert(ident->sip_aor, &data), err);
+			ASSERT_TRUE(ident->cert = ship_parse_cert(data), err);
+		} else {
+#endif
+			if (ident->cert) X509_free(ident->cert);
+			ident->cert = NULL;
+			ASSERT_TRUE(ident->cert = ship_create_selfsigned_cert(ident->sip_aor,
+									      365*60*60*24, ident->private_key), err);
+		}
+	}
+	ret = 0;
+ err:
+	freez(data);
+	return ret;
+}
+
 /* Add addr-fields to a reg package */
 static int
 ident_fill_reg_addr_field(xmlNodePtr cur, void *key, ship_list_t *temp_list)
@@ -482,31 +516,42 @@ ident_create_reg_xml(reg_package_t *reg, ident_t *ident, char **text)
 	ASSERT_TRUE(tree->children = xmlNewCDataBlock(doc, (const xmlChar*)reg_data, strlen(reg_data)), err);
 
 	/* signature */
-	if (ident->private_key) {
-		ASSERT_TRUE(tree = xmlNewTextChild(doc->children, NULL, (const xmlChar*)"signature", NULL), err);
-		
+	if (ident->private_key
+#ifdef CONFIG_OP_ENABLED
+	    || ident_is_op_ident(ident)
+#endif
+	    ) {
 		/* signature algorithm */
+		ASSERT_TRUE(tree = xmlNewTextChild(doc->children, NULL, (const xmlChar*)"signature", NULL), err);
 		ASSERT_TRUE(xmlNewTextChild(tree, NULL, (const xmlChar*)"algorithm", (const xmlChar*)SIGN_ALGO), err);
-		
-		/* signature value */
-		ASSERT_TRUE(digest = (char *)mallocz(SHA_DIGEST_LENGTH), err);
-		ASSERT_TRUE(SHA1((unsigned char*)reg_data, strlen(reg_data), (unsigned char*)digest), err);
-		
-		ASSERT_TRUE(sign = (char *)mallocz(1024), err);	
-		ASSERT_TRUE(RSA_sign(NID_sha1, (unsigned char*)digest, SHA_DIGEST_LENGTH, (unsigned char*)sign, &siglen, ident->private_key), err);
-		
-		ASSERT_TRUE(sign_64e = ship_encode_base64(sign, siglen), err);
+#ifdef CONFIG_OP_ENABLED
+		if (ident_is_op_ident(ident)) {
+			ASSERT_ZERO(opconn_sign(reg_data, "p2pship", &sign_64e), err);
+		} else {
+#endif
+			/* signature value */
+			ASSERT_TRUE(digest = (char *)mallocz(SHA_DIGEST_LENGTH), err);
+			ASSERT_TRUE(SHA1((unsigned char*)reg_data, strlen(reg_data), (unsigned char*)digest), err);
+			
+			ASSERT_TRUE(sign = (char *)mallocz(1024), err);	
+			ASSERT_TRUE(RSA_sign(NID_sha1, (unsigned char*)digest, SHA_DIGEST_LENGTH, (unsigned char*)sign, &siglen, ident->private_key), err);
+			
+			//ship_printf_bytearr(sign, siglen, "created signature");
+			//ship_printf_bytearr(digest, SHA_DIGEST_LENGTH, "created digest");
+
+			ASSERT_TRUE(sign_64e = ship_encode_base64(sign, siglen), err);
+#ifdef CONFIG_OP_ENABLED
+		}
+#endif
 		ASSERT_TRUE(xmlNewTextChild(tree, NULL, (xmlChar*)"value", (xmlChar*)sign_64e), err);
 	}
-
-	if (ident->cert) {
-		/* certificate */
-		ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
-		ASSERT_TRUE(PEM_write_bio_X509(bio, ident->cert), err);
-		ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &cert), err);
-		cert[bufsize] = 0;
-		ASSERT_TRUE(xmlNewTextChild(doc->children, NULL, (xmlChar*)"certificate", (xmlChar*)cert), err);
-	}
+	
+	ASSERT_ZERO(ident_data_check_cert(ident), err);
+	ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+	ASSERT_TRUE(PEM_write_bio_X509(bio, ident->cert), err);
+	ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &cert), err);
+	cert[bufsize] = 0;
+	ASSERT_TRUE(xmlNewTextChild(doc->children, NULL, (xmlChar*)"certificate", (xmlChar*)cert), err);
 
 	/* done. dump the xml */
 	xmlDocDumpFormatMemory(doc, &xmlbuf, &bufsize, 1);
@@ -542,6 +587,7 @@ ident_cb_openssl_pass(char *buf, int size, int rwflag, void *u)
         return len;
 }
 
+
 /* Converts in-memory xml char* to the reg-package structure */
 int 
 ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
@@ -554,7 +600,6 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	char *sign_algo = NULL;
 	EVP_PKEY *pkey = NULL;
 	RSA *public_key = NULL;
-	BIO *bio_cert = NULL;
 	char *result = NULL;
 	xmlDocPtr doc = NULL;
 	xmlNodePtr cur = NULL;
@@ -573,9 +618,7 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	
 	/* certificate */
 	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "certificate"), err);
-	ASSERT_TRUE(bio_cert = BIO_new(BIO_s_mem()), err);
-	ASSERT_TRUE(BIO_puts(bio_cert, result) > 0, err);
-	ASSERT_TRUE(reg->cert = PEM_read_bio_X509(bio_cert, NULL, NULL, NULL), err);
+	ASSERT_TRUE(reg->cert = ship_parse_cert(result), err);
 	
 	/* get key into public_key */
 	ASSERT_TRUE(pkey = X509_get_pubkey(reg->cert), err);
@@ -594,10 +637,12 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 		LOG_WARN("Registration package signed with unknown algorithm\n");
 		goto err;
 	}
-	
+
 	ASSERT_TRUE(sign = ship_decode_base64(sign_64e, strlen(sign_64e), &len), err);
 	if (!RSA_verify(NID_sha1, (unsigned char*)digest, SHA_DIGEST_LENGTH, (unsigned char*)sign, len, public_key)) {
-		LOG_DEBUG("Signature not verified\n");
+		LOG_WARN("Signature not verified\n");
+		//ship_printf_bytearr(sign, len, "signature");
+		//ship_printf_bytearr(digest, SHA_DIGEST_LENGTH, "digest");
 		goto err;
 	}
 
@@ -650,7 +695,6 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	freez(sign_algo);
 	if (pkey) EVP_PKEY_free(pkey);
 	if (public_key) RSA_free(public_key);
-	if (bio_cert) BIO_free(bio_cert);
 	if (doc) xmlFreeDoc(doc);
 	freez(result);
 	if (reg) ident_reg_free(reg);
@@ -685,33 +729,36 @@ ident_load_ident_xml(xmlNodePtr cur, void *ptr)
 		}
 	} else if (!xmlStrcmp(cur->name, (xmlChar*)"identity")) {
 		ident_t *ident = NULL;			
-		if ((ret = ident_ident_xml_to_struct(&ident, cur)))
-			return ret;
-		
-		LOG_INFO("Loaded identity %s\n", ident->sip_aor);
-		ship_obj_list_add(idents, ident);
-		ship_obj_unref(ident);
+		if ((ret = ident_ident_xml_to_struct(&ident, cur))) {
+			LOG_WARN("Invalid identity fragment!\n");
+		} else {
+			LOG_INFO("Loaded identity %s\n", ident->sip_aor);
+			ship_obj_list_add(idents, ident);
+			ship_obj_unref(ident);
+		}
 	} else if (!xmlStrcmp(cur->name, (xmlChar*)"ca")) {
 		ca_t *ca = NULL;			
-		if ((ret = ident_ca_xml_to_struct(&ca, cur)))
-			return ret;
-		
-		LOG_INFO("Loaded CA %s\n", ca->name);
-		ship_list_add(cas, ca);
+		if ((ret = ident_ca_xml_to_struct(&ca, cur))) {
+			LOG_WARN("Invalid CA fragment!\n");
+		} else {
+			LOG_INFO("Loaded CA %s\n", ca->name);
+			ship_list_add(cas, ca);
+		}
 	} else if (!xmlStrcmp(cur->name, (xmlChar*)"contact")) {
 		contact_t *contact = NULL;			
-		if ((ret = ident_contact_xml_to_struct(&contact, cur)))
-			return ret;
-		
-		LOG_INFO("Loaded contact %s\n", contact->name);
-		ship_list_add(contacts, contact);
+		if ((ret = ident_contact_xml_to_struct(&contact, cur))) {
+			LOG_WARN("Invalid contact fragment!\n");
+		} else {
+			LOG_INFO("Loaded contact %s\n", contact->name);
+			ship_list_add(contacts, contact);
+		}
 	}
 	
 	return 0;
 }
 
 /* reads an ident xml char* into the ident-structure */
-int
+static int
 ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur)
 {
 	char *result = NULL;
@@ -720,7 +767,7 @@ ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur)
 	BIO *bio_cert = NULL;
 	int ret = -1;
 	ident_t *ident = NULL;
-
+	xmlNodePtr keyelm = NULL;
 	xmlNodePtr buddies = NULL, b = NULL;
 	buddy_t *buddy = NULL;
 	
@@ -731,38 +778,61 @@ ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur)
 	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "username"), err);
 	ASSERT_TRUE(ident->username = strdup(result), err);
 
-	freez(result);
-	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "private-key"), err);
-	ASSERT_TRUE(bio_key = BIO_new(BIO_s_mem()), err);
-	ASSERT_TRUE(BIO_puts(bio_key, result) > 0, err);
-	BIO_flush(bio_key);
-	
-	/* why doesn't this work?? the callback is never called, the key-read just fails */
-	/* todo: do a ERR_get_error etc to get the error code */
-	ASSERT_TRUE(ident->private_key = PEM_read_bio_RSAPrivateKey(bio_key, NULL, 
-								    ident_cb_openssl_pass, "private key"), err);
-	
-	freez(result);
-	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "certificate"), err);
-
-	ASSERT_TRUE(bio_cert = BIO_new(BIO_s_mem()), err);
-	ASSERT_TRUE(BIO_puts(bio_cert, result) > 0, err);
-	ASSERT_TRUE(ident->cert = PEM_read_bio_X509(bio_cert, NULL, NULL, NULL), err);
-	
-	/* read sip aor from cert, compare */
-	ASSERT_TRUE(cn = ident_data_x509_get_cn(X509_get_subject_name(ident->cert)), err);
-	ASSERT_ZERO(ident_set_aor(&(ident->sip_aor), cn), err);
-	
-	/* ..this is optional: */
-	freez(cn);
+	/* we use the name on the sip-aor label. although it might
+	   differ from the certificate */
 	freez(result);
 	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "sip-aor"), err);
-	ASSERT_ZERO(ident_set_aor(&cn, result), err);	
-	if (strcmp(cn, ident->sip_aor)) {
-		LOG_WARN("Identity's specified SIP AOR (%s) differs from the issued (%s)\n",
-			 cn, ident->sip_aor);
-	}
+	ASSERT_ZERO(ident_set_aor(&(ident->sip_aor), result), err);
+
+	/* see if we have a key and check the flags */
+	freez(result);
+	ASSERT_TRUE(keyelm = ship_xml_get_child(cur, "private-key"), err);
 	
+	/* check attributes */ 
+#ifdef CONFIG_OP_ENABLED
+	if (ship_xml_attr_is(keyelm, "src", "op")) {
+		IDENT_SET_FLAG(ident, IDENT_FLAG_OP_IDENT);
+		IDENT_SET_FLAG(ident, IDENT_FLAG_SELF_SIGNED);
+	}
+		
+	if (ship_xml_attr_is(keyelm, "verify", "op"))
+		IDENT_SET_FLAG(ident, IDENT_FLAG_OP_VERIFY);
+	if (!ident_is_op_ident(ident)) {
+#endif 
+		ASSERT_TRUE(result = ship_xml_get_child_field(cur, "private-key"), err);
+		ASSERT_TRUE(bio_key = BIO_new(BIO_s_mem()), err);
+		ASSERT_TRUE(BIO_puts(bio_key, result) > 0, err);
+		BIO_flush(bio_key);
+		
+		/* why doesn't this work?? the callback is never called, the key-read just fails */
+		/* todo: do a ERR_get_error etc to get the error code */
+		ASSERT_TRUE(ident->private_key = PEM_read_bio_RSAPrivateKey(bio_key, NULL, 
+									    ident_cb_openssl_pass, 
+									    "private key"), err);
+#ifdef CONFIG_OP_ENABLED
+	}
+#endif 
+	freez(result);
+
+	if ((result = ship_xml_get_child_field(cur, "certificate"))) {
+		ASSERT_TRUE(ident->cert = ship_parse_cert(result), err);
+
+		/* read sip aor from cert, compare */
+		freez(result);
+		ASSERT_TRUE(result = ident_data_x509_get_cn(X509_get_subject_name(ident->cert)), err);
+		ASSERT_ZERO(ident_set_aor(&cn, result), err);
+		if (strcmp(cn, ident->sip_aor)) {
+			LOG_WARN("Identity's specified SIP AOR (%s) differs from the issued (%s)\n",
+				 ident->sip_aor, cn);
+		}
+	} else if (ident->private_key) {
+		/* generate a self-signed certificate */
+		LOG_DEBUG("self-signing certificate for %s..\n", ident->sip_aor);
+		ASSERT_TRUE(ident->cert = ship_create_selfsigned_cert(ident->sip_aor,
+								      365*60*60*24, ident->private_key), err);
+		IDENT_SET_FLAG(ident, IDENT_FLAG_SELF_SIGNED);
+	}
+
 	/* get buddies from buddylist */
 	if ((buddies = ship_xml_get_child(cur, "buddies"))) {
 		for (b = buddies->children; b; b = b->next) {
@@ -791,7 +861,6 @@ int
 ident_ca_xml_to_struct(ca_t **__ca, xmlNodePtr cur)
 {
 	char *result = NULL;
-	BIO *bio_cert = NULL;
 	int ret = -1;
 	ca_t *ca = NULL;
 
@@ -802,9 +871,7 @@ ident_ca_xml_to_struct(ca_t **__ca, xmlNodePtr cur)
 	freez(result);
 
 	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "certificate"), err);
-	ASSERT_TRUE(bio_cert = BIO_new(BIO_s_mem()), err);
-	ASSERT_TRUE(BIO_puts(bio_cert, result) > 0, err);
-	ASSERT_TRUE(ca->cert = PEM_read_bio_X509(bio_cert, NULL, NULL, NULL), err);
+	ASSERT_TRUE(ca->cert = ship_parse_cert(result), err);
 	
 	/* extract key id */
 	ASSERT_TRUE(ca->digest = ident_data_x509_get_subject_digest(ca->cert), err);
@@ -814,7 +881,6 @@ ident_ca_xml_to_struct(ca_t **__ca, xmlNodePtr cur)
 	ret = 0;
  err:
 	
-	if (bio_cert) BIO_free(bio_cert);
 	freez(result);
 	if (ca) ident_ca_free(ca);
 	
@@ -861,7 +927,7 @@ int
 ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 {
 	xmlDocPtr doc = NULL;
-	xmlNodePtr tree, node;
+	xmlNodePtr tree, node, pkey;
 	xmlChar *xmlbuf = NULL;
 	BIO *bio = NULL;
 	char *tmp = NULL;
@@ -879,33 +945,43 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 		ship_lock(ident);
 
 		/* skip the tmp idents */
-		if (ident->do_not_save) {
-			ship_unlock(ident);
-			ident = 0;
+		if (ident_is_no_save(ident))
 			continue;
-		}
 
 		ASSERT_TRUE(node = xmlNewTextChild(tree, NULL, (xmlChar*)"identity", NULL), err);
 		ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"sip-aor", (xmlChar*)ident->sip_aor), err);
 		ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"username", (xmlChar*)ident->username), err);
 		
-		ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
-		ASSERT_TRUE(PEM_write_bio_RSAPrivateKey(bio, ident->private_key, NULL, NULL, 0, NULL, NULL), err);
-		ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
- 		tmp[bufsize] = 0;
-		ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"private-key", (xmlChar*)tmp), err);
+#ifdef CONFIG_OP_ENABLED
+		if (ident_is_op_ident(ident)) {
+			ASSERT_TRUE(pkey = xmlNewTextChild(node, NULL, (xmlChar*)"private-key", (xmlChar*)""), err);
+			xmlSetProp(pkey, (xmlChar*)"src", (xmlChar*)"op");
+		} else {
+#endif
+			ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+			ASSERT_TRUE(PEM_write_bio_RSAPrivateKey(bio, ident->private_key, NULL, NULL, 0, NULL, NULL), err);
+			ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+			tmp[bufsize] = 0;
+			ASSERT_TRUE(pkey = xmlNewTextChild(node, NULL, (xmlChar*)"private-key", (xmlChar*)tmp), err);
+			BIO_free(bio);
+			bio = NULL;
+#ifdef CONFIG_OP_ENABLED
+		}
 		
-		BIO_free(bio);
-		bio = NULL;
-		
-		ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
-		ASSERT_TRUE(PEM_write_bio_X509(bio, ident->cert), err);
-		ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
- 		tmp[bufsize] = 0;
-		ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"certificate", (xmlChar*)tmp), err);
+		if (ident_is_op_verify(ident))
+			xmlSetProp(pkey, (xmlChar*)"verify", (xmlChar*)"op");
+#endif		
 
-		BIO_free(bio);
-		bio = NULL;
+		if (!ident_is_self_signed(ident)) {
+			ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+			ASSERT_TRUE(PEM_write_bio_X509(bio, ident->cert), err);
+			ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+			tmp[bufsize] = 0;
+			ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"certificate", (xmlChar*)tmp), err);
+			
+			BIO_free(bio);
+			bio = NULL;
+		}
 		
 		/* save buddy list */
 		if (ship_list_first(ident->buddy_list)) {
@@ -1163,7 +1239,10 @@ ident_data_print_idents(ship_list_t* idents)
 	USER_PRINT("List of identities (%d total):\n", ship_list_length(idents));
 	for (ptr = 0; (ident = (ident_t*)ship_list_next(idents, &ptr));) {
 		USER_PRINT("\t%s <%s>:\n", ident->username, ident->sip_aor);
-		ident_data_print_cert("\t\t", ident->cert);
+		if (ident_is_self_signed(ident))
+			USER_PRINT("\t\tIdentity is self-signed");
+		else
+			ident_data_print_cert("\t\t", ident->cert);
 		USER_PRINT("\n");
 	}
 }
@@ -1198,6 +1277,31 @@ ident_data_x509_check_signature(X509 *cert, X509 *ca)
 	return ret;
 }
 
+char *
+ident_data_get_pkey_base64(X509 *cert)
+{
+	EVP_PKEY *pkey = NULL;
+	BIO *bio = NULL;
+	char *ret = 0, *tmp = 0;
+	int bufsize = 0;
+	
+	/* get key into public_key */
+	ASSERT_TRUE(pkey = X509_get_pubkey(cert), err);
+
+	/* transform the key to base64.. */
+	ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+	ASSERT_TRUE(PEM_write_bio_PUBKEY(bio, pkey), err);
+	ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+	tmp[bufsize] = 0;
+
+	LOG_DEBUG("got pkey '%s'\n", tmp);
+	ret = ship_encode_base64(tmp, bufsize);
+ err:
+	if (bio) BIO_free(bio);
+	if (pkey) EVP_PKEY_free(pkey);
+	return ret;
+}
+
 /************************* json data handling *****************************/
 
 
@@ -1208,8 +1312,7 @@ ident_data_dump_identities_json(ship_list_t *identities, char **msg)
 	void *ptr = 0;
 	char *buf = 0;
 	int buflen = 0, datalen = 0;
-	char *tmp = 0;
-	char *s1 = 0, *s2 = 0;
+	char *tmp = 0, *tmp2 = 0, *service_str = 0;
 	
 	ASSERT_TRUE(def = ident_get_default_ident(), err);
 	ship_unlock(def);
@@ -1218,18 +1321,49 @@ ident_data_dump_identities_json(ship_list_t *identities, char **msg)
 	ship_lock(identities);
 	while ((ident = ship_list_next(identities, &ptr))) {
 		int len;
-		addr_t *reg = 0;
+		ident_service_t *s;
+		void *ptr2 = 0;
+		
 		ship_lock(ident);
+
+		freez(service_str);
+		freez(tmp);
+		freez(tmp2);
+		while ((s = ship_ht_next(ident->services, &ptr2))) {
+			freez(tmp2);
+			freez(tmp);
+			ident_addr_addr_to_str(&s->contact_addr, &tmp2);
+			ASSERT_TRUE(tmp = mallocz(64 + zstrlen(tmp2)), err);
+			sprintf(tmp, "\"%s,%d,%u,%d,%s\", ",
+				s->service_handler_id,
+				s->service_type, (unsigned int)s->reg_time, s->expire, tmp2);
+			ASSERT_ZERO(append_str2(&service_str, tmp), err);
+		}
+		ASSERT_ZERO(append_str2(&service_str, "\"\""), err);
+
 		len = strlen(ident->sip_aor) + 128;
-		if ((s1 = ident_get_status(ident->sip_aor)))
-			s2 = ship_urlencode(s1);
+		freez(tmp2);
+		freez(tmp);
+		if ((tmp = ident_get_status(ident->sip_aor)))
+			tmp2 = ship_urlencode(tmp);
 		
-		/* todo: write better, show all services which the identity has registered .. */
-		//if (ident->lis) reg = &(ident->lis->addr);
 		if (ident->username) len += strlen(ident->username);
-		if (s2) len += strlen(s2);
-		//len += strlen(ident->contact_addr.addr);
+		if (tmp2) len += strlen(tmp2);
+		if (service_str) len += strlen(service_str);
 		
+		freez(tmp);
+		ASSERT_TRUE(tmp = mallocz(len), err);
+		sprintf(tmp, "     \"%s\" : [ \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", [ %s ] ],\n",
+			ident->sip_aor, 
+			(ident->username? ident->username:""),
+			(ident_registration_timeleft(ident)? "online" : "offline"),
+			ident_modif_state_str(ident->modified),
+			(tmp2? tmp2:""),
+			(ident == def? "default": ""),
+			(service_str? service_str: ""));
+		
+
+		/* old format
 		ASSERT_TRUE(tmp = mallocz(len), err);
 		sprintf(tmp, "     \"%s\" : [ \"%s\", \"%d\", \"%s\", \"%s:%d\", \"%s:%d\", \"%s\", \"%s\", \"%s\" ],\n",
 			ident->sip_aor, 
@@ -1237,13 +1371,13 @@ ident_data_dump_identities_json(ship_list_t *identities, char **msg)
 			(ident_registration_timeleft(ident)? "online" : "offline"),
 			"", //ident->contact_addr.addr, 
 			0, //ident->contact_addr.port,
-			(reg? reg->addr:""), (reg? reg->port:0), 
+			"127.0.0.1", 0,
 			ident_modif_state_str(ident->modified),
 			(s2? s2:""),
 			(ident == def? "default": ""));
-		
+		*/
+
 		ASSERT_TRUE(buf = append_str(tmp, buf, &buflen, &datalen), err);
-		freez(tmp);
 		ship_unlock(ident);
 		ident = 0;
 	}
@@ -1258,8 +1392,8 @@ ident_data_dump_identities_json(ship_list_t *identities, char **msg)
 	ship_unlock(identities);
 	freez(buf);
 	freez(tmp);
-	freez(s2);
-	freez(s1);
+	freez(tmp2);
+	freez(service_str);
 }
 
 void
