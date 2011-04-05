@@ -171,17 +171,17 @@ err:
 	return 0;
 }
 
-unsigned char*
-ship_hmac_sha1_base64(char *key, char* secret)
+char *
+ship_hmac_sha1_base64(const char *key, const char* secret)
 {
 	int klen = 0;
 	unsigned char *hmac_key = NULL;
-	unsigned char *hmac_key64 = NULL;
+	char *hmac_key64 = NULL;
 	
 	/* hmac key and shared secret */
 	ASSERT_TRUE((hmac_key = mallocz(SHA_DIGEST_LENGTH * sizeof(unsigned char) + 1)), err);
 	ASSERT_TRUE(HMAC(EVP_sha1(), secret, strlen(secret), (unsigned char*)key, strlen(key), hmac_key, (unsigned int*)&klen), err);
-	hmac_key64 = (unsigned char*)ship_encode_base64((char*)hmac_key, klen);
+	hmac_key64 = ship_encode_base64((char*)hmac_key, klen);
  err:
 	freez(hmac_key);
 	return hmac_key64;
@@ -384,7 +384,7 @@ ship_create_private_key()
 
 /* creates a self-signed certificate for a key */
 X509 *
-ship_sign(char *subject, int ttl, RSA* signer_key)
+ship_create_selfsigned_cert(char *subject, int ttl, RSA* signer_key)
 {
 	X509 *x = 0, *ret = 0;
 	X509_NAME *tmp = 0;
@@ -454,5 +454,20 @@ ship_cmp_pubkey(X509 *cert, X509 *cert2)
  err:
 	freez(k1);
 	freez(k2);
+	return ret;
+}
+
+/* op only? */
+X509 *
+ship_parse_cert(char *subject)
+{
+	BIO *bio_cert = NULL;
+	X509 *ret = 0;
+
+	ASSERT_TRUE(bio_cert = BIO_new(BIO_s_mem()), err);
+	ASSERT_TRUE(BIO_puts(bio_cert, subject) > 0, err);
+	ASSERT_TRUE(ret = PEM_read_bio_X509(bio_cert, NULL, NULL, NULL), err);
+ err:
+	if (bio_cert) BIO_free(bio_cert);
 	return ret;
 }
