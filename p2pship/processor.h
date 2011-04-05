@@ -66,6 +66,10 @@ struct processor_task_s
 
 	unsigned long created;
 	int timeout;
+
+	/* start, end of processing */
+	time_t processing_start;
+	time_t processing_done;
 	
 	/* the waited for object */
         processor_task_t *wait_for;
@@ -150,6 +154,8 @@ processor_task_t *processor_tasks_add_timed(int (*func) (void *data, processor_t
 					    void *data, void (*callback) (void *qt, int code),
 					    int secs);
 
+void processor_check_progress();
+
 /* processor_task_t *processor_tasks_add_timed(void (*callback) (void *qt, int code), */
 /* 					    void *data, int secs); */
 processor_task_t *processor_create_wait();
@@ -171,7 +177,7 @@ int processor_to(void *thread_id,
 		 int timeout_ms);
 
 void processor_run_async(void (*func)(void));
-int processor_tasks_add_periodic(int (*func) (void), int period);
+int processor_tasks_add_periodic(int (*func) (void*), void *data, int period);
 void processor_kill_workers(const char *type);
 int processor_create_worker(const char *type, void (*func)(processor_worker_t*), void *data,
 			    void (*kill_func)(processor_worker_t*));
