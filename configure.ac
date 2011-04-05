@@ -1,10 +1,10 @@
 #
 # 
 
-AC_INIT([p2pship], [1.2], [bugs-p2pship@hiit.fi])
+AC_INIT([p2pship], [2.0], [bugs-p2pship@hiit.fi])
 AC_PREREQ(2.59)
 AC_CONFIG_SRCDIR([p2pship/main.c])
-AM_INIT_AUTOMAKE([p2pship], [1.2])
+AM_INIT_AUTOMAKE([p2pship], [2.0])
 
 # we are programming in c
 AC_PROG_CC
@@ -12,6 +12,8 @@ AC_PROG_INSTALL
 AC_PROG_CXX
 AC_PROG_LIBTOOL
 
+# outscope pkg-config
+PKG_PROG_PKG_CONFIG
 
 
 # check for hipl headers .. 
@@ -35,6 +37,19 @@ if test x"$ac_cv_use_python" = x"yes"; then
         AC_DEFINE(CONFIG_PYTHON_ENABLED, [1], [Use Python extensions])
 fi
 AM_CONDITIONAL(PYTHON_ENABLED, test x"$ac_cv_use_python" = x"yes")
+
+# op
+AC_ARG_ENABLE(op,
+             AC_HELP_STRING([--enable-op],
+                            [Enable OP daemon support (default is NO)]),
+             [ac_cv_use_op=$enableval], [ac_cv_use_op=no])
+AC_CACHE_CHECK([whether to use op],
+               [ac_cv_use_op], [ac_cv_use_op=no])
+if test x"$ac_cv_use_op" = x"yes"; then
+   AC_CHECK_LIB([opconn],[opconn_init],,AC_MSG_ERROR([This application needs the opconn library]),[])
+   AC_DEFINE(CONFIG_OP_ENABLED, [1], [Support OP personas])
+fi
+AM_CONDITIONAL(OP_ENABLED, test x"$ac_cv_use_op" = x"yes")
 
 # hip
 AC_ARG_ENABLE(hip,
@@ -307,7 +322,7 @@ AC_ARG_ENABLE(gtk,
              [ac_cv_use_gtk=$enableval], [ac_cv_use_gtk=no])
 AC_CACHE_CHECK([whether to enable gtk mainloop],
                [ac_cv_use_gtk], [ac_cv_use_gtk=yes])
-if test x"$ac_cv_use_gtk" = x"yes"; then
+AS_IF([test x"$ac_cv_use_gtk" = "xyes"], [
         AC_DEFINE(CONFIG_START_GTK, [1], [Startup the GTK signal system])
 	PKG_CHECK_MODULES(GTK, gtk+-2.0 >= 2.10.0)
 
@@ -315,7 +330,7 @@ if test x"$ac_cv_use_gtk" = x"yes"; then
 	AC_SUBST(GTL_LIBS)
 	CFLAGS="$CFLAGS $GTK_CFLAGS"
 	LIBS="$LIBS $GTK_LIBS"
-fi
+])
 AM_CONDITIONAL(GTK_ENABLED, test x"$ac_cv_use_gtk" = x"yes")
 
 
@@ -350,7 +365,6 @@ fi
 
 
 # pkg-based checks
-PKG_PROG_PKG_CONFIG
 PKG_CHECK_MODULES(DEPS, libxml-2.0 >= 1.0.0 openssl >= 0.9.6)
 #PKG_CHECK_MODULES(DEPS, glib-2.0 >= 1.0.0 libxml-2.0 >= 1.0.0 openssl >= 0.9.6)
 
