@@ -37,14 +37,21 @@ typedef RSA olclient_verifier_t;
 #define VERIFY_SIGNER 1
 #define VERIFY_INTERNAL_SIGNER 2
 
+/* callbacks */
+typedef void (*olclient_get_cb) (char *key, char *data, char *signer, void *param, int status);
+
 struct olclient_module;
 
+/* struct describing how to process data received from the overlay */
 typedef struct olclient_extra_s
 { 
+	/* encrypted w/symmetric key */
 	char *cipher_secret;
-
+	
+	/* encrypted for this (private) key */
 	olclient_verifier_t *receiver;
 
+	/* signed by this (public) key */
 	olclient_signer_t *signer;
 	
 	/* flags for how this should be verified */
@@ -59,15 +66,24 @@ typedef struct olclient_lookup_s
         char *key;
         void *param;
         olclient_extra_t *extra;
-        void (*callback) (char *, char *, char *, void *, int);
+        olclient_get_cb callback;
 	int status;
 
 	/* this is where the signer's AOR will be stored after its
 	   been verified .. */
 	char *signer_aor;
 
+	/* the to-be-reported results */
 	ship_list_t *results;
+
+	/* a cache of previous results, to prevent duplicate responses */
+	ship_list_t *cache;
+
+	/* the individual lookup tasks */
 	ship_obj_list_t *tasks;
+
+	/* whether this is a ordinary get or a subscribe */
+	int is_subscribe;
 
 } olclient_lookup_t;
 
@@ -77,7 +93,7 @@ typedef struct olclient_get_task_s olclient_get_task_t;
 struct olclient_get_task_s {
 	ship_obj_t parent;
 
-	void (*callback) (char *val, int status, olclient_get_task_t *task); //olclient_lookup_t *lookup, struct olclient_module* mod);
+	void (*callback) (char *val, int status, olclient_get_task_t *task);
 	olclient_lookup_t *lookup;
 	struct olclient_module* mod;
 	char *id;
@@ -109,8 +125,14 @@ struct olclient_module {
 	int (*put) (char *key, char *data, int timeout, char *secret, int cached, struct olclient_module* mod);
 	int (*get) (char *key, olclient_get_task_t *task);
 	int (*remove) (char *key, char* secret, struct olclient_module* mod);
+
 	int (*put_signed) (char *key, char *data, ident_t *signer, int timeout, char *secret, int cached, struct olclient_module* mod);
 	int (*get_signed) (char *key, olclient_signer_t *signer, olclient_get_task_t *task);
+
+	int (*subscribe) (char *key, olclient_get_task_t *task);
+	int (*subscribe_signed) (char *key, olclient_signer_t *signer, olclient_get_task_t *task);
+	int (*unsubscribe) (char *key, olclient_get_task_t *task);
+
 	void (*close) (struct olclient_module* mod);
 
 	/* the name for the module */
@@ -136,59 +158,73 @@ struct olclient_module* olclient_module_new(const struct olclient_module mod, co
 void olclient_module_free(struct olclient_module* mod);
 
 /* overlay funcs */
-int olclient_remove(char *key, char* secret);
+int olclient_remove(const char *key, const char* secret);
+int olclient_remove_with_secret(const char *key, const char *shared_secret, const char* secret);
 
 /*
  * The puts
  */
 
 /* normal put */
-int olclient_put(char *key, char *data, int timeout, char *secret);
+int olclient_put(const char *key, const char *data, const int timeout, const char *secret);
+int olclient_put_cached(const char *key, const char *data, const int timeout, const char *secret);
 /* immut - cannot change afterwards */
-int olclient_put_immute(char *key, char *data, int timeout);
+int olclient_put_immute(const char *key, const char *data, const int timeout);
 /* sign & put */
-int olclient_put_signed(char *key, char *data, ident_t *local_user, int timeout, char *secret);
+int olclient_put_signed(const char *key, const char *data, ident_t *local_user, const int timeout, const char *secret);
 /* sign & put, include your cert in the package! */
-int olclient_put_signed_cert(char *key, char *data, ident_t *local_user, int timeout, char *secret);
+int olclient_put_signed_cert(const char *key, const char *data, ident_t *local_user, const int timeout, const char *secret);
 /* put, encrypt with secret */
-int olclient_put_with_secret(char *key, char *data, char *cipher_secret, int timeout, char *secret);
+int olclient_put_with_secret(const char *key, const char *data, const char *cipher_secret, const int timeout, const char *secret);
 /* put, encrypt with public key */
-int olclient_put_for_someone(char *key, char *data, buddy_t *receiver, int timeout, char *secret);
+int olclient_put_for_someone(const char *key, const char *data, buddy_t *receiver, const int timeout, const char *secret);
 /* sign, encrypt with public key, put */
-int olclient_put_signed_for_someone(char *key, char *data, ident_t *signer, buddy_t *receiver, 
-				    char *shared_secret, int timeout, char *secret);
+int olclient_put_signed_for_someone(const char *key, const char *data, ident_t *signer, buddy_t *receiver, 
+				    const char *shared_secret, const int timeout, const char *secret);
 /* sign, encrypt & use secret to scramble key */
-int olclient_put_anonymous_signed_for_someone(char *key, char *data, ident_t *signer, buddy_t *receiver, 
-					      char *shared_secret, int timeout, char *secret);
-int olclient_put_anonymous_signed_for_someone_with_secret(char *key, char *data, ident_t *signer, buddy_t *receiver, 
-							  char *shared_secret, int timeout, char *secret);
-int olclient_get_anonymous_signed_for_someone_with_secret(char *key, buddy_t *signer, 
-							  ident_t *receiver, char *shared_secret,
-							  void *param, 
-							  void (*callback) (char *key, char *data, 
-									    char *signer, void *param, 
-									    int status));
+int olclient_put_anonymous_signed_for_someone_with_secret(const char *key, const char *data, ident_t *signer, buddy_t *receiver, 
+							  const char *shared_secret, const int timeout, const char *secret);
 
 /*
- * The gets
+ * The gets and publish
  */
 
-int olclient_get(char *key, void *param, void (*callback) (char *key, char *data, char *signer, void *param, int status));
-int olclient_get_signed(char *key, buddy_t *signer, void *param,
-			void (*callback) (char *key, char *data, char *signer, void *param, int status));	
+int olclient_getsub(const char *key, void *param, olclient_get_cb callback, const int subscribe);
+int olclient_getsub_signed(const char *key, buddy_t *signer, void *param,
+			olclient_get_cb callback, const int subscribe);
 /* this is gets for signed_cert-type packages */
-int olclient_get_signed_trusted(char *key, void *param, 
-				void (*callback) (char *key, char *data, char *signer, void *param, int status));	
-int olclient_get_with_secret(char *key, char *cipher_secret, void *param, 
-			     void (*callback) (char *key, char *data, char *signer, void *param, int status));
-int olclient_get_for_someone(char *key, ident_t *receiver, void *param, 
-			     void (*callback) (char *key, char *data, char *signer, void *param, int status));
-int olclient_get_signed_for_someone(char *key, buddy_t *signer, ident_t *receiver, char *shared_secret, void *param, 
-				    void (*callback) (char *key, char *data, char *signer, void *param, int status));
-int olclient_get_anonymous_signed_for_someone(char *key, buddy_t *signer, ident_t *receiver, char *shared_secret, void *param, 
-					      void (*callback) (char *key, char *data, char *signer, void *param, int status));
-
+int olclient_getsub_signed_trusted(const char *key, void *param, 
+				   olclient_get_cb callback, const int subscribe);
+int olclient_getsub_with_secret(const char *key, const char *cipher_secret, void *param, 
+				olclient_get_cb callback, const int subscribe);
+int olclient_getsub_for_someone(const char *key, ident_t *receiver, void *param, 
+				olclient_get_cb callback, const int subscribe);
+int olclient_getsub_signed_for_someone(const char *key, buddy_t *signer, ident_t *receiver, const char *shared_secret, void *param, 
+				       olclient_get_cb callback, const int subscribe);
+int olclient_getsub_anonymous_signed_for_someone_with_secret(const char *key, buddy_t *signer, 
+							     ident_t *receiver, const char *shared_secret,
+							     void *param, olclient_get_cb callback, const int subscribe);
 void olclient_cb_state_change(struct olclient_module* module, int status, char *info);
+
+/* macros */
+#define olclient_get(key, param, callback) olclient_getsub(key, param, callback, 0)
+#define olclient_get_signed(key, signer, param, callback) olclient_getsub_signed(key, signer, param, callback, 0)
+#define olclient_get_signed_trusted(key, param, callback) olclient_getsub_signed_trusted(key, param, callback, 0)
+#define olclient_get_with_secret(key, shared_secret, param, callback) olclient_getsub_with_secret(key, shared_secret, param, callback, 0)
+#define olclient_get_for_someone(key, receiver, param, callback) olclient_getsub_for_someone(key, receiver, param, callback, 0)
+#define olclient_get_signed_for_someone(key, signer, receiver, shared_secret, param, callback) olclient_getsub_signed_for_someone(key, signer, receiver, shared_secret, param, callback, 0)
+#define olclient_get_anonymous_signed_for_someone_with_secret(key, signer, receiver, shared_secret, param, callback) olclient_getsub_anonymous_signed_for_someone_with_secret(key, signer, receiver, shared_secret, param, callback, 0)
+
+#define olclient_subscribe(key, param, callback) olclient_getsub(key, param, callback, 1)
+#define olclient_subscribe_signed(key, signer, param, callback) olclient_getsub_signed(key, signer, param, callback, 1)
+#define olclient_subscribe_signed_trusted(key, param, callback) olclient_getsub_signed_trusted(key, param, callback, 1)
+#define olclient_subscribe_with_secret(key, shared_secret, param, callback) olclient_getsub_with_secret(key, shared_secret, param, callback, 1)
+#define olclient_subscribe_for_someone(key, receiver, param, callback) olclient_getsub_for_someone(key, receiver, param, callback, 1)
+#define olclient_subscribe_signed_for_someone(key, signer, receiver, shared_secret, param, callback) olclient_getsub_signed_for_someone(key, signer, receiver, shared_secret, param, callback, 1)
+#define olclient_subscribe_anonymous_signed_for_someone_with_secret(key, signer, receiver, shared_secret, param, callback) olclient_getsub_anonymous_signed_for_someone_with_secret(key, signer, receiver, shared_secret, param, callback, 1)
+
+void olclient_unsubscribe(const char *key, void *param, olclient_get_cb callback);
+
 
 /* 
  * the storage funcs 
