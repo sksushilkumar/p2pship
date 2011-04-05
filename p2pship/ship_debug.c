@@ -17,6 +17,7 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
 #include "ship_debug.h"
+//#include "processor.h"
 #include <unistd.h>
 
 /* default log level */
@@ -121,6 +122,7 @@ debug2_run(void *data)
 			}
 		}
 		_ship_unlock(debug2_threads);
+		//processor_check_progress();
 		sleep(3);
 	}
 	return 0;
