@@ -1,5 +1,9 @@
 #summary News
 
+*31 Mar 2011 / jookos*
+
+We have finally got through the features we wanted for the next release and are glad to announce version 2.0.  New features include publish-subscribe support and presence for SIP, as well as a ton of improvements.  Available from the repository, pre-compiled packages coming soon!
+
 *30 Dec 2010 / jookos*
 
 Seasons greetings! Have during this month commited the first version of the [Multiparty multiparty] conferencing system (based on PRE) as well as more extensive [SPAM spit/spam] mechanisms.
