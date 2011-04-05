@@ -174,22 +174,39 @@ processor_run_async(void (*func)(void))
 static int
 processor_tasks_run_periodic(void *data, processor_task_t **wait, int wait_for_code)
 {
-	int (*func) (void) = data;
-	if (func())
+	int (*func) (void*) = 0;
+	void *fdata = 0;
+	
+	ship_unpack_keep(data, &func, &fdata);
+	if (func(fdata))
 		return 0;
 	else
 		return 1;
 }
 
+static void
+processor_tasks_run_periodic_done(void *qt, int code)
+{
+	ship_pack_free(qt);
+}
+
 int
-processor_tasks_add_periodic(int (*func) (void), int period)
+processor_tasks_add_periodic(int (*func) (void*), void *data, int period)
 {
 	int ret = -1;
+	void *pack = NULL;
 	processor_task_t *task = 0;
+
+	if (period < 1000) {
+		LOG_WARN("An unusually rapid periodic task detected (period: %d ms)\n", period);
+	}
+	ASSERT_TRUE(pack = ship_pack("pp", func, data), err);
 	ASSERT_TRUE(task = processor_tasks_add_timed(processor_tasks_run_periodic,
-						     func, NULL, period), err);
+						     pack, processor_tasks_run_periodic_done, period), err);
 	ret = 0;
+	pack = NULL;
  err:
+	ship_pack_free(pack);
 	return ret;
 }
 
@@ -603,6 +620,27 @@ processor_close()
         LOG_DEBUG("closed\n");
 }
 
+/* for debugging */
+void
+processor_check_progress()
+{
+	void *ptr = 0;
+	processor_task_t *qt = 0;
+	time_t now;
+
+	if (!being_processed_tasks)
+		return;
+
+	now = time(&now);
+	while ((qt = ship_list_next(being_processed_tasks, &ptr))) {
+		if ((qt->processing_done < qt->processing_start) &&
+		    (now - qt->processing_start) > 10) {
+			USER_PRINT("*** Task %08x has been processing for %d seconds!\n",
+				   (unsigned long)qt, (now - qt->processing_start));
+		}
+	}
+}
+
 static void
 processor_thread_run(processor_worker_t* data)
 {
@@ -673,14 +711,18 @@ processor_thread_run(processor_worker_t* data)
 			ship_unlock(completed_tasks);
 				
                         LOG_VDEBUG("processing an event...\n");
+			time(&qt->processing_start);
+			ship_wait("Processing task");
                         if (qt->func)
                                 qt->status_code = qt->func(qt->data, &(qt->wait_for), qt->wait_for_code);
-			
+			ship_complete();
+			time(&qt->processing_done);
 			/* debugging: check that we do not have any restricts any more!
 			   ..that would mean an un-released lock */
 			ship_check_restricts();
 			
-                        LOG_VDEBUG("event processed with return value %d\n", qt->status_code);
+                        LOG_VDEBUG("event processed in %ul sec. with return value %d\n", (qt->processing_done - qt->processing_start),
+											  qt->status_code);
                         if (qt->status_code == 1) {
 				processor_task_t *tqt = 0;
 				
