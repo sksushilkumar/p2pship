@@ -77,8 +77,12 @@ td {
   padding: 0 10px 0 0;
 }
 
-td.thead {  
+th {  
   font-weight: bold;
+  font-family: arial, helvetica, sans-serif; 
+  font-size: 14px;
+  padding: 0 10px 0 0;
+  text-align: left;
 }
 
 .online {

@@ -167,6 +167,26 @@ function add_input(formname, elmname, elmvalue)
     form.appendChild(inp);
 }
 
+function add_td(tr, content) 
+{
+	td = document.createElement("td");
+	tr.appendChild(td);
+	td.innerHTML = content;
+	return td;
+}
+
+function d2(i) {
+        if (i < 10)
+                return "0" + i;
+        return i;
+}
+
+function format_time(time) {
+  var mons = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec' ];
+  d = new Date(time*1000);
+  return d.getDate() + " " + mons[d.getMonth()] + " " + d.getFullYear() +  " " + d2(d.getHours()) + ":" + d2(d.getMinutes());
+}
+
 /* finishes the initialization after the config has been loaded */
 function initpage2() {
 
@@ -278,49 +298,55 @@ function initpage2() {
         var i;
         for (sip in p2pship_idents) {
             var tr = document.createElement("tr");
-            var td = document.createElement("td");
-            tr.appendChild(td);
-            if (p2pship_idents[sip][5] != "") {
-                td.innerHTML = "<b>" + sip + "</b>";
-            } else {
-                td.innerHTML = sip;
-            }
-            td = document.createElement("td");
-            tr.appendChild(td);
-            td.innerHTML = p2pship_idents[sip][0];
-            td = document.createElement("td");
-            tr.appendChild(td);
-            if (p2pship_idents[sip][2] == "online") {
-                td.innerHTML = "<font class=online>" + p2pship_idents[sip][2] + "</font>" +
-                    " (" + p2pship_idents[sip][3] + " using proxy " + p2pship_idents[sip][4] + ")";
-            } else {
-                td.innerHTML = "<font class=offline>" + p2pship_idents[sip][2] + "</font>";
-            }
-            td = document.createElement("td");
-            tr.appendChild(td);
+	    add_td(tr, (p2pship_idents[sip][4] != ""? 
+			"<b>" + sip + "</b>":
+			sip));
+	    
+	    /* name */
+	    add_td(tr, p2pship_idents[sip][0]);
 
-            if (p2pship_idents[sip][5] != "deleted") {
-                td.innerHTML = ""
-                    + "<form method=\"post\" action=\"" + get_host_http_prefix() + "/post/remove_ident\" "+ "id=\"ident_remove_" + sip + "\">" 
-                    + "<input type=\"hidden\" name=\"sip_aor\" value=\""+sip+"\">"
-                    + "<input type=\"button\" value=\"Remove\" onClick=\"submit_reload('ident_remove_" + sip + "');\">"
-                    + "</form>"
-                    ;
-            } else {
-                td.innerHTML = "<font color='red'>removed</font>";
-            }
-            td = document.createElement("td");
-            tr.appendChild(td);
-            td.innerHTML = ""
-                    + "<form method=\"post\" action=\"" + get_host_http_prefix() + "/post/set_status\" "+ "id=\"ident_status_" + sip + "\">" 
-                    + "<input type=\"hidden\" name=\"sip_aor\" value=\""+sip+"\">"
-                    + "<input type=\"text\" name=\"status\" value=\""+urldecode(p2pship_idents[sip][6])+"\">&nbsp;"
-                    + "<input type=\"button\" value=\"Set status\" onClick=\"submit_reload('ident_status_" + sip + "');\">"
-                    + "</form>";
-            td = document.createElement("td");
-            tr.appendChild(td);
-            td.innerHTML = urldecode(p2pship_idents[sip][7]);
-            
+	    /* online? */
+	    add_td(tr, (p2pship_idents[sip][1] == "online"? 
+			"<font class=online>" + p2pship_idents[sip][1] + "</font>":
+			"<font class=offline>" + p2pship_idents[sip][1] + "</font>"));
+
+	    /* deleted etc? */
+            add_td(tr, (p2pship_idents[sip][2] != "deleted"? 
+			"<form method=\"post\" action=\"" + get_host_http_prefix() + "/post/remove_ident\" "+ "id=\"ident_remove_" + sip + "\">" 
+			+ "<input type=\"hidden\" name=\"sip_aor\" value=\""+sip+"\">"
+			+ "<input type=\"button\" value=\"Remove\" onClick=\"submit_reload('ident_remove_" + sip + "');\">"
+			+ "</form>":
+			"<font color='red'>removed</font>"));
+
+	    /* status etc */
+            add_td(tr, "<form method=\"post\" action=\"" + get_host_http_prefix() + "/post/set_status\" "+ "id=\"ident_status_" + sip + "\">" 
+		   + "<input type=\"hidden\" name=\"sip_aor\" value=\""+sip+"\">"
+		   + "<input type=\"text\" name=\"status\" value=\""+urldecode(p2pship_idents[sip][3])+"\">&nbsp;"
+		   + "<input type=\"button\" value=\"Set status\" onClick=\"submit_reload('ident_status_" + sip + "');\">"
+		   + "</form>");
+
+	    /* default? */
+	    add_td(tr, urldecode(p2pship_idents[sip][4]));
+            table.appendChild(tr);
+	    
+            tr = document.createElement("tr");
+	    add_td(tr, "");
+
+	    var sstr = "<table><tbody>";
+	    //sstr += "<tr><th>Service<th>Registered<th>Contact</tr>";
+	    for (service in p2pship_idents[sip][5]) {
+		    var selm = p2pship_idents[sip][5][service].split(',');
+		    if (selm.length == 5) {
+			    selm[1] = parseInt(selm[1]);
+			    sstr += "<tr><td>" + selm[0] + " (" + selm[1] + ":" + ((selm[1] >> 16) & 0xffff) + "/" + (selm[1] & 0xffff) + ")</td>";
+			    sstr += "<td>" + format_time(selm[2]) + " for " + (selm[3] < 0? "forever":selm[3]+"s") + "</td>";
+			    sstr += "<td>" + selm[4] + "</td></tr>";
+		    }
+	    }
+	    sstr += "</tbody></table>";
+	    var td = add_td(tr, sstr);
+	    td.colSpan = "5";
+	    
             table.appendChild(tr);
         }
 
