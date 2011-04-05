@@ -88,7 +88,11 @@ typedef struct call_log_entry_s {
 	time_t last_seen;
 	time_t started;
 
+	/* whether we have seen any responses to this yet */
+	int response_got;
+
 } call_log_entry_t;
+
 
 /* a struct describing a gateway to use for outgoing traffic */
 typedef struct sipp_gateway_s {
@@ -111,6 +115,12 @@ typedef struct sipp_relay_s {
 	addr_t relay_addr; /* the address where to relay the packets */
 } sipp_relay_t;
 
+/* op things */
+#ifdef CONFIG_OP_ENABLED
+#define CREATE_OP_REPORT(var, type, activity, trust, association, reflection) { 	\
+		var = "app=p2pship;type="type";activity="activity";trust="trust";association="association";reflection="reflection";"; }
+#else
+#define CREATE_OP_REPORT(var, type, activity, trust, association, reflection) { /* void */ }
 #endif
 
 int sipp_buddy_handle_subscribe(ident_t *from, char *to, int expire, char *callid);
@@ -124,9 +134,19 @@ int sipp_buddy_handle_subscribes(ident_t *from, char **to, int expire, char *cal
 typedef int (*sipp_client_handler) (ident_t *ident, const char *remote_aor, addr_t *contact_addr, char **buf, int *len,
 				    void *data);
 
-int sipp_register_client_handler(sipp_client_handler handler, void *data);
-void sipp_unregister_client_handler(sipp_client_handler handler, void *data);
-int sipp_handle_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr);
+typedef int (*sipp_request_handler) (ident_t *ident, const char *local_aor, const char *remote_aor,
+				     sipp_request_t *req, char *buf, int len,
+				     int *response_code, void *data);
 
+int sipp_register_hook(sipp_client_handler handler, 
+		       sipp_request_handler req_handler,
+		       void *data);
+void sipp_unregister_client_handler(sipp_client_handler handler, 
+				    sipp_request_handler req_handler,
+				    void *data);
+int sipp_handle_local_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr, const int filter);
+int sipp_handle_remote_message(char *msg, int msglen, ident_t *ident, char *remote_aor, const int filter);
+void sipp_get_addr_to_ua_or_default(ident_t *ident, addr_t *addr);
 
+#endif
 #endif
