@@ -104,7 +104,6 @@ static int sipp_check_and_mark(osip_message_t *sip, char *prefix, int code);
 static int sipp_receive_remote_message(char *msg, int msglen, ident_t *ident, char *sip_aor, service_type_t service);
 static void sipp_call_log_record(char *local_aor, char *remote_aor, osip_event_t *evt, int verdict, int remote1);
 static char *sipp_real_aor(char *aor);
-//static char *sipp_aor_group_code(char *aor);
 static int sipp_run_postprocessors(ident_t *ident, const char *local_aor, const char *remote_aor, 
 				   sipp_request_t *req, int *respcode);
 
@@ -1553,24 +1552,6 @@ sipp_real_aor(char *aor)
 	}
 	return aor;
 }
-
-/* extracts the group code from a sip aor */
-/*
-static char *
-sipp_aor_group_code(char *aor)
-{
-	char *p1, *p2;
-	if (!aor)
-		return aor;
-	
-	p1 = p2 = aor;
-	while ((*p1) && (*p1 != '+')) p1++;
-	p1++;
-	while ((*p1) && (*p1 != '@')) *(p2++) = *(p1++);
-	*p2 = '\0';
-	return aor;
-}
-*/
 
 /* called when an event has been processed by the processor */
 static void
