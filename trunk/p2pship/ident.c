@@ -35,6 +35,8 @@
 #define PP_MSG_ACK 1
 #define PP_MSG_SUGGEST 2
 
+#define IDENT_PUBLISH_INTERVAL (5*60)
+
 ship_obj_list_t *identities = 0;
 static ship_list_t *foreign_idents = 0;
 static ship_list_t *cas = 0;
@@ -54,6 +56,9 @@ static int ident_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *ke
 static int ident_getsub_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
 				  void *param, ident_get_cb callback, const int subscribe);
 static int ident_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, const char *value, const int timeout);
+static int ident_create_new_reg(ident_t *ident);
+static int ident_update_registration_periodic(void *data);
+static time_t ident_regpacket_timeleft(ident_t *ident);
 
 static char *idents_file = 0;
 static char *autoreg_file = 0;
@@ -183,6 +188,7 @@ ident_module_init(processor_config_t *config)
 #endif
 	
 	ASSERT_TRUE(ident_service_handlers = ship_ht_new(), err);
+	ASSERT_ZERO(processor_tasks_add_periodic(ident_update_registration_periodic, NULL, 30 * 1000), err);
 	ret = 0;
  err:
 	return ret;
@@ -960,9 +966,11 @@ ident_update_service_registration(ident_t *ident, service_type_t service_type,
 			/* actually, we dont remove it, because we
 			   need the contact address for sending any
 			   reply to the un-register command! */
-			s->expire = -1;
-			/* ship_ht_remove_int(ident->services, service_type);
-			   ident_service_close(s); */
+			//s->expire = -1;
+
+			/* take that back: remove, as -1 indicates forever registration */
+			ship_ht_remove_int(ident->services, service_type);
+			ident_service_close(s, ident);
 		} else {
 			LOG_WARN("ignoring service removal for %s, service type %u\n", ident->sip_aor, service_type);
 		}
@@ -1074,13 +1082,17 @@ ident_get_regxml(ident_t *ident)
 {
 	char *ret = NULL;
 	ship_lock(ident);
-	if (!ident_create_new_reg(ident))
-		ret = strdup(ident->reg->cached_xml);
+	if (!ident_create_new_reg(ident)) {
+		/* create new xml */
+		ASSERT_ZERO(ident_create_reg_xml(ident->reg, ident, 
+						 &ret), err);
+	}
+ err:
 	ship_unlock(ident);
 	return ret;
 }
 
-int
+static int
 ident_create_new_reg(ident_t *ident)
 {
 	int ret = -1;
@@ -1093,11 +1105,7 @@ ident_create_new_reg(ident_t *ident)
 	
 	/* set the validity and time-of-creation according to the reg */
 	ident->reg->created = time(0);
-	ident->reg->valid = time(0) + ident_registration_timeleft(ident);
-
-	/* create new xml */
-	ASSERT_ZERO(ident_create_reg_xml(ident->reg, ident, 
-					 &(ident->reg->cached_xml)), err);
+	ident->reg->valid = time(0) + ident_regpacket_timeleft(ident);
 	ret = 0;
  err:
 	return ret;
@@ -1139,6 +1147,16 @@ ident_registration_timeleft(ident_t *ident)
 	
 	return timeleft;
 }
+
+static time_t
+ident_regpacket_timeleft(ident_t *ident)
+{
+	time_t ret = ident_registration_timeleft(ident);
+	if (ret > IDENT_PUBLISH_INTERVAL)
+		ret = IDENT_PUBLISH_INTERVAL;
+	return ret;
+}
+
 
 /* registers a service handler. The point with calling this is that
    when saving / loading the state, only the ID of the service_handler
@@ -1207,6 +1225,25 @@ ident_get_service_data(ident_t *ident, service_type_t service_type)
 		return NULL;
 }
 
+static int
+ident_update_registration_periodic(void *data)
+{
+	void *ptr = NULL;
+	ident_t *ident = NULL;
+	time_t now;
+
+	ship_lock(identities);
+	now = time(0);
+	while ((ident = ship_list_next(identities, &ptr))) {
+		if ((now - ident->published) > IDENT_PUBLISH_INTERVAL) {
+			LOG_DEBUG("periodically republishing ident %s\n", ident->sip_aor);
+			ident_update_registration(ident);
+		}
+	}
+	ship_unlock(identities);
+	return 0;
+}
+
 static
 void ident_update_registration_done(void *qt, int code)
 {
@@ -1218,23 +1255,24 @@ ident_update_registration_do(void *data, processor_task_t **wait, int wait_for_c
 {
 	int ret = -1;
 	time_t timeleft;
-	char *aor = data;
+	char *aor = data, *regxml = NULL;
 	ident_t *ident = 0;
 	
 	ASSERT_TRUE(ident = ident_find_by_aor(aor), err);
-	timeleft = ident_registration_timeleft(ident);
+	timeleft = ident_regpacket_timeleft(ident);
 	LOG_INFO("Should update registration for %s\n", ident->sip_aor);
 	
 	if (!timeleft) {
 		ident_remove_for_all_buddies(ident, ident->sip_aor);
 	} else {
-		ASSERT_ZERO(ident_create_new_reg(ident), err);
-		ASSERT_ZERO(ident_put_for_all_buddies(ident, ident->sip_aor, ident->reg->cached_xml, timeleft), err);
+		ASSERT_TRUE(regxml = ident_get_regxml(ident), err);
+		ASSERT_ZERO(ident_put_for_all_buddies(ident, ident->sip_aor, regxml, timeleft), err);
 	}
-			
+	ident->published = time(0);
 	ident_autoreg_save();
 	ret = 0;
 err:
+	freez(regxml);
 	ship_obj_unlockref(ident);
 	return ret;
 	
@@ -1562,6 +1600,22 @@ ident_cert_is_valid(X509 *cert)
 	return ret;
 }
 
+int
+ident_reg_is_valid(reg_package_t *reg)
+{
+	time_t now;
+
+	now = time(0);
+	if (!ignore_cert_validity) {
+		if (!ident_cert_is_valid(reg->cert))
+			return 0;
+		if (((reg->created - TIME_APPROX) <= now) && ((reg->valid + TIME_APPROX) >= now))
+			return 0;
+	} else if ((now - reg->imported) > (reg->valid - reg->created))
+		return 0;
+	return 1;
+}
+
 static int
 ident_cert_is_trusted(X509 *cert)
 {
@@ -1656,7 +1710,7 @@ ident_import_foreign_reg(reg_package_t *reg)
 	ship_lock(foreign_idents);
 	while (import && (r = (reg_package_t *)ship_list_next(foreign_idents, &ptr))) {
 		if (!strcmp(r->sip_aor, reg->sip_aor)) {
-			if (reg->created >= r->created) {
+			if (reg->created > r->created) {
 				ship_lock(r);
 				ship_list_remove(foreign_idents, r);
 				ship_unlock(r);
@@ -1688,7 +1742,9 @@ ident_import_foreign_reg(reg_package_t *reg)
 }
 
 /* 
- * fetches from the cache a foreign reg-package for the given sip aor
+ * fetches from the cache a foreign reg-package for the given sip
+ * aor. Does NOT check validity (trustworthyness is assumed, as it is
+ * checked on import)!
  *
  * @todo This should actually be account-specific (with the privacy things)
  */
@@ -1696,24 +1752,15 @@ reg_package_t *
 ident_find_foreign_reg(char *sip_aor)
 {
         reg_package_t * ret = NULL;
-	time_t start, end, now;
 	void *ptr = NULL;
 	reg_package_t *r;
 	
         ship_lock(foreign_idents);
 	while (!ret && (r = (reg_package_t *)ship_list_next(foreign_idents, &ptr))) {
-		if (!strcmp(r->sip_aor, sip_aor)) {
-			now = time(NULL);				
-			if (ignore_cert_validity ||
-			    ((!ident_data_x509_get_validity(r->cert, &start, &end)) &&
-			     ((start <= (now + TIME_APPROX)) && (end >= (now - TIME_APPROX)))))
-				ret = r;
-			else
-				LOG_WARN("reg info for %s is not valid!! (%d - %d, now %d)\n", sip_aor, start, end, now);
-				
-		}
+		if (!strcmp(r->sip_aor, sip_aor))
+			ret = r;
 	}
-		
+	
 	if (ret) {
 		ship_lock(ret);
 		ship_restrict_locks(ret, foreign_idents);
@@ -1779,6 +1826,8 @@ ident_cb_lookup_registration(char *key, char *buf, char *signer, void *param, in
 	freez(sip_aor);
 }
 
+/* this will initiate an update if the reg packet is marked for 'need
+   update' */
 int
 ident_lookup_registration(ident_t *ident, char *remote_aor, 
 			  reg_package_t **pkg, processor_task_t **wait)
@@ -1792,7 +1841,7 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
 	   update. */
         (*pkg) = ident_find_foreign_reg(remote_aor);
 	/* check whether a transport address is present! */
-        if (!(*pkg) || (*pkg)->need_update || !conn_can_connect_to(*pkg)) {
+        if (!(*pkg) || !ident_reg_is_valid(*pkg) || (*pkg)->need_update || !conn_can_connect_to(*pkg)) {
 		processor_task_t *val = processor_create_wait();
 
 		if (*pkg) {

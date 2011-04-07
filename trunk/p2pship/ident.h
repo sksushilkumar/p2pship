@@ -164,6 +164,9 @@ typedef struct reg_package_s
 	time_t created;
 	time_t valid;
 
+	/* when it was imported */
+	time_t imported;
+
 	X509 *cert;
 
 	/* the name extracted from the cert */
@@ -171,9 +174,6 @@ typedef struct reg_package_s
 
 	/* a small field with some status information */
 	char *status;
-
-	/* cached xml format */
-	char *cached_xml;
 
 	/* mark indicating that although the info can be used, this
 	   really should be updated.. */
@@ -293,6 +293,8 @@ typedef struct ident_s
 	   loaded from file */
 	int modified;
 	
+	/* the last time the registration was published */
+	time_t published;
 }
 ident_t;
 
@@ -339,6 +341,7 @@ int ident_get_ident_struct_memory(ident_t **ident, const char *data);
 
 /* returns the reg xml document as a asciiz */
 char *ident_get_regxml(ident_t *ident);
+int ident_reg_is_valid(reg_package_t *reg);
 
 /* inits & closes the identity manager */
 void ident_register();
@@ -429,7 +432,6 @@ int ident_import_mem(char *data, int datalen, int query, int modif);
 int ident_import_ident_cas(ship_list_t *newi, ship_list_t *newc, int query, int modif, int *icount, int *ccount);
 int ident_autoreg_load();
 int ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text);
-int ident_create_new_reg(ident_t *ident);
 int ident_create_reg_xml(reg_package_t *reg, ident_t *ident, char **text);
 
 int ident_cert_is_valid(X509 *cert);

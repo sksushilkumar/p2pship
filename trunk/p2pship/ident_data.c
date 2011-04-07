@@ -197,7 +197,6 @@ ident_reg_free(reg_package_t *reg)
 		
 		freez(reg->name);
 		freez(reg->status);
-		freez(reg->cached_xml);
                 freez(reg->sip_aor);
 		if (reg->cert) X509_free(reg->cert);
 		reg->cert = NULL;
@@ -211,6 +210,7 @@ ident_reg_new(ident_t *ident)
         reg_package_t *ret = NULL;
         ASSERT_TRUE(ret = (reg_package_t*)mallocz(sizeof(reg_package_t)), err);
 	ASSERT_ZERO(ship_lock_new(&ret->lock), err);
+	ret->imported = time(NULL);
         ASSERT_TRUE(ret->ip_addr_list = ship_list_new(), err);
         ASSERT_TRUE(ret->rvs_addr_list = ship_list_new(), err);
         ASSERT_TRUE(ret->hit_addr_list = ship_list_new(), err);
