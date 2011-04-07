@@ -269,10 +269,12 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 			ol_broadcast_find_gets(key, resps);
 			ptr = 0;
 			while ((task = ship_list_next(resps, &ptr))) {
+				char *data = NULL;
+
 				/* call callback! */
-				char *data = strdup(pkgdata);
+				data = strdup(pkgdata);
 				if (data) 
-					task->callback(data, 1, task); //e->lookup, e->mod);
+					task->callback(data, 1, task);
 			}
 			ship_unlock(requests);
 			ship_obj_list_clear(resps);
