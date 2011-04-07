@@ -2006,6 +2006,26 @@ pymod_create_reg(reg_package_t *reg)
 	ASSERT_TRUE(str = PyInt_FromLong((long)reg->valid), err);
 	ASSERT_ZERO(PyDict_SetItemString(ret, "valid", str), err);
 	str = NULL; //Py_XDECREF(str);
+
+	ASSERT_TRUE(str = PyInt_FromLong((long)reg->imported), err);
+	ASSERT_ZERO(PyDict_SetItemString(ret, "imported", str), err);
+	str = NULL; //Py_XDECREF(str);
+
+	if (ident_reg_is_valid(reg)) {
+		str = PyInt_FromLong((long)1);
+	} else {
+		str = PyInt_FromLong((long)0);
+	}
+	ASSERT_ZERO(PyDict_SetItemString(ret, "is_valid", str), err);
+	str = NULL; //Py_XDECREF(str);
+
+	if (reg->need_update) {
+		str = PyInt_FromLong((long)1);
+	} else {
+		str = PyInt_FromLong((long)0);
+	}
+	ASSERT_ZERO(PyDict_SetItemString(ret, "need_update", str), err);
+	str = NULL; //Py_XDECREF(str);
 	
 	ASSERT_TRUE(str = PyString_FromString(zdefault(reg->status, "")), err);
 	ASSERT_ZERO(PyDict_SetItemString(ret, "status", str), err);
