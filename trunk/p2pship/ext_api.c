@@ -132,7 +132,8 @@ __extapi_get_cb(char *key, char *data, char *signer, void *param, int status)
 			ship_unlock(conn);
 		}
 	}
-	freez(trackingid);
+	if (status < 1)
+		freez(trackingid);
 }
 
 
