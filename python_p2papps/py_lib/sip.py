@@ -60,6 +60,19 @@ def parse_name(pa):
     
     return pa.strip('"\' ')
 
+def sip_real_aor(aor):
+    m = re.match('([^+@]+)[+][^@]*[@](.*)', aor)
+    if m:
+        return m.group(1) + "@" + m.group(2)
+    else:
+        return aor
+
+def get_local_sip_contact(aor):
+    #"<sip:127.0.0.1:1234;transport=udp>"
+    # todo: verify that it is in the intended format. might contain ;hostname= etc..
+    return "<sip:%s>" % p2pship.sip_get_local_contact(aor)
+
+
 # const
 sip_lf = "\r\n"
 

@@ -2,11 +2,6 @@ import random
 import time
 import threading
 
-def get_local_sip_contact(aor):
-    #"<sip:127.0.0.1:1234;transport=udp>"
-    # todo: verify that it is in the intended format. might contain ;hostname= etc..
-    return "<sip:%s>" % p2pship.sip_get_local_contact(aor)
-
 
 class SubscriptionHandler:
     """Class for managing one subscription of a presence"""
@@ -41,8 +36,12 @@ class SubscriptionHandler:
 
     def publish_got(self, key, data, real_key):
         """Callback for subscribes"""
-        
-        ret = p2pship.import_reg(data)
+
+        ret = None
+        try:
+            ret = p2pship.import_reg(data)
+        except Exception, ex:
+            debug("could not import reg: %s" % str(ex))
         self.update_presence(ret)
 
     def update_presence(self, ret = None):
@@ -52,14 +51,15 @@ class SubscriptionHandler:
             return
         
         if ret is None:
-            ret = p2pship.get_reg(self.target)
+            ret = p2pship.get_reg(sip_real_aor(self.target))
 
         if ret is not None:
             if ret["created"] > time.time():
                 debug("The reg packet for %s has future created time!" % ret["aor"])
 
-            if ret["valid"] < time.time():
+            if ret["is_valid"] == 0:
                 debug("The reg packet for %s is expired!" % ret["aor"])
+                print("The reg packet for %s is expired!" % ret["aor"])
                 ret = False
             else:
                 ret = True
@@ -84,10 +84,12 @@ class SubscriptionHandler:
         self.expire = int(msg.param('Expires', 0))
         self.time = time.time()
 
+        key = sip_real_aor(self.target)
         if self.get_expire() > 0:
-            self.subscribe(self.target, self.publish_got)
+            self.subscribe(key, self.publish_got)
         else:
-            self.cancel_subscribe(self.target, self.publish_got)
+            self.cancel_subscribe(key, self.publish_got)
+        self.update_presence()
         return 0
 
     def get_expire(self):
@@ -127,13 +129,13 @@ class PresenceHandler(SipHandler):
         # we need a periodic poller to check the validity of the reg packets!
         p2pship.call_periodically(self.check_handlers, None, 60000)
 
-    def get_subscribe_handler(self, aor):
+    def get_subscribe_handler(self, aor, callid):
         """Each PresenceHandler is tied to one source aor"""
 
-        h = self.handlers.get(aor)
+        h = self.handlers.get(callid + ":" + aor)
         if h is None:
             h = SubscriptionHandler(aor, self.local_aor)
-            self.handlers[aor] = h
+            self.handlers[callid + ":" + aor] = h
         return h
 
     def request_got(self, msg):
@@ -141,7 +143,7 @@ class PresenceHandler(SipHandler):
         
         self.local_aor = parse_aor(msg.sfrom)
         if msg.msg_type == "SUBSCRIBE":
-            handler = self.get_subscribe_handler(parse_aor(msg.sto))
+            handler = self.get_subscribe_handler(parse_aor(msg.sto), msg.callid)
             return handler.subscribe_got(msg)
         
         if msg.msg_type == "PUBLISH":
@@ -154,7 +156,8 @@ class PresenceHandler(SipHandler):
         capture it!)"""
 
         if req.msg_type == "NOTIFY" and req is not None:
-            handler = self.get_subscribe_handler(parse_aor(req.sfrom))
+            # todo: why is req.callid == None??
+            handler = self.get_subscribe_handler(parse_aor(req.sfrom), resp.callid)
             return handler.response_got(req, resp)
 
     def check_handlers(self, data):
