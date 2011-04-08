@@ -425,6 +425,8 @@ _ship_list_get(int _l, ship_list_t *list, const int index)
 	ship_list_entry_t *entry = 0;
 	void *ret = 0;
 	int c = 0;
+	if (!list)
+		return NULL;
 	if (_l) ship_lock(list);
 
 	entry = list->entries;
@@ -445,6 +447,8 @@ _ship_list_pop(int _l, ship_list_t *list)
 {
 	void *ret = 0;
 	ship_list_entry_t *e = 0;
+	if (!list)
+		return NULL;
 	if (_l) ship_lock(list);
 
 	if (list->entries) {
