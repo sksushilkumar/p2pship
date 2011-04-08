@@ -178,6 +178,9 @@ typedef struct reg_package_s
 	/* mark indicating that although the info can be used, this
 	   really should be updated.. */
 	int need_update;
+
+	/* application data - a bunch of strings */
+	ship_ht_t *app_data;
 }
 reg_package_t;
 
@@ -283,24 +286,28 @@ typedef struct ident_s
 	/* the status for this user */
 	char *status;
 
-        /* 
-	   The reg package for this identity, created when getting the
-	   register request.
-        */
-        reg_package_t *reg;
-
 	/* indicates that the ident has changed after being saved /
 	   loaded from file */
 	int modified;
 	
 	/* the last time the registration was published */
 	time_t published;
+	
+	/* whether a 'registered' registration packet has been published */
+	int registered;
 }
 ident_t;
 
 SHIP_INCLUDE_TYPE(ident);
 
 #include "services.h"
+
+typedef struct ident_data_s
+{
+	service_type_t service;
+	char *key;
+	char *data;
+} ident_data_t;
 
 typedef struct ident_service_s
 {
@@ -326,6 +333,9 @@ typedef struct ident_service_s
 
         /* service-specific data.. */
 	void *pkg;
+
+	/* parameters */
+	ship_ht_t *params;
 
 } ident_service_t;
 
@@ -485,5 +495,12 @@ int ident_getsub_open(ident_t *ident, const char *key,
 #define ident_get_open(ident, key, param, callback) ident_getsub_open(ident, key, param, callback, 0)
 #define ident_subscribe_for_buddy_by_aor(ident, buddy_aor, key, param, callback) ident_getsub_for_buddy_by_aor(ident, buddy_aor, key, param, callback, 1)
 #define ident_subscribe_open(ident, key, param, callback) ident_getsub_open(ident, key, param, callback, 1)
+
+/* service parameters */
+#define ident_remove_service_param(i, s, k) ident_set_service_param(i, s, k, NULL)
+int ident_set_service_param(ident_t *ident, const service_type_t service_type, const char *key, const char *data);
+const char *ident_get_service_param(ident_t *ident, const service_type_t service_type, const char *key);
+
+int ident_update_registration(ident_t *ident);
 
 #endif
