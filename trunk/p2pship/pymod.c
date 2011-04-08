@@ -1984,11 +1984,12 @@ pymod_create_reg(reg_package_t *reg)
 {
 	char *astr = 0;
 	addr_t *addr = 0;
-	PyObject *ret = NULL, *str = NULL, *l = NULL;
+	PyObject *ret = NULL, *str = NULL, *l = NULL, *str2 = NULL;
 	BIO *bio = NULL;
 	char *cert = NULL;
 	int bufsize;
 	void *ptr = 0;
+	char *key, *value;
 
 	ASSERT_TRUE(ret = PyDict_New(), err);
 	ASSERT_TRUE(str = PyString_FromString(zdefault(reg->sip_aor, "")), err);
@@ -2043,21 +2044,56 @@ pymod_create_reg(reg_package_t *reg)
 	
 	/* the addresses */
 	ASSERT_TRUE(l = PyList_New(0), err);
-	//Py_XDECREF(l);
-	//l = NULL;
 	while ((addr = ship_list_next(reg->ip_addr_list, &ptr))) {
 		ASSERT_ZERO(ident_addr_addr_to_str(addr, &astr), err);
 		ASSERT_TRUE(str = PyString_FromString(zdefault(astr, "")), err);
 		freez(astr);
 		
 		ASSERT_ZERO(PyList_Append(l, str), err);
-		//Py_XDECREF(str);
 		str = NULL;
 	}
 	ASSERT_ZERO(PyDict_SetItemString(ret, "ip", l), err);
+	
+	ptr = NULL;
+	ASSERT_TRUE(l = PyList_New(0), err);
+	while ((addr = ship_list_next(reg->rvs_addr_list, &ptr))) {
+		ASSERT_ZERO(ident_addr_addr_to_str(addr, &astr), err);
+		ASSERT_TRUE(str = PyString_FromString(zdefault(astr, "")), err);
+		freez(astr);
+		
+		ASSERT_ZERO(PyList_Append(l, str), err);
+		str = NULL;
+	}
+	ASSERT_ZERO(PyDict_SetItemString(ret, "rvs", l), err);
+
+	ptr = NULL;
+	ASSERT_TRUE(l = PyList_New(0), err);
+	while ((addr = ship_list_next(reg->hit_addr_list, &ptr))) {
+		ASSERT_ZERO(ident_addr_addr_to_str(addr, &astr), err);
+		ASSERT_TRUE(str = PyString_FromString(zdefault(astr, "")), err);
+		freez(astr);
+		
+		ASSERT_ZERO(PyList_Append(l, str), err);
+		str = NULL;
+	}
+	ASSERT_ZERO(PyDict_SetItemString(ret, "hit", l), err);
+
+	/** app data **/
+	ptr = NULL;
+	ASSERT_TRUE(l = PyDict_New(), err);
+	while ((value = ship_ht_next_with_key(reg->app_data, &ptr, &key))) {
+		ASSERT_TRUE(str = PyString_FromString(value), err);
+		
+		ASSERT_ZERO(PyDict_SetItemString(l, key, str), err);
+		str = NULL;
+		str2 = NULL;
+	}
+	ASSERT_ZERO(PyDict_SetItemString(ret, "applications", l), err);
+
 	goto end;
  err:
 	Py_XDECREF(str);
+	Py_XDECREF(str2);
  	Py_XDECREF(ret);
  	Py_XDECREF(l);
 	Py_INCREF(Py_None);
@@ -2117,6 +2153,91 @@ p2pship_get_reg(PyObject *self, PyObject *args)
 	ship_unlock(reg);
 	return ret;
 }	
+
+
+static PyObject *
+p2pship_set_service_param(PyObject *self, PyObject *args)
+{
+	char *aor = 0, *key = 0, *value = 0;
+	int service = 0;
+	ident_t *ident = 0;
+	PyObject *ret = NULL;
+	
+	if (!PyArg_ParseTuple(args, "siss", &aor, &service, &key, &value))
+		goto end;
+	
+	if (!aor || strlen(aor) == 0) {
+		ASSERT_TRUE(ident = ident_get_default_ident(), err);
+	} else {
+		ASSERT_TRUE(ident = ident_find_by_aor(aor), err);
+	}
+	ASSERT_ZERO(ident_set_service_param(ident, service, key, value), err);
+	
+	ret = Py_None;
+	Py_INCREF(ret);
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+ end:
+	ship_obj_unlockref(ident);
+	return ret;
+}	
+
+static PyObject *
+p2pship_remove_service_param(PyObject *self, PyObject *args)
+{
+	char *aor = 0, *key = 0;
+	int service = 0;
+	ident_t *ident = 0;
+	PyObject *ret = NULL;
+	
+	if (!PyArg_ParseTuple(args, "sis", &aor, &service, &key))
+		goto end;
+	
+	if (!aor || strlen(aor) == 0) {
+		ASSERT_TRUE(ident = ident_get_default_ident(), err);
+	} else {
+		ASSERT_TRUE(ident = ident_find_by_aor(aor), err);
+	}
+	ASSERT_ZERO(ident_remove_service_param(ident, service, key), err);
+	
+	ret = Py_None;
+	Py_INCREF(ret);
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+ end:
+	ship_obj_unlockref(ident);
+	return ret;
+}	
+
+static PyObject *
+p2pship_get_service_param(PyObject *self, PyObject *args)
+{
+	char *aor = 0, *key = 0;
+	int service = 0;
+	ident_t *ident = 0;
+	const char *value = 0;
+	PyObject *ret = NULL;
+	
+	if (!PyArg_ParseTuple(args, "sis", &aor, &service, &key))
+		goto end;
+	
+	if (!aor || strlen(aor) == 0) {
+		ASSERT_TRUE(ident = ident_get_default_ident(), err);
+	} else {
+		ASSERT_TRUE(ident = ident_find_by_aor(aor), err);
+	}
+	ASSERT_TRUE(value = ident_get_service_param(ident, service, key), err);
+	ASSERT_TRUE(ret = PyString_FromString(value), err);
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+ end:
+	ship_obj_unlockref(ident);
+	return ret;
+}	
+
 
 
 /*
@@ -2244,6 +2365,10 @@ static PyMethodDef p2pshipMethods[] = {
     {"get_ident",  p2pship_get_ident, METH_VARARGS, "Returns an identity object."},
     {"import_reg", p2pship_import_reg, METH_VARARGS, "Imports a registration packet XML."},
     {"get_reg", p2pship_get_reg, METH_VARARGS, "Requests a registration packet for a peer."},
+
+    {"set_service_param", p2pship_set_service_param, METH_VARARGS, "Sets a service-related registration parameter."},
+    {"get_service_param", p2pship_get_service_param, METH_VARARGS, "Gets a service-related registration parameter."},
+    {"remove_service_param", p2pship_remove_service_param, METH_VARARGS, "Removes a service-related registration parameter."},
 
     // experimental
     {"reserve_state",  p2pship_reserve_state, METH_NOARGS, "Reserves the Python intepreter state."},
