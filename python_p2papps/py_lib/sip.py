@@ -10,6 +10,8 @@ import os
 import random
 import re
 
+SIP_SERVICE = 1
+
 #
 #
 def get_uuid():

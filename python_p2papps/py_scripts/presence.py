@@ -53,26 +53,33 @@ class SubscriptionHandler:
         if ret is None:
             ret = p2pship.get_reg(sip_real_aor(self.target))
 
+        pdif = None
         if ret is not None:
+            
             if ret["created"] > time.time():
                 debug("The reg packet for %s has future created time!" % ret["aor"])
 
             if ret["is_valid"] == 0:
                 debug("The reg packet for %s is expired!" % ret["aor"])
-                print("The reg packet for %s is expired!" % ret["aor"])
                 ret = False
             else:
+                apps = ret.get('applications')
+                if apps is not None:
+                    pdif = apps.get('s1_presence')
                 ret = True
         else:
             ret = False
 
         # send updates only when the state has changed
-        if ret == self.last:
+        if ret == self.last and pdif is None:
             return
         self.last = ret
             
         if ret:
-            self.notify(self.create_pdif_simple("open"))
+            if pdif is not None:
+                self.notify(pdif)
+            else:
+                self.notify(self.create_pdif_simple("open"))
         else:
             self.notify(self.create_pdif_simple("closed"))
 
@@ -147,7 +154,8 @@ class PresenceHandler(SipHandler):
             return handler.subscribe_got(msg)
         
         if msg.msg_type == "PUBLISH":
-            #print "publish got " + str(msg)
+            debug("publish got " + str(msg))
+            p2pship.set_service_param(self.local_aor, SIP_SERVICE, "presence", msg.body)
             return None
 
     def response_got(self, req, resp):
