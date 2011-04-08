@@ -536,6 +536,10 @@ static int
 olclient_subscribe_bypoll(char *key, olclient_get_task_t *task)
 {
 	ship_obj_list_add(pollers, task);
+	
+	/* do one immediately */
+	task->callback = olclient_subscribe_poll_cb;
+	task->mod->get(task->lookup->key, task);
 	return 0;
 }
 
