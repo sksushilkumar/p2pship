@@ -48,7 +48,6 @@ static void ident_clear_idents();
 time_t ident_registration_timeleft(ident_t *ident);
 static void ident_mark_foreign_regs_for_update();
 static int ident_reregister_all();
-static int ident_update_registration(ident_t *ident);
 static void ident_cb_conn_events(char *event, void *data, void *eventdata);
 static int ident_autoreg_save();
 
@@ -56,7 +55,7 @@ static int ident_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *ke
 static int ident_getsub_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
 				  void *param, ident_get_cb callback, const int subscribe);
 static int ident_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, const char *value, const int timeout);
-static int ident_create_new_reg(ident_t *ident);
+static reg_package_t *ident_create_new_reg(ident_t *ident);
 static int ident_update_registration_periodic(void *data);
 static time_t ident_regpacket_timeleft(ident_t *ident);
 
@@ -805,6 +804,7 @@ ident_set_status(char *aor, char *status)
 			processor_event_generate("ident_status", ident, ident_set_status_done);
 			if (ship_list_length(ident->services))
 				ident_update_registration(ident);
+			ident_autoreg_save();
 		}
 		ship_unlock(ident);
 	}
@@ -1044,6 +1044,7 @@ _ident_process_register(char *aor, service_type_t service_type, service_t *servi
 				   connected anyway. */
 				if (force_update)
 					ident_update_registration(ident);
+				ident_autoreg_save();
 				ret = 200;
 			}
 			ship_obj_unlockref(ident);
@@ -1081,34 +1082,60 @@ char*
 ident_get_regxml(ident_t *ident)
 {
 	char *ret = NULL;
+	reg_package_t *reg = NULL;
 	ship_lock(ident);
-	if (!ident_create_new_reg(ident)) {
+
+	if ((reg = ident_create_new_reg(ident))) {
 		/* create new xml */
-		ASSERT_ZERO(ident_create_reg_xml(ident->reg, ident, 
+		ASSERT_ZERO(ident_create_reg_xml(reg, ident, 
 						 &ret), err);
+		LOG_HL("created xml: '%s'\n", ret);
 	}
  err:
+	ident_reg_free(reg);
 	ship_unlock(ident);
 	return ret;
 }
 
-static int
+static reg_package_t*
 ident_create_new_reg(ident_t *ident)
 {
-	int ret = -1;
+	reg_package_t *reg = NULL;
+	ident_service_t *s = NULL;
+	void *ptr = NULL;
+	char *nkey = NULL, *nval = NULL;
 	
-	ident_reg_free(ident->reg);
-	ident->reg = NULL;
-	
-	ASSERT_TRUE(ident->reg = ident_reg_new(ident), err);
-	ASSERT_ZERO(conn_fill_reg_package(ident, ident->reg), err);
+	ASSERT_TRUE(reg = ident_reg_new(ident), err);
+	ASSERT_ZERO(conn_fill_reg_package(ident, reg), err);
 	
 	/* set the validity and time-of-creation according to the reg */
-	ident->reg->created = time(0);
-	ident->reg->valid = time(0) + ident_regpacket_timeleft(ident);
-	ret = 0;
+	reg->created = time(0);
+	reg->valid = time(0) + ident_regpacket_timeleft(ident);
+
+	/* add the application data */
+	while ((s = ship_ht_next(ident->services, &ptr))) {
+		if (s->expire < 0 ||
+		    (s->reg_time + s->expire) >= reg->created) {
+			char *key, *val;
+			void *ptr2 = NULL;
+			while ((val = ship_ht_next_with_key(s->params, &ptr2, &key))) {
+				ASSERT_TRUE(nkey = mallocz(strlen(key) + 10), err);
+				ASSERT_TRUE(nval = strdup(val), err);
+				sprintf(nkey, "s%d_%s", s->service_type, key);
+				ship_ht_put_string(reg->app_data, nkey, nval);
+				freez(nkey);
+				nval = NULL;
+				nkey = NULL;
+			}
+		}
+	}
+
+	return reg;
  err:
-	return ret;
+	freez(nkey);
+	freez(nval);
+	ident_reg_free(reg);
+	return NULL;
 }
 
 /* checks whether the ident has a valid registration */
@@ -1263,13 +1290,28 @@ ident_update_registration_do(void *data, processor_task_t **wait, int wait_for_c
 	LOG_INFO("Should update registration for %s\n", ident->sip_aor);
 	
 	if (!timeleft) {
-		ident_remove_for_all_buddies(ident, ident->sip_aor);
+		/* register a 'death' package which has valid-period == 0 */
+		if (ident->published && ident->registered) {
+			ASSERT_TRUE(regxml = ident_get_regxml(ident), err);
+			ASSERT_ZERO(ident_put_for_all_buddies(ident, ident->sip_aor, regxml, timeleft), err);
+			ident->published = time(0);
+			ident->registered = 0;
+		} else if (ident->published && (time(0)-ident->published > IDENT_PUBLISH_INTERVAL)) {
+			ident_remove_for_all_buddies(ident, ident->sip_aor);
+			ident->published = 0;
+		} else {
+			/* do nothing as we have no reg packet
+			   published, and we are not publishing
+			   anything, OR we are waiting for the death
+			   package to get distributed to whomever may
+			   be following us! */
+		}
 	} else {
 		ASSERT_TRUE(regxml = ident_get_regxml(ident), err);
 		ASSERT_ZERO(ident_put_for_all_buddies(ident, ident->sip_aor, regxml, timeleft), err);
+		ident->published = time(0);
+		ident->registered = 1;
 	}
-	ident->published = time(0);
-	ident_autoreg_save();
 	ret = 0;
 err:
 	freez(regxml);
@@ -1444,7 +1486,7 @@ ident_put_for_all_buddies(ident_t *ident, const char *key, const char *value, co
 {
 	buddy_t *buddy = NULL;
 	void *ptr = NULL;
-	
+
 	while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
 		if (ident_put_for_buddy(ident, buddy, key, value, timeout)) {
 			LOG_WARN("Put for buddy %s by %s failed\n", buddy->name, ident->sip_aor);
@@ -1459,7 +1501,7 @@ ident_put_for_all_buddies(ident_t *ident, const char *key, const char *value, co
 }
 
 /* this should probably be called async! */
-static int
+int
 ident_update_registration(ident_t *ident)
 {
 	processor_tasks_add(ident_update_registration_do,

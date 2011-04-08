@@ -35,6 +35,9 @@ static int ident_init(ident_t *ret, char *sip_aor);
 
 static void ident_data_bb_add_buddy_to_bloom(ship_bloom_t *bloom, buddy_t *buddy);
 static int ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur);
+#define ident_service_remove_param(s, k) ident_service_set_param(s, k, NULL)
+static int ident_service_set_param(ident_service_t *s, const char *key, const char *data);
+static const char *ident_service_get_param(ident_service_t *s, const char *key);
 
 SHIP_DEFINE_TYPE(ident);
 
@@ -195,6 +198,9 @@ ident_reg_free(reg_package_t *reg)
 		ship_list_free(reg->hit_addr_list);
 		ship_lock_free(&(reg->lock));
 		
+		ship_ht_empty_free(reg->app_data);
+		ship_ht_free(reg->app_data);
+
 		freez(reg->name);
 		freez(reg->status);
                 freez(reg->sip_aor);
@@ -214,6 +220,7 @@ ident_reg_new(ident_t *ident)
         ASSERT_TRUE(ret->ip_addr_list = ship_list_new(), err);
         ASSERT_TRUE(ret->rvs_addr_list = ship_list_new(), err);
         ASSERT_TRUE(ret->hit_addr_list = ship_list_new(), err);
+        ASSERT_TRUE(ret->app_data = ship_ht_new(), err);
         if (ident) {
                 ASSERT_TRUE(ret->sip_aor = strdup(ident->sip_aor), err);
                 if (ident->status) {
@@ -267,7 +274,14 @@ ident_set_aor(char **target, char *result)
 ident_service_t*
 ident_service_new() 
 {
-	return mallocz(sizeof(ident_service_t));
+	ident_service_t* ret = NULL;
+
+	ASSERT_TRUE(ret = mallocz(sizeof(ident_service_t)), err);
+	ASSERT_TRUE(ret->params = ship_ht_new(), err);
+	return ret;
+ err:
+	ident_service_close(ret, NULL);
+	return NULL;
 }
 
 void
@@ -279,8 +293,65 @@ ident_service_close(ident_service_t *s, ident_t *ident)
 	if (s->service && s->service->service_closed) {
 		s->service->service_closed(s->service_type, ident, s->pkg);
 	}
+	ship_ht_empty_free(s->params);
+	ship_ht_free(s->params);
+
 	freez(s->service_handler_id);
 	freez(s);
+}
+
+
+/* tries to set a value, removes old if unsuccessful. NULL can be set
+   to only remove */
+static int
+ident_service_set_param(ident_service_t *s, const char *key, const char *data)
+{
+	int ret = -1;
+	char *val = NULL;
+	if ((val = ship_ht_remove_string(s->params, key)))
+		free(val);
+	if (data) {
+		ASSERT_TRUE(val = strdup(data), err);
+		ship_ht_put_string(s->params, key, val);
+	}	
+	ret = 0;
+ err:
+	return ret;
+}
+
+static const char *
+ident_service_get_param(ident_service_t *s, const char *key)
+{
+	return ship_ht_get_string(s->params, key);
+}
+
+
+int
+ident_set_service_param(ident_t *ident, const service_type_t service_type, const char *key, const char *data)
+{
+	ident_service_t *s;
+	int ret = -1;
+
+	s = ship_ht_get_int(ident->services, service_type);
+	if (!s) {
+		ASSERT_TRUE(s = ident_service_new(), err);
+		ship_ht_put_int(ident->services, service_type, s);
+	}
+	
+	ASSERT_ZERO(ret = ident_service_set_param(s, key, data), err);
+	ident_update_registration(ident);
+ err:
+	return ret;
+}
+
+const char*
+ident_get_service_param(ident_t *ident, const service_type_t service_type, const char *key)
+{
+	ident_service_t *s;
+	s = ship_ht_get_int(ident->services, service_type);
+	if (!s)
+		return NULL;
+	return ident_service_get_param(s, key);
 }
 
 /* frees an ident_ident_t */
@@ -294,10 +365,8 @@ ident_free(ident_t *ident)
 	freez(ident->username);
 	freez(ident->password);
 	freez(ident->status);
-	ident_reg_free(ident->reg);
 	ident_buddy_list_free(ident->buddy_list);
 	ident->buddy_list = NULL;
-	ident->reg = NULL;
 	
 	if (ident->services) {
 		while ((s = ship_ht_pop(ident->services))) {
@@ -445,11 +514,13 @@ static int
 ident_reg_struct_to_xml(reg_package_t *reg, char **text)
 {
 	xmlDocPtr doc = NULL;
-	xmlNodePtr cur = NULL;
+	xmlNodePtr cur = NULL, apps = NULL;
 	xmlChar *xmlbuf = NULL;
 	int bufsize = 0;
 	int ret = -1;
 	char timebuf[50];
+	void *ptr = NULL;
+	char *appkey = NULL, *appdata = NULL;
 
 	ASSERT_TRUE((doc = xmlNewDoc((const xmlChar*)"1.0")), err);
 	ASSERT_TRUE((doc->children = xmlNewDocNode(doc, NULL, (const xmlChar*)"registration", NULL)), err);
@@ -458,11 +529,6 @@ ident_reg_struct_to_xml(reg_package_t *reg, char **text)
 	/* sip-aor */
 	ASSERT_TRUE(xmlNewTextChild(cur, NULL, (const xmlChar*)"sip-aor", (const xmlChar*)reg->sip_aor), err);
 	
-	/* status, if present */
-	if (reg->status) {
-		ASSERT_TRUE(xmlNewTextChild(cur, NULL, (const xmlChar*)"status", (const xmlChar*)reg->status), err);
-	}
-
 	/* the addr lists */
 	ASSERT_ZERO(ident_fill_reg_addr_field(cur, "ip", reg->ip_addr_list), err);
 	ASSERT_ZERO(ident_fill_reg_addr_field(cur, "hit", reg->hit_addr_list), err);
@@ -475,7 +541,19 @@ ident_reg_struct_to_xml(reg_package_t *reg, char **text)
 	ASSERT_TRUE(xmlNewTextChild(cur, NULL, (const xmlChar*)"valid-until", (const xmlChar*)timebuf), err);
 
 	/* add client version */
-	ASSERT_TRUE(xmlNewTextChild(cur, NULL, (const xmlChar*)"client-version", (const xmlChar*)P2PSHIP_BUILD_VERSION), err);
+	sprintf(timebuf, "%s:%s", VERSION, P2PSHIP_BUILD_VERSION);
+	ASSERT_TRUE(xmlNewTextChild(cur, NULL, (const xmlChar*)"client-version", (const xmlChar*)timebuf), err);
+	
+	/** application data **/
+	ASSERT_TRUE(apps = xmlNewTextChild(cur, NULL, (const xmlChar*)"applications", NULL), err);
+	while ((appdata = ship_ht_next_with_key(reg->app_data, &ptr, &appkey))) {
+		ASSERT_TRUE(xmlNewTextChild(apps, NULL, (const xmlChar*)appkey, (const xmlChar*)appdata), err);
+	}
+
+	/* status, if present */
+	if (reg->status) {
+		ASSERT_TRUE(xmlNewTextChild(cur, NULL, (const xmlChar*)"status", (const xmlChar*)reg->status), err);
+	}
 
 	xmlDocDumpFormatMemory(doc, &xmlbuf, &bufsize, 1);
 	ASSERT_TRUE(xmlbuf, err);
@@ -534,11 +612,7 @@ ident_create_reg_xml(reg_package_t *reg, ident_t *ident, char **text)
 			ASSERT_TRUE(SHA1((unsigned char*)reg_data, strlen(reg_data), (unsigned char*)digest), err);
 			
 			ASSERT_TRUE(sign = (char *)mallocz(1024), err);	
-			ASSERT_TRUE(RSA_sign(NID_sha1, (unsigned char*)digest, SHA_DIGEST_LENGTH, (unsigned char*)sign, &siglen, ident->private_key), err);
-			
-			//ship_printf_bytearr(sign, siglen, "created signature");
-			//ship_printf_bytearr(digest, SHA_DIGEST_LENGTH, "created digest");
-
+			ASSERT_TRUE(RSA_sign(NID_sha1, (unsigned char*)digest, SHA_DIGEST_LENGTH, (unsigned char*)sign, &siglen, ident->private_key), err);			
 			ASSERT_TRUE(sign_64e = ship_encode_base64(sign, siglen), err);
 #ifdef CONFIG_OP_ENABLED
 		}
@@ -641,8 +715,6 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	ASSERT_TRUE(sign = ship_decode_base64(sign_64e, strlen(sign_64e), &len), err);
 	if (!RSA_verify(NID_sha1, (unsigned char*)digest, SHA_DIGEST_LENGTH, (unsigned char*)sign, len, public_key)) {
 		LOG_WARN("Signature not verified\n");
-		//ship_printf_bytearr(sign, len, "signature");
-		//ship_printf_bytearr(digest, SHA_DIGEST_LENGTH, "digest");
 		goto err;
 	}
 
@@ -682,6 +754,17 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	xmlFree(result);
 	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "valid-until"), err);
 	reg->valid = ship_parse_time(result);
+
+	/* application parameters */
+	if ((cur = ship_xml_get_child(cur, "applications"))) {
+		xmlNodePtr cur_node = NULL;
+		for (cur_node = cur->children; cur_node; cur_node = cur_node->next) {
+			char *str = NULL;
+			if ((str = (char*)xmlNodeListGetString(cur_node->doc, cur_node->xmlChildrenNode, 1))) {
+				ship_ht_put_string(reg->app_data, (char*)cur_node->name, str);
+			}
+		}
+	}
 
 	(*__reg) = reg;
 	reg = NULL;
