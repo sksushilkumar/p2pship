@@ -105,6 +105,7 @@
 #define P2PSHIP_CONF_RVS "hip_rvs"
 #define P2PSHIP_CONF_HIP_SHUTDOWN "hip_shutdown"
 #define P2PSHIP_CONF_ALLOW_NONHIP "hip_allow_nonhip"
+#define P2PSHIP_CONF_AUTOSTART "hip_autostart"
 #endif
 
 #ifdef CONFIG_WEBCONF_ENABLED

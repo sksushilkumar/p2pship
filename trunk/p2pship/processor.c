@@ -352,8 +352,8 @@ processor_signal_handler(int signum)
                 break;
 		//case SIGSEGV:
 	case SIGCHLD:
-		LOG_WARN("got signal %d for to thread\n", signum);
-		processor_shutdown();
+		LOG_WARN("got signal %d for thread\n", signum);
+		//processor_shutdown();
 		//processor_kill_me();
 		//TREAD_EXIT();
 		break;

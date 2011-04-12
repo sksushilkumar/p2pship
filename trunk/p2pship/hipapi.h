@@ -71,4 +71,6 @@ int hipapi_clear_sas();
 int hipapi_create_peer_hit_locator_mapping(char *sip_aor, addr_t *hit);
 int conn_connection_uses_hip(char *remote_aor, char *local_aor);
 
+void hipapi_check_hipd();
+
 #endif
