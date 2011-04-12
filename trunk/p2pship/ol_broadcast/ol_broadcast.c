@@ -213,8 +213,14 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 	char *key = strchr(data, ':');
 	addr_t addr;
 
-	LOG_VDEBUG("Got a broadcast packet on socket %d, len %d: '%s'\n",
-		   s, len, data);
+	if (len > 0) {
+		LOG_VDEBUG("Got a broadcast packet on socket %d, len %d: '%s'\n",
+			   s, len, data);
+	} else {
+		if (len < 0)
+			netio_close_socket(s);
+		return;
+	}
 	
 	ASSERT_ZERO(ident_addr_sa_to_addr(sa, len, &addr), err);
 	LOG_VDEBUG("from %s:%d\n", addr.addr, addr.port);
@@ -272,9 +278,11 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 				char *data = NULL;
 
 				/* call callback! */
-				data = strdup(pkgdata);
-				if (data) 
-					task->callback(data, 1, task);
+				if (task->callback) {
+					data = strdup(pkgdata);
+					if (data) 
+						task->callback(data, 1, task);
+				}
 			}
 			ship_unlock(requests);
 			ship_obj_list_clear(resps);
