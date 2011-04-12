@@ -1654,7 +1654,7 @@ p2pship_register_sip_client_handler(PyObject *self, PyObject *args)
 	if (!PyArg_ParseTuple(args, "sO:register_sip_client_handler", &name, &callback))
 		goto err;
 
-	ASSERT_ZERO(ship_ht_get_string(pymod_sipp_client_handlers, name), err);
+	ASSERT_ZEROS(ship_ht_get_string(pymod_sipp_client_handlers, name), err, "sip client handler '%s' already installed\n", name);
 
 	LOG_DEBUG("registering sip client handler for %s..\n", name);
 	ASSERT_TRUE(h = pymod_ipc_new(name, callback, NULL), err);
@@ -2648,15 +2648,14 @@ pymod_start_plugins()
 
 	if (processor_config_is_false(processor_get_config(), P2PSHIP_CONF_STARTUP_SCRIPTS)) {
 		LOG_INFO("skipping Python startup scripts\n");
-		return 0;
-	}
-
-	/* load scripts */
-	ASSERT_TRUE(dir = processor_config_string(processor_get_config(), P2PSHIP_CONF_PYTHON_SCRIPTS_DIR), err);
-	ASSERT_TRUE(list = ship_list_dir(dir, "*.py", 1), err);
-	while ((fn = ship_list_pop(list))) {
-		ASSERT_ZERO(pymod_run_file(fn), err);
-		freez(fn);
+	} else {
+		/* load scripts */
+		ASSERT_TRUE(dir = processor_config_string(processor_get_config(), P2PSHIP_CONF_PYTHON_SCRIPTS_DIR), err);
+		ASSERT_TRUE(list = ship_list_dir(dir, "*.py", 1), err);
+		while ((fn = ship_list_pop(list))) {
+			ASSERT_ZERO(pymod_run_file(fn), err);
+			freez(fn);
+		}
 	}
 
 	if (!processor_config_get_string(processor_get_config(), P2PSHIP_CONF_RUN_SCRIPT, &file)) {
@@ -2669,6 +2668,8 @@ pymod_start_plugins()
 	ship_list_free(list);
 	return ret;
 }
+
+
 
 
 /* the netio_man register */
