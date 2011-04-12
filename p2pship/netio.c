@@ -245,7 +245,8 @@ netio_close_socket(int s)
 
 	/* if we have this one on our read-list, then just mark for
 	   flushing */
-	ship_lock(netio_sock_list); {
+	ship_lock(netio_sock_list);
+	{
                 while ((e = ship_list_next(netio_sock_list, &ptr))) {
                         if (e->s != s)
 				continue;
@@ -264,12 +265,14 @@ netio_close_socket(int s)
 			ship_unlock(e->send_queue);
 			last = ptr;
                 }
-	} ship_unlock(netio_sock_list);
+	}
 
 	if (closeit) {
 		shutdown(s, SHUT_RDWR);
 		close(s);
 	}
+
+	ship_unlock(netio_sock_list);
 }
 
 int
@@ -289,7 +292,8 @@ netio_remove_read(int s)
 			}
 			ship_unlock(e->send_queue);
 		}
-	} ship_unlock(netio_sock_list);
+	}
+	ship_unlock(netio_sock_list);
         return ret;
 }
 
@@ -773,6 +777,7 @@ netio_read(int s, void (*callback) (int s, char *data, ssize_t datalen))
 {
         netio_sock_t *e = NULL;
 
+	ASSERT_TRUES(s != -1, err, "Trying to read -1 socket!\n");
         MAKE_NONBLOCK(s);
         
         /* make entry */
@@ -990,11 +995,15 @@ netio_loop(void *data)
 						sa = (struct sockaddr*)mallocz(addrlen);
                                                 if (sa) {
 							s = accept(e->s, sa, &addrlen);
-							MAKE_TCP_NODELAY(s);
-							if (e->accept_callback) {
-								/* todo: make the worker threads do this! */
-								e->accept_callback(s, sa, addrlen, e->s);
-								ship_check_restricts();
+							if (s == -1) {
+								LOG_WARN("got accept on -1!\n");
+							} else {
+								MAKE_TCP_NODELAY(s);
+								if (e->accept_callback) {
+									/* todo: make the worker threads do this! */
+									e->accept_callback(s, sa, addrlen, e->s);
+									ship_check_restricts();
+								}
 							}
 							freez(sa);
 						}
