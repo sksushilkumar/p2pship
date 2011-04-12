@@ -30,6 +30,9 @@
 #ifdef DO_STATS
 #include "access_control.h"
 #endif
+#ifdef CONFIG_HIP_ENABLED
+#include "hipapi.h"
+#endif
 
 /* the pp packets */
 #define PP_MSG_ACK 1
@@ -1034,6 +1037,10 @@ _ident_process_register(char *aor, service_type_t service_type, service_t *servi
 			} else if (!ident_update_service_registration(ident, service_type, service,
 								      addr, expire, pkg)) {
 				
+#ifdef CONFIG_HIP_ENABLED
+				hipapi_check_hipd();
+#endif
+
 				/* unless force update, update only if
 				   the current ttl will not fit into
 				   the one that has been assigned
@@ -1089,7 +1096,6 @@ ident_get_regxml(ident_t *ident)
 		/* create new xml */
 		ASSERT_ZERO(ident_create_reg_xml(reg, ident, 
 						 &ret), err);
-		LOG_HL("created xml: '%s'\n", ret);
 	}
  err:
 	ident_reg_free(reg);
@@ -1752,7 +1758,7 @@ ident_import_foreign_reg(reg_package_t *reg)
 	ship_lock(foreign_idents);
 	while (import && (r = (reg_package_t *)ship_list_next(foreign_idents, &ptr))) {
 		if (!strcmp(r->sip_aor, reg->sip_aor)) {
-			if (reg->created > r->created) {
+			if (reg->created > r->created || r->need_update) {
 				ship_lock(r);
 				ship_list_remove(foreign_idents, r);
 				ship_unlock(r);
@@ -1768,6 +1774,7 @@ ident_import_foreign_reg(reg_package_t *reg)
 	if (import) {
 		ship_list_add(foreign_idents, reg);
 		LOG_DEBUG("new registration package added for %s\n", reg->sip_aor);
+		LOG_INFO("new registration package added for %s\n", reg->sip_aor);
 
 		/* update all idents buddies that might have this */
 		processor_tasks_add(ident_update_buddy_cert, strdup(reg->sip_aor), ident_update_buddy_cert_done);
@@ -1844,6 +1851,9 @@ ident_cb_lookup_registration(char *key, char *buf, char *signer, void *param, in
                         status = 0;
                         imported = 1;
                 }
+		if (reg) {
+			LOG_INFO("reg packet got, %s\n", (imported? "and imported" : "but not imported"));
+		}
 		reg = NULL;
         }
  err:

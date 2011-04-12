@@ -19,6 +19,7 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <string.h>
+#include <sys/wait.h>
 #include "ship_debug.h"
 #include "processor.h"
 #include "ident.h"
@@ -44,6 +45,67 @@ hipapi_cb_config_update(processor_config_t *config, char *k, char *v)
 	hipapi_update_rvs_registration();
 }
 
+/* checks whether the hipd is running, and if not, tries to start
+   it. */
+void
+hipapi_check_hipd()
+{
+	if (processor_config_bool(processor_get_config(), P2PSHIP_CONF_AUTOSTART)
+	    && hipapi_gethit(&ownhit)) {
+		char *args[] = { "hipd", "-k", NULL };
+		int r = 0;
+		char *paths[] = { "/sbin", "/bin", "/usr/sbin", "/usr/bin", "/usr/local/sbin", "/usr/local/bin", 0 };
+		char hipd_path[50] = "";
+		
+		// locate hipd
+		for (r = 0; paths[r]; r++) {
+			struct stat sdata;
+			strcpy(hipd_path, paths[r]);
+			strcat(hipd_path, "/hipd");
+			
+			
+			if (stat(hipd_path, &sdata))
+				continue;
+			break;
+		}
+
+		if (strlen(hipd_path)) {
+			LOG_INFO("trying to start HIP from %s..\n", hipd_path);
+
+			/*
+			r = system(hipd_path);
+			if (r) {
+				LOG_ERROR("could not start hip, code %d (%d): %s\n", r, errno, strerror(errno));
+			} else {
+				LOG_INFO("started hipd\n");
+			}
+			*/
+
+			if ((r = fork()) < 0) {
+				LOG_ERROR("could not fork!\n");
+			} else if (r) {
+				LOG_INFO("started hipd as pid %d\n", r);
+				waitpid(r, NULL, 0);
+				LOG_INFO("hipd subprocess done\n", r);
+			} else {
+				setsid();
+				if (!fork()) {
+					r = execv(hipd_path, args);
+					if (r) {
+						LOG_ERROR("could not start hip(%d): %s\n", errno, strerror(errno));
+					}
+					LOG_INFO("hipd exiting\n");
+					exit(0);
+				}
+				LOG_INFO("quitting hipd fork\n");
+				exit(0);
+			}
+		} else {
+			LOG_INFO("could not find hipd..\n");
+		}
+	}
+}
+
 /* inits the hipapi */
 int 
 hipapi_init(processor_config_t *config)
@@ -51,9 +113,10 @@ hipapi_init(processor_config_t *config)
         int ret = -1;
 	LOG_INFO("Initing the hipapi module..\n");
 	
-	if (hipapi_gethit(&ownhit) && !processor_config_bool(config, P2PSHIP_CONF_ALLOW_NONHIP)) {
+	if (hipapi_gethit(&ownhit) && !processor_config_bool(config, P2PSHIP_CONF_ALLOW_NONHIP)
+	    && !processor_config_bool(config, P2PSHIP_CONF_AUTOSTART)) {
 		USER_ERROR("Error retrieving HITs. Please check that hipd is running.\n");
-		goto err;
+		goto err; // kill
 	}
 
 	/* rvs & nat? */
@@ -66,6 +129,7 @@ hipapi_init(processor_config_t *config)
 	ASSERT_ZERO(processor_tasks_add_periodic(hipapi_update_rvs_registration, NULL, RVS_UPDATE_PERIOD*1000), err);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_NAT_TRAVERSAL, hipapi_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_RVS, hipapi_cb_config_update);
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_AUTOSTART, hipapi_cb_config_update);
 	
 	ret = 0;
 err:

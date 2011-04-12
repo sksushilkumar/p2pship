@@ -116,6 +116,7 @@ static char* DEFAULT_CONFIGURATION[] =
 		P2PSHIP_CONF_HIP_SHUTDOWN, "/bin/sh /etc/init.d/hipd-initd restart", "hipd shutdown command", "string", 0,
 
 		P2PSHIP_CONF_ALLOW_NONHIP, "yes", "Allow non-hip control & data connections", "bool", 0,
+		P2PSHIP_CONF_AUTOSTART, "yes", "Auto-start hipd on registration", "bool", 0,
 #endif
 
 #ifdef CONFIG_WEBCONF_ENABLED
