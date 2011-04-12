@@ -85,8 +85,23 @@ th {
   text-align: left;
 }
 
+a.online {
+	border: 0;
+        background: none;
+        margin: 2px;
+}
+
+a:hover.online {
+        margin: 1px;
+	border: 1px solid green;
+        background: none;
+        text-decoration: underline;
+}
+
 .online {
-	color: green;
+	border: 0;
+        background: none;
+        color: green;
 	font-weight: bold;
 }
 

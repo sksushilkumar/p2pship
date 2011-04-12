@@ -298,6 +298,7 @@ function initpage2() {
         var i;
         for (sip in p2pship_idents) {
             var tr = document.createElement("tr");
+            var reglink = "/reg?local=" + sip;
 	    add_td(tr, (p2pship_idents[sip][4] != ""? 
 			"<b>" + sip + "</b>":
 			sip));
@@ -307,7 +308,7 @@ function initpage2() {
 
 	    /* online? */
 	    add_td(tr, (p2pship_idents[sip][1] == "online"? 
-			"<font class=online>" + p2pship_idents[sip][1] + "</font>":
+			"<font class=online><a class=online href='"+reglink+"'>" + p2pship_idents[sip][1] + "</a></font>":
 			"<font class=offline>" + p2pship_idents[sip][1] + "</font>"));
 
 	    /* deleted etc? */
