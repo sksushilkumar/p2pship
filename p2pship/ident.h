@@ -181,6 +181,9 @@ typedef struct reg_package_s
 
 	/* application data - a bunch of strings */
 	ship_ht_t *app_data;
+
+	/* a cached version of the original xml (if any) */
+	char *xml;
 }
 reg_package_t;
 

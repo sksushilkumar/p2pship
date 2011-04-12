@@ -201,6 +201,7 @@ ident_reg_free(reg_package_t *reg)
 		ship_ht_empty_free(reg->app_data);
 		ship_ht_free(reg->app_data);
 
+		freez(reg->xml);
 		freez(reg->name);
 		freez(reg->status);
                 freez(reg->sip_aor);
@@ -766,6 +767,7 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 		}
 	}
 
+	ASSERT_TRUE(reg->xml = strdup(data), err);
 	(*__reg) = reg;
 	reg = NULL;
 	ret = 0;
