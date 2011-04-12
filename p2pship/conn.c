@@ -357,9 +357,6 @@ conn_rebind()
 			addr = 0;
 		} else {
 			freez(addr);
-			if (!conn_allow_nonhip) {
-				ASSERT_ZERO(-1, err);
-			}
 		}
 		if (!conn_allow_nonhip) 
 			bind_to_nonhip = 0;
@@ -370,6 +367,10 @@ conn_rebind()
 		/* we should actually only bind to the ips of
 		   conn_ifaces! */
 		conn_getips(ips, conn_ifaces, conn_ifaces_count, 0);
+	}
+
+	if (!ship_list_first(ips)) {
+		LOG_WARN("No address to bind to, we can't communicate yet!\n");
 	}
 	
 	/* start loop.. try always first the original port */
