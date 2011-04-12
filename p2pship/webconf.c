@@ -105,6 +105,37 @@ webconf_process_req(netio_http_conn_t *conn, void *pkg)
 		} else {
 			netio_http_respond_str(conn, 500, "Error", "Internal server error");
 		}	
+	} else if (str_startswith(conn->url, "/reg")) {
+		char *aor = NULL;
+		char *xml = NULL;
+
+		if ((aor = netio_http_conn_get_param(conn, "local"))) {
+			ident_t *ident = NULL;
+			if ((ident = ident_find_by_aor(aor))) {
+				xml = ident_get_regxml(ident);
+				ship_obj_unlockref(ident);
+				if (xml) {
+					netio_http_respond_str(conn, 200, "OK", xml);
+					free(xml);
+				} else {
+					netio_http_respond_str(conn, 500, "Error", "Error generating XML.");
+				}
+			} else {
+				netio_http_respond_str(conn, 404, "Not found", "The identity was not found.");
+			}
+		} else if ((aor = netio_http_conn_get_param(conn, "remote"))) {
+			reg_package_t *reg = NULL;
+			if ((reg = ident_find_foreign_reg(aor))) {
+				netio_http_respond_str(conn, 200, "OK", reg->xml);
+				ship_unlock(reg);
+			} else {
+				netio_http_respond_str(conn, 404, "Not found", "The identity was not found.");
+			}
+		} else {
+			netio_http_respond_str(conn, 400, "Bad request", "Bad request, specify local or remote identifier.");
+		}
+		
+		
 	} else if (str_startswith(conn->url, "/post/")) {
 		char *redir = 0;
 		netio_http_param_t *param = 0;
