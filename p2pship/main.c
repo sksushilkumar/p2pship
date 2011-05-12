@@ -64,6 +64,9 @@
 #ifdef CONFIG_WEBCACHE_ENABLED
 #include "webcache.h"
 #endif
+#ifdef CONFIG_MEDIA_ENABLED
+#include "media.h"
+#endif
 
 /* default log level */
 extern int p2pship_log_level;
@@ -195,13 +198,14 @@ enum {
 #include <sys/resource.h>
 #include <errno.h>
 
-
+/*
 static
 void xml_error_func(void * ctx, const char * msg, ...)
 {
 	LOG_WARN("Error occured while parsing XML document\n");
 	LOG_WARN("Error message: '%s'\n", msg);
 }
+*/
 
 /* point-of-entry */
 int 
@@ -217,7 +221,7 @@ main(int argc, char **argv)
 
 	xmlInitParser();
 	xmlInitThreads();
-	initGenericErrorDefaultFunc((xmlGenericErrorFunc *)xml_error_func);
+	//initGenericErrorDefaultFunc((xmlGenericErrorFunc *)xml_error_func);
 
         /* the getopt values */
         static struct option long_options[] =
@@ -453,7 +457,8 @@ main(int argc, char **argv)
 	}
 
 #ifdef CONFIG_START_GTK
-	g_thread_init(NULL);
+	if (!g_thread_supported())
+		g_thread_init(NULL);
 	gdk_threads_init();
 	gdk_threads_enter();
 	gtk_init(&argc, &argv);
@@ -505,6 +510,10 @@ main(int argc, char **argv)
 	addrbook_register();
 #ifdef CONFIG_PYTHON_ENABLED
 	pymod_register();	
+#endif
+
+#ifdef CONFIG_MEDIA_ENABLED
+	media_register();
 #endif
 	/* check what we actually should do */
 	switch (action) {
