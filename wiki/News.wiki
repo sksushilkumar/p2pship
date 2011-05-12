@@ -1,5 +1,11 @@
 #summary News
 
+*12 May 2011 / jookos*
+
+In anticipation of the upcoming _offline_ message exchange support (namely distributed voice mail), we finally got around to plan the re-work the packaging system for the maemo tablets. We now have two core versions: `p2pship` and `p2pship-pre`. The `-pre` version includes the Python run-time, and is needed for some of the newer features.
+
+We also created add-on packages for the presence support and multiparty conferencing (`p2pship-presence` and `p2pship-multiparty`). These require the `-pre` version of the p2pship suite. Furthermore, the multiparty conferencing add-on requires a specific mixer plugin for gstreamer (liveadder). As this is not available in the normal Maemo distributions, we took the liberty of creating our own version of it in our repository (package `gstreamer0.10-plugin-liveadder`). All of these dependencies are, naturally, resolved automatically.
+
 *31 Mar 2011 / jookos*
 
 We have finally got through the features we wanted for the next release and are glad to announce version 2.0.  New features include publish-subscribe support and presence for SIP, as well as a ton of improvements.  Available from the repository, pre-compiled packages coming soon!
