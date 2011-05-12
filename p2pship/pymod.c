@@ -43,6 +43,9 @@
 #include "conn.h"
 #include "netio.h"
 #include "netio_http.h"
+#ifdef CONFIG_MEDIA_ENABLED
+#include "media.h"
+#endif
 
 static ship_ht_t *pymod_config_updaters = 0;
 static ship_ht_t *pymod_http_servers = 0;
@@ -2314,6 +2317,68 @@ p2pship_ol_ident_subscribe(PyObject *self, PyObject *args)
 	return p2pship_ol_ident_getsub(self, args, 1);
 }
 
+
+/** media handling */
+static PyObject *
+p2pship_media_pipeline_parse(PyObject *self, PyObject *args)
+{
+	char *str = 0;
+	PyObject *ret = NULL;
+	int handle = -1;
+	
+	if (!PyArg_ParseTuple(args, "s", &str))
+		goto end;
+
+	handle = media_parse_pipeline(str);
+	ASSERT_POSITIVE(handle, err);
+	ASSERT_TRUE(ret = PyInt_FromLong(handle), err);
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "Error creating pipeline");
+ end:
+	return ret;
+}	
+
+static PyObject *
+p2pship_media_pipeline_start(PyObject *self, PyObject *args)
+{
+	PyObject *ret = NULL;
+	int handle = -1;
+	
+	if (!PyArg_ParseTuple(args, "i", &handle))
+		goto end;
+
+	ASSERT_ZERO(media_pipeline_start(handle), err);
+	ret = Py_None;
+	Py_INCREF(ret);
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "Error starting pipeline");
+ end:
+	return ret;
+}	
+
+static PyObject *
+p2pship_media_pipeline_destroy(PyObject *self, PyObject *args)
+{
+	PyObject *ret = NULL;
+	int handle = -1;
+	
+	if (!PyArg_ParseTuple(args, "i", &handle))
+		goto end;
+
+	ASSERT_ZERO(media_pipeline_destroy(handle), err);
+	ret = Py_None;
+	Py_INCREF(ret);
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "Error destroying pipeline");
+ end:
+	return ret;
+}	
+
+
+
 /* init the extensions */
 static PyMethodDef p2pshipMethods[] = {
     {"get_json",  p2pship_get_json, METH_VARARGS, "Retrieves configuration data in json format."},
@@ -2382,6 +2447,12 @@ static PyMethodDef p2pshipMethods[] = {
     {"sip_route_as_local",  p2pship_sip_route_as_local, METH_VARARGS, "Routes a SIP message as if originated from local."},
     {"sip_route_as_remote",  p2pship_sip_route_as_remote, METH_VARARGS, "Routes a SIP message as if originated from remote."},
     {"sip_get_local_contact",  p2pship_sip_get_local_contact, METH_VARARGS, "Returns the local proxy address, as seen by the user."},
+#endif
+
+#ifdef CONFIG_MEDIA_ENABLED
+    {"media_pipeline_parse",  p2pship_media_pipeline_parse, METH_VARARGS, "Creates a media pipeline from the given gstreamer text line."},
+    {"media_pipeline_start",  p2pship_media_pipeline_start, METH_VARARGS, "Starts the given media object."},
+    {"media_pipeline_destroy",  p2pship_media_pipeline_destroy, METH_VARARGS, "Destroys the given media object."},
 #endif
 
     {NULL, NULL, 0, NULL}        /* Sentinel */
@@ -2679,6 +2750,7 @@ static struct processor_module_s processor_module =
 	.close = pymod_close,
 	.name = "pymod",
 	.depends = "",
+
 };
 
 /* register func */
