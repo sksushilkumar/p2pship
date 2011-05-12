@@ -423,6 +423,7 @@ void ident_ca_free(ca_t *ca);
 ca_t* ident_ca_new(char *name);
 
 int ident_data_check_cert(ident_t *ident);
+ca_t *ident_find_ca_by_checking_signature(X509 *cert);
 
 char *ident_data_x509_get_serial(X509 *cert);
 char *ident_data_x509_get_name_digest(X509_NAME *name);

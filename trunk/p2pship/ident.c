@@ -720,6 +720,7 @@ ident_find_ca_by_digest(char *dig)
 	
 	ship_lock(cas);
 	while (!ret && (ca = (ca_t*)ship_list_next(cas, &ptr))) {
+		LOG_DEBUG("Comparing %s to the got %s cert..\n", ca->digest, dig);
 		if (!strcmp(ca->digest, dig))
 			ret = ca;
 	}
@@ -753,12 +754,44 @@ ident_find_ca_by_serial(char *dig)
 }
 
 ca_t *
+ident_find_ca_by_checking_signature(X509 *cert)
+{
+	ca_t *ca = NULL;
+	void *ptr = NULL;
+	
+	ship_lock(cas);
+	while ((ca = (ca_t*)ship_list_next(cas, &ptr))) {
+		if (ident_data_x509_check_signature(cert, ca->cert)) {
+			char *tmp = ident_data_x509_get_cn(X509_get_issuer_name(cert));
+			char *tmp2 = ident_data_x509_get_cn(X509_get_issuer_name(ca->cert));
+			LOG_WARN("Found CA by different name: '%s' vs. '%s'\n");
+			freez(tmp);
+			freez(tmp2);
+			
+			ship_lock(ca);
+			ship_restrict_locks(ca, identities);
+			ship_restrict_locks(ca, cas);
+			break;
+		}
+	}
+	ship_unlock(cas);
+	return ca;
+}
+
+ca_t *
 ident_get_issuer_ca(X509 *cert)
 {
 	char *key;
 	ca_t *ret = 0;
-	if ((key = ident_data_x509_get_issuer_digest(cert)))
+
+	if ((key = ident_data_x509_get_issuer_digest(cert))) {
+		char *tmp = ident_data_x509_get_cn(X509_get_issuer_name(cert));
+		LOG_DEBUG("Finding CA for issuer '%s'\n", tmp);
+		freez(tmp);
 		ret = ident_find_ca_by_digest(key);
+	} else {
+		LOG_WARN("Could not find an issuer for the certificate!\n");
+	}
 	freez(key);
 	return ret;
 }
@@ -937,8 +970,8 @@ ident_register_new_empty_ident(char *sip_aor)
 		IDENT_SET_FLAG(ret, IDENT_FLAG_NO_SAVE);
 #endif		
  		ship_lock(ret);
- 		ship_restrict_locks(ret, identities);
 		ship_obj_list_add(identities, ret);
+ 		ship_restrict_locks(ret, identities);
 
 		processor_run_async((void (*)(void))ident_save_identities);
 	}
@@ -1641,7 +1674,7 @@ ident_cert_is_valid(X509 *cert)
 	
 	/* still/yet valid? (the cert) */
 	ASSERT_ZERO(ident_data_x509_get_validity(cert, &start, &end), err);
-	ASSERT_TRUE(((start - TIME_APPROX) <= now) && ((end + TIME_APPROX) >= now), err);
+	ASSERT_TRUES(((start - TIME_APPROX) <= now) && ((end + TIME_APPROX) >= now), err, "Cert is no longer valid!\n");
 
 	ret = 1;
  err:
@@ -1671,16 +1704,24 @@ ident_cert_is_trusted(X509 *cert)
 	int ret = 0;
 	
 	/* find suitable CA */
-	ca = ident_get_issuer_ca(cert);
-	if (ca) {	
+	if ((ca = ident_get_issuer_ca(cert))) {
 		/* check signature */
 		int match = ident_data_x509_check_signature(cert, ca->cert);
 		ship_unlock(ca);
 		if (!match) {
-			LOG_WARN("Registration package wasn't signed by CA\n");
+			LOG_WARN("Registration package wasn't signed by the CA it claimed!\n");
 			goto err;
-		}
+		} else
+			ret = 1;
 	} else {
+		/* do a time-consuming query */
+		if ((ca = ident_find_ca_by_checking_signature(cert))) {
+			ship_unlock(ca);
+			ret = 1;
+		}
+	}
+			
+	if (!ret) {
 		int lev = -1;
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 		ident_t *ident = NULL;
@@ -1700,10 +1741,9 @@ ident_cert_is_trusted(X509 *cert)
 #endif		
 		if (!ident_trust_friends || lev < 1) {
 			ASSERT_TRUES(ident_allow_untrusted, err, "Could not establish trust in the cert\n");
-		}
+		} else
+			ret = 1;
 	}
-
-	ret = 1;
  err:
 	return ret;
 }
@@ -1758,7 +1798,7 @@ ident_import_foreign_reg(reg_package_t *reg)
 	ship_lock(foreign_idents);
 	while (import && (r = (reg_package_t *)ship_list_next(foreign_idents, &ptr))) {
 		if (!strcmp(r->sip_aor, reg->sip_aor)) {
-			if (reg->created > r->created || r->need_update) {
+			if (reg->created >= r->created || r->need_update) {
 				ship_lock(r);
 				ship_list_remove(foreign_idents, r);
 				ship_unlock(r);
