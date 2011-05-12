@@ -27,6 +27,10 @@ if HIP_ENABLED
 endif
 
 extra_sources =
+if MEDIA_ENABLED
+extra_sources += media.c
+endif
+
 if DBUS_ENABLED
 extra_sources += osso_dbus.c
 endif
