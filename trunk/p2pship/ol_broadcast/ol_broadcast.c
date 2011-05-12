@@ -209,13 +209,16 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 {
 	ship_list_t *resps = NULL;
 	void *ptr = 0;
-	char *pkgdata = strchr(data, '\n');
-	char *key = strchr(data, ':');
+	char *pkgdata = NULL;
+	char *key = NULL;
 	addr_t addr;
+	int len2 = len;
 
-	if (len > 0) {
+	if (data && len2 > 0) {
 		LOG_VDEBUG("Got a broadcast packet on socket %d, len %d: '%s'\n",
 			   s, len, data);
+		pkgdata = strchr(data, '\n');
+		key = strchr(data, ':');
 	} else {
 		if (len < 0)
 			netio_close_socket(s);
