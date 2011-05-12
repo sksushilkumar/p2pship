@@ -94,6 +94,9 @@ enum {
     USER_ERROR("[PANIC] %s: " fmt "\nAborting due to panic\n", __FUNCTION__, ##args);\
     exit(1);}
 
+#define ASSERT_POSITIVE(val, lab, arg...) \
+	{ long __tmp = (long)(val); if ((__tmp) < 1) { LOG_ASSERT("Assert failed @ %s:%d, not POSITIVE (%d)\n", __FILE__, __LINE__, __tmp); goto lab; }}
+
 #define ASSERT_TRUE(val, lab, arg...) \
 	{ long __tmp = (long)(val); if (!(__tmp)) { LOG_ASSERT("Assert failed @ %s:%d, not TRUE (%d)\n", __FILE__, __LINE__, __tmp); goto lab; }}
 
