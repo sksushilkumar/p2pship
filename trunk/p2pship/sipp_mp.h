@@ -77,9 +77,6 @@ sipp_mp_create_new(char *callid, char *local_aor, char *remote_aor, char *mediat
 void sipp_mp_clean_by_id(char * ident);
 void sipp_mp_clean_by_call(char * callid);
 
-/* does some periodic cleanups of dead proxies */
-void sipp_mp_autoclean();
-
 /* releases the media proxy */
 void sipp_mp_free(sipp_media_proxy_t *mp);
 
