@@ -58,6 +58,7 @@
 #ifdef DO_STATS
 #include "access_control.h"
 #endif
+#include "ui.h"
 
 //#define ship_lock_conn(conn) { printf("lock conn..\n"); ship_lock(conn); ship_restrict_locks(conn, identities); ship_restrict_locks(conn, conn_all_conn); printf("conn yes..\n"); }
 
@@ -731,6 +732,10 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 
 		if (ret) {
 			LOG_WARN("processing of message type %d failed (code %d)!\n", type, ret);
+			if (type == PKG_REG) {
+				ui_popup("Dropped connection attempt from untrusted peer!");
+					 
+			}
 		} else {
 			LOG_VDEBUG("processing of message type %d ok!\n", type);
 			if (got_useful)
@@ -891,29 +896,28 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 	reg = NULL; // it's gone either way
 	ship_lock_conn(conn);
 	
-        if (!import) {
-
-                if (!conn->sip_aor) {
-                        conn->sip_aor = tmp_aor;
-			tmp_aor = NULL;
-		}
+	ASSERT_ZEROS(import, err, "The reg packet presented could not be imported!\n");
+	
+	if (!conn->sip_aor) {
+		conn->sip_aor = tmp_aor;
+		tmp_aor = NULL;
+	}
 		
-                /* allow only updates for the same sip aor on a connection,
-                 * and mark connection as connected if we get a reg package where we haven't
-                 * before.
-                 */
-                if (conn->sip_aor && (!tmp_aor || !strcmp(conn->sip_aor, tmp_aor))) {
-                        if (conn->local_aor && conn->state != STATE_CONNECTED) {
-				/* here we close any existing sockets
-				   for the same aor-pair. */                                
-				STATS_LOG("conn handshake done\n");
-				if (!conn_ensure_unique_conn_lock(conn)) {
-					conn_handshake_done(conn);
-				}
-                        }
-			ret = 0;
-                }
-        }
+	/* allow only updates for the same sip aor on a connection,
+	 * and mark connection as connected if we get a reg package where we haven't
+	 * before.
+	 */
+	if (conn->sip_aor && (!tmp_aor || !strcmp(conn->sip_aor, tmp_aor))) {
+		if (conn->local_aor && conn->state != STATE_CONNECTED) {
+			/* here we close any existing sockets
+			   for the same aor-pair. */                                
+			STATS_LOG("conn handshake done\n");
+			if (!conn_ensure_unique_conn_lock(conn)) {
+				conn_handshake_done(conn);
+			}
+		}
+		ret = 0;
+	}
  err:
 	freez(tmp_aor);
         return ret;
