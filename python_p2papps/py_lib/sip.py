@@ -644,7 +644,8 @@ def sip_handle_hook(local_aor, remote_aor,
     m.parse(data)
     m.local_aor = local_aor
     m.remote_aor = remote_aor
-
+    m.hook_data = data2
+    
     hi = 2
     if not client_handler:
         hi = 3
