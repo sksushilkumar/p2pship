@@ -1018,7 +1018,7 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 	char *tmp = NULL;
 	int ret = -1;
 	void *ptr;
-	ident_t *ident;
+	ident_t *ident = 0;
 	ca_t *ca;
 	int bufsize = 0;
 	
@@ -1030,8 +1030,10 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 		ship_lock(ident);
 
 		/* skip the tmp idents */
-		if (ident_is_no_save(ident))
+		if (ident_is_no_save(ident)) {
+			ship_unlock(ident);
 			continue;
+		}
 
 		ASSERT_TRUE(node = xmlNewTextChild(tree, NULL, (xmlChar*)"identity", NULL), err);
 		ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"sip-aor", (xmlChar*)ident->sip_aor), err);
@@ -1136,6 +1138,7 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 	if (xmlbuf) xmlFree(xmlbuf);
 	if (doc) xmlFreeDoc(doc);
 	//xmlCleanupParser();
+	ship_unlock(ident);
 		
 	return ret;
 }
@@ -1149,7 +1152,7 @@ ident_data_x509_get_name_digest(X509_NAME *name)
 	unsigned int i = 0;
 	unsigned char md[EVP_MAX_MD_SIZE];
 	char *ret = NULL;
-	
+
 	if (X509_NAME_digest(name, EVP_sha1(), md, &i)) {
 		int r;
 		ret = (char*)mallocz((i*2) + 1);
@@ -1353,12 +1356,14 @@ ident_data_x509_check_signature(X509 *cert, X509 *ca)
 	int ret = 0;
 	
 	/* check validity..? */
-	if ((pkey = X509_get_pubkey(ca))) {
-		if (X509_verify(cert, pkey) > 0) {
-			ret = 1;
-		}
+	ASSERT_TRUE(pkey = X509_get_pubkey(ca), err);
+	ASSERT_POSITIVE(X509_verify(cert, pkey), err);
+	ret = 1;
+ err:
+	if (pkey) {
 		EVP_PKEY_free(pkey);
 	}
+	
 	return ret;
 }
 
@@ -1399,8 +1404,8 @@ ident_data_dump_identities_json(ship_list_t *identities, char **msg)
 	int buflen = 0, datalen = 0;
 	char *tmp = 0, *tmp2 = 0, *service_str = 0;
 	
-	ASSERT_TRUE(def = ident_get_default_ident(), err);
-	ship_unlock(def);
+	if ((def = ident_get_default_ident()))
+		ship_unlock(def);
 
 	ASSERT_TRUE(buf = append_str("var p2pship_idents = {\n", buf, &buflen, &datalen), err);
 	ship_lock(identities);
@@ -1614,7 +1619,7 @@ ident_data_bb_get_first_level_cert(ship_list_t *buddy_list, X509 *cert)
 
 		if (!buddy->is_friend)
 			continue;
-		if (!ship_cmp_pubkey(cert, buddy->cert))
+		if (buddy->cert && !ship_cmp_pubkey(cert, buddy->cert))
 			return 1;
 		for (i=0; i < BLOOMBUDDY_MAX_LEVEL && (ret < 0 || i < ret); i++) {
 			if (ship_bloom_check_cert(buddy->friends[i], cert))
