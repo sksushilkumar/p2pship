@@ -2,10 +2,6 @@ import socket
 import threading
 import select
 import time
-import gst
-
-
-
 
 class Mixer:
     """Handles the audiomixing"""
@@ -16,7 +12,7 @@ class Mixer:
         
     def stop(self):
         if self.pl is not None:
-            self.pl.set_state(gst.STATE_NULL)
+            p2pship.media_pipeline_destroy(self.pl)
             self.pl = None
         for aor in self.aors.keys():
             (sock, saddr, addr) = self.aors[aor]
@@ -53,7 +49,7 @@ class Mixer:
             return False
 
         caps="application/x-rtp,media=(string)audio,clock-rate=(int)8000,encoding-name=(string)PCMA"
-        decbin = "gstrtpbin ! rtppcmadepay ! alawdec ! audioconvert ! audioresample ! audio/x-raw-int,channels=1,rate=8000"
+        decbin = ".recv_rtp_sink_0 gstrtpbin ! rtppcmadepay ! alawdec ! audioconvert ! audioresample ! audio/x-raw-int,channels=1,rate=8000"
         encbin = "audioconvert  ! audioresample ! audio/x-raw-int,channels=1,rate=8000 ! alawenc ! rtppcmapay"
 
         line = ''
@@ -67,19 +63,22 @@ class Mixer:
             name = str(saddr[1])
             # mixer & source
             line += 'liveadder name=mixer%s ! %s ! udpsink host=%s port=%d sockfd=%d ' % (name, encbin, addr[0], addr[1], sock.fileno())
-            line += 'udpsrc sockfd=%d caps="%s" ! %s ! tee name=src%s ' % (sock.fileno(), caps, decbin, name)
+            line += 'udpsrc sockfd=%d port=%d caps="%s" ! %s ! tee name=src%s ' % (sock.fileno(), saddr[1], caps, decbin, name)
             for aor2 in self.aors.keys():
                 if aor2 == aor:
                     continue
                 name2 = str(self.aors[aor2][1][1])
                 line += 'src%s. ! queue ! mixer%s. ' % (name, name2)
 
-        self.pl = gst.parse_launch(line)
-        bus = self.pl.get_bus()
-        bus.add_signal_watch()
-        #bus.connect("message", on_message)
-        self.pl.set_state(gst.STATE_PLAYING)
-        return True
+        info("Starting pipeline..")
+        #info('gst pipeline: %s' % line)
+        self.pl = p2pship.media_pipeline_parse(line)
+        if self.pl > 0:
+            p2pship.media_pipeline_start(self.pl)
+            return True
+        else:
+            self.pl = None
+            return False
 
     def remove(self, aor):
         info("removing mixers for %s" % aor)
@@ -141,8 +140,11 @@ class MultipartyHandler(SipHandler):
             self.send_msgs("Your invited to %s by %s. Please type /join to join!" % (self.title, param),
                            param, "%s was invited" % param)
         elif user in self.members:
-            self.send_msg(user + ": " + message.body, omit = user)
-        else:
+            if message.body.startswith("<?xml"):
+                pass #self.send_msg(message.body, omit = user)
+            else:
+                self.send_msg(user + ": " + message.body, omit = user)
+        elif not message.body.startswith("<?xml"):
             self.send_msg("Please /join first!", user)
 
     def ack_got(self, message):
