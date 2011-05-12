@@ -946,7 +946,7 @@ netio_loop(void *data)
                                                         buf[r] = 0;
                                                 if (e->read_callback) {
 							/* todo: make the worker threads do this */
-							e->read_callback(e->s, buf, r);
+							e->read_callback(e->s, (r > -1? buf: NULL), r);
 							ship_check_restricts();
 						}
                                                 retval--;
@@ -1037,7 +1037,7 @@ netio_loop(void *data)
 								buf[r] = 0;
 							if (e->packet_read_callback) {
 								/* todo: for the worker threads! */
-								e->packet_read_callback(e->s, buf, r, sa, addrlen);
+								e->packet_read_callback(e->s, (r > -1? buf: NULL), r, sa, addrlen);
 							}
 							ship_check_restricts();
 							retval--;
