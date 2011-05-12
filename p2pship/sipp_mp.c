@@ -176,9 +176,9 @@ sipp_mp_find(char *callid, addr_t *target_addr, int sendby)
 }
 
 
+/* checks whether there are any proxies pointing to ourselves */
 /* does some periodic cleanups of dead proxies */
-/* this isn't used right now.. 
-void
+static void
 sipp_mp_autoclean()
 {
         void *ptr = NULL, *prev = NULL;
@@ -186,18 +186,19 @@ sipp_mp_autoclean()
 	time_t now;
 	time(&now);
 	
-        ship_list_sync(sipp_mps, {
-                while (mp = ship_list_next(sipp_mps, &ptr)) {
-                        if ((now - mp->last) > MP_DEAD_TO) {
-                                ship_list_remove(sipp_mps, mp);
-                                sipp_mp_close(mp);
-                                ptr = prev;
-                        } else
-                                prev = ptr;
-                }
-        });
+        ship_lock(sipp_mps);
+		
+	while ((mp = ship_list_next(sipp_mps, &ptr))) {
+		/* clean up dead ones */
+		if ((now - mp->last) > MP_DEAD_TO) {
+			ship_list_remove(sipp_mps, mp);
+			sipp_mp_close(mp);
+			ptr = prev;
+		} else
+			prev = ptr;
+	}
+        ship_unlock(sipp_mps);
 }
-*/
 
 static void 
 sipp_mp_cb_data_got(int s, char *data, size_t len,
@@ -360,11 +361,40 @@ sipp_mp_set_target(sipp_media_proxy_t *mp, addr_t *targetaddr)
 	return 0;
 }
 
+
 /* starts the media proxy */
 int 
 sipp_mp_start(sipp_media_proxy_t *mp, int remotely_got)
 {
-        LOG_INFO("starting mp (type %d) for %s (%s:%d -> %s:%d)..\n", 
+	sipp_media_proxy_t *mp2;
+	void *ptr = NULL, *lastptr = NULL;
+
+	sipp_mp_autoclean();
+
+       	/* remove possible loops */
+
+        ship_lock(sipp_mps);
+	while ((mp2 = ship_list_next(sipp_mps, &ptr))) {
+		if (!ident_addr_cmp(&mp->local_addr, &mp2->remote_addr)) {
+			LOG_WARN("mediaproxy loop detected! local will be changed!\n");
+			memcpy(&mp->local_addr, &mp2->local_addr, sizeof(addr_t));
+		} else if (!ident_addr_cmp(&mp->remote_addr, &mp2->local_addr)) {
+			LOG_WARN("mediaproxy loop detected! remote will be changed!\n");
+			memcpy(&mp->remote_addr, &mp2->remote_addr, sizeof(addr_t));
+		} else
+			mp2 = NULL;
+
+		if (mp2) {
+			ship_list_remove(sipp_mps, mp2);
+			sipp_mp_close(mp2);
+			ptr = lastptr;
+		}
+		lastptr = ptr;
+	}
+	ship_unlock(sipp_mps);
+
+
+	LOG_INFO("starting mp (type %d) for %s (%s:%d -> %s:%d)..\n", 
 		 mp->sendby, mp->sip_aor, 
                  mp->local_addr.addr, mp->local_addr.port,
                  mp->remote_addr.addr, mp->remote_addr.port);
