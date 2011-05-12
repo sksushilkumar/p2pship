@@ -1,0 +1,299 @@
+/*
+  p2pship - A peer-to-peer framework for various applications
+  Copyright (C) 2007-2010  Helsinki Institute for Information Technology
+  
+  This program is free software; you can redistribute it and/or
+  modify it under the terms of the GNU General Public License
+  as published by the Free Software Foundation; either version 2
+  of the License, or (at your option) any later version.
+  
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+  
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+*/
+#define _GNU_SOURCE
+#include "ship_utils.h"
+#include <gst/gst.h>
+
+#include "ship_debug.h"
+#include "processor.h"
+
+/* the elements */
+static ship_ht_t *elements = 0;
+static int element_count = 1;
+
+#if 0
+
+/* a source / sink media element */
+typedef struct media_element_s {
+	
+	/* type .. source / sink */
+	int type;
+
+	
+	/* the bin */
+	GstBin *bin;
+
+	/* To what this is (possible) connected */
+	ship_list_t *peers;
+	
+	/* the player this belongs to */
+	GstElement *player;
+
+} media_element_t;
+
+
+static void
+media_element_free(media_element_t *elm)
+{
+	void *ptr = NULL;
+	if (!elm)
+		return;
+
+	if (elm->bin) {
+		gst_object_unref(GST_OBJECT(elm->bin));
+	}
+
+	
+}
+
+static media_element_t*
+media_element_new()
+{
+	media_element_t* ret = NULL;
+	ASSERT_TRUE(ret = mallocz(sizeof(media_element_t)), err);
+	ASSERT_TRUE(ret->bin = gst_bin_new(NULL), err);
+	ASSERT_TRUE(ret->peers = ship_list_new(), err);
+	return ret;
+ err:
+	media_element_free(ret);
+	return NULL;
+}
+
+/* creates a udp source element either from a socket or port */
+static media_element_t*
+media_element_new_udpsrc(const int port, const int socket)
+{
+	media_element_t* ret = NULL;
+	ASSERT_TRUE(ret = media_element_new(), err);
+	
+#define MEDIA_CAPS "application/x-rtp,media=(string)audio,clock-rate=(int)8000,encoding-name=(string)PCMA"
+
+	if (socket == -1) {
+		// socket = ... 
+		
+	}
+	
+	/*
+        source = self.make_element("udpsrc")
+        source.set_property("caps", gst.Caps(caps))
+        source.set_property("sockfd", self.sock.fileno())
+        
+        rtpbin = self.make_element("gstrtpbin")
+        rtpdepay = self.make_element("rtppcmadepay")
+
+        alawdec = self.make_element('alawdec')
+        aconv = self.make_element('audioconvert')
+
+        asample = self.make_element('audioresample')
+        capsfilter = self.make_element('capsfilter')
+        capsfilter.set_property('caps', gst.caps_from_string('audio/x-raw-int,channels=1,rate=8000'))
+        
+        rtpbin.connect("pad-added", self.pad_added, rtpdepay);
+        gst.element_link_many(source, rtpbin)
+        gst.element_link_many(rtpdepay, alawdec, aconv, asample, capsfilter, self._source)
+	*/
+ err:
+	media_element_free(ret);
+	return ret;
+}
+
+#endif
+
+/* checks whether an element exists */
+static int
+media_check_element(const char *name)
+{
+	GstElementFactory *factory = NULL;
+	
+	if ((factory = gst_element_factory_find(name))) {
+		gst_object_unref(GST_OBJECT(factory));
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+static GstElement*
+media_get_element(const int handle)
+{
+	GstElement *e = (GstElement*)ship_ht_get_int(elements, handle);
+	return e;
+}
+
+static GstElement*
+media_remove_element(const int handle)
+{
+	GstElement *e = (GstElement*)ship_ht_remove_int(elements, handle);
+	return e;
+}
+
+static int
+media_store_element(GstElement *e)
+{
+	int ret = -1;
+	ship_lock(elements);
+	ret = element_count++;
+	ship_ht_put_int(elements, ret, e);
+	ship_unlock(elements);
+	return ret;
+}
+
+
+/* receiver of bus message signals */
+static void
+media_bus_message_cb(GstBus *bus,
+		     GstMessage *message,
+		     gpointer user_data)
+{
+	const gchar* name = NULL;
+	GError* error;
+	gchar* debugs;
+
+	LOG_DEBUG("Got message\n");
+	name = GST_MESSAGE_TYPE_NAME(message);
+	LOG_DEBUG("\tmessage type: %s\n", name);
+
+	if (GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
+		gst_message_parse_error(message, &error, &debugs);
+		LOG_WARN("Gstreamer error message: %s\n", name);
+		LOG_WARN("\tmessage: %s\n", error->message);
+		LOG_WARN("\tdebugs: %s\n", debugs);
+	
+		g_error_free(error);
+		free(debugs);
+	}
+}
+
+/* creates a player from the given gst pipeline string. returns a
+   handle to it. < 0 on errors / problems. */
+int
+media_parse_pipeline(const char *pipeline)
+{
+	int ret = -1;
+	GstElement *e = NULL;
+	GstBus *bus = NULL;
+	
+	LOG_DEBUG("launching pipeline: '%s'\n", pipeline);
+	ASSERT_TRUE(e = gst_parse_launch(pipeline, NULL), err);
+	ret = media_store_element(e);
+	
+	/* add observer */
+	ASSERT_TRUE(bus = gst_element_get_bus(e), err);
+	gst_bus_add_signal_watch(bus);
+	g_signal_connect(G_OBJECT(bus), "message", 
+			 G_CALLBACK(media_bus_message_cb), NULL);
+	gst_object_unref(GST_OBJECT(bus));
+ err:
+	return ret;
+}
+
+int
+media_pipeline_start(const int handle)
+{
+	int ret = -1;
+	GstElement *e = NULL;
+
+	ASSERT_TRUE(e = media_get_element(handle), err);
+	ASSERT_TRUE(gst_element_set_state(e, GST_STATE_PLAYING), err);
+	ret = 0;
+ err:
+	return ret;
+}
+
+int
+media_pipeline_stop(const int handle)
+{
+	int ret = -1;
+	GstElement *e = NULL;
+
+	ASSERT_TRUE(e = media_get_element(handle), err);
+	ASSERT_TRUE(gst_element_set_state(e, GST_STATE_NULL), err);
+	ret = 0;
+ err:
+	return ret;
+}
+
+int
+media_pipeline_destroy(const int handle)
+{
+	int ret = -1;
+	GstElement *e = NULL;
+
+	ASSERT_TRUE(e = media_remove_element(handle), err);
+	gst_element_set_state(e, GST_STATE_NULL);
+	gst_object_unref(GST_OBJECT(e));
+	ret = 0;
+ err:
+	return ret;
+}
+
+
+/**
+ * initializes the media handling extensions
+ */
+static int
+media_init(processor_config_t *config)
+{
+	int ret = -1;
+	guint major, minor, micro, nano;
+
+	ASSERT_TRUE(elements = ship_ht_new(), err);
+	ASSERT_TRUE(gst_init_check(NULL, NULL, NULL), err);
+	
+	gst_version(&major, &minor, &micro, &nano);
+	LOG_INFO("Using gstreamer %d.%d.%d/%d\n", major, minor, micro, nano); 
+
+	ASSERT_TRUES(media_check_element("liveadder"), err, "Missing liveadder gstreamer plugin!\n");
+
+	ret = 0;
+ err:
+	return ret;
+}
+
+static void
+media_close()
+{
+	gst_deinit();
+	GstElement *e = NULL;
+	
+	while ((e = ship_ht_pop(elements))) {
+		gst_element_set_state(e, GST_STATE_NULL);
+		gst_object_unref(GST_OBJECT(e));
+	}
+	ship_ht_free(elements);
+}
+
+
+/* the media register */
+static struct processor_module_s processor_module = 
+{
+	.init = media_init,
+	.close = media_close,
+	.name = "media",
+	.depends = "",
+};
+
+/* register func */
+void
+media_register() {
+	processor_register(&processor_module);
+}
+
+
+#include "media.h"
