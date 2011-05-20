@@ -429,6 +429,61 @@ p2pship_get_name(PyObject *self, PyObject *args)
 	return Py_None;
 }
 
+/* gets the name of the file */
+static PyObject *
+p2pship_get_file(PyObject *self, PyObject *args)
+{
+	pymod_state_t *state = NULL;
+	PyObject *ret = 0;
+	
+	if ((state = pymod_get_current_state())) {
+		ret = Py_BuildValue("s", state->file);
+		return ret;
+	}
+	Py_INCREF(Py_None);
+	return Py_None;
+}
+
+/* gets the data directory reserved for the script */
+static PyObject *
+p2pship_get_datadir(PyObject *self, PyObject *args)
+{
+	pymod_state_t *state = NULL;
+	PyObject *ret = 0;
+	char *dir = NULL;
+	char *datadir = NULL;
+	char *pos = NULL;
+	
+	ASSERT_TRUE(state = pymod_get_current_state(), err);
+		
+	ASSERT_TRUE(datadir = processor_config_string(processor_get_config(), P2PSHIP_CONF_PYTHON_DATA_DIR), err);
+	ASSERT_TRUE(dir = mallocz(strlen(datadir) + strlen(state->file) + 10), err);
+	strcpy(dir, datadir);
+		
+	if (!(pos = strrchr(state->file, '/'))) {
+		strcat(dir, "/");
+		pos = state->file;
+	}
+	strcat(dir, pos);
+	strcat(dir, "_data");
+		
+	/* create data dir: datadir/scriptname/ ? */
+		
+	ASSERT_ZERO(ship_ensure_dir(dir), err);
+		
+
+
+	ret = Py_BuildValue("s", dir);
+	goto end;
+ err:
+	freez(dir);
+	ret = Py_None;
+ end:
+	Py_INCREF(Py_None);
+	return ret;
+}
+
+
 /* logging */
 static PyObject *
 p2pship_log(PyObject *self, PyObject *args)
@@ -719,6 +774,7 @@ p2pship_config_set_update(PyObject *self, PyObject *args)
 	return NULL;
 }
 
+/* a bit redundant as we now have script-specific directories */
 static PyObject *
 p2pship_get_data_dir(PyObject *self, PyObject *args)
 {
@@ -1552,11 +1608,11 @@ pymod_sipp_client_handler(ident_t *ident, const char *remote_aor, addr_t *contac
 			*buf = addr;
 			*len = nlen;
 			addr = 0;
-			ret = 1;
+			ret = 1; /* forward the new message */
 		} else
-			ret = -1;
+			ret = -1; /* forward the old message */
 	} else
-		ret = 0; /* done with it! */
+		ret = 0; /* done with it, do NOT forward the message to the UA! */
 
  err2:
 	pymod_tstate_return(h->tstate);
@@ -1609,15 +1665,19 @@ static PyObject *
 p2pship_sip_route_as_local(PyObject *self, PyObject *args)
 {
 	char *msg;
-	int len = 0;
+	int len = 0, filter = -1;
 	PyObject *ret = 0;
 	addr_t addr;
 	
-	if (!PyArg_ParseTuple(args, "s#:sip_route_as_local", &msg, &len))
+	if (!PyArg_ParseTuple(args, "s#|i:sip_route_as_local", &msg, &len, &filter))
 		goto err;
+
+	/* if nothing indicated, do not filter! */
+	if (filter != 1)
+		filter = 0;
 	
 	bzero(&addr, sizeof(addr));
-	sipp_handle_local_message(msg, len, NULL, &addr, 0);
+	sipp_handle_local_message(msg, len, NULL, &addr, filter);
 	ret = Py_None;
  err:
 	Py_XINCREF(ret);
@@ -1628,19 +1688,26 @@ static PyObject *
 p2pship_sip_route_as_remote(PyObject *self, PyObject *args)
 {
 	char *msg, *local_aor, *remote_aor;
-	int len = 0;
-	PyObject *ret = 0;
+	int len = 0, filter = -1;
+	PyObject *ret = 0; //, *bypass = 0;
 	ident_t *ident = 0;
 	
-	if (!PyArg_ParseTuple(args, "sss#:sip_route_as_remote", &local_aor, &remote_aor, &msg, &len))
-		goto err;
+	if (!PyArg_ParseTuple(args, "sss#|i:sip_route_as_remote", &local_aor, &remote_aor, &msg, &len, &filter))
+		goto end;
+	
+	/* if nothing indicated, do not filter! */
+	if (filter != 1)
+		filter = 0;
 
 	LOG_DEBUG("route as remote from %s (remote) to %s (local)\n", remote_aor, local_aor);
 	/* get the ident to whom we should route this message */
 	ASSERT_TRUE(ident = ident_find_by_aor(local_aor), err);
-	ASSERT_ZERO(sipp_handle_remote_message(msg, len, ident, remote_aor, 0), err);
+	ASSERT_ZERO(sipp_handle_remote_message(msg, len, ident, remote_aor, filter), err);
 	ret = Py_None;
+	goto end;
  err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+ end:
 	ship_obj_unlockref(ident);
 	Py_XINCREF(ret);
 	return ret;
@@ -1725,6 +1792,60 @@ p2pship_sip_get_local_contact(PyObject *self, PyObject *args)
  end:
 	ship_obj_unlockref(ident);
 	freez(str);
+	Py_XINCREF(ret);
+	return ret;
+}
+
+#include "access_control.h"
+
+static int
+pymod_ac_filter(ac_sip_t *asip, void *data)
+{
+	PyObject *arglist = 0, *result = 0;
+	pymod_ipc_handler_t *h = (pymod_ipc_handler_t *)data;
+	char *msg = NULL;
+	int msglen = -1;
+	
+	ASSERT_ZERO(sipp_sip_to_str(asip->evt->sip, &msg, (unsigned int*)&msglen), err);
+	
+	ship_check_restricts();
+	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
+	ASSERT_TRUE(arglist = Py_BuildValue("(sssssii)", msg, asip->local, asip->remote, asip->from, asip->to, 
+					    asip->verdict, asip->remotely_got), err);
+	
+	result = PyObject_CallObject(h->callback, arglist);
+	Py_DECREF(arglist);
+	ASSERT_TRUE(result, err);
+
+	ASSERT_TRUE(PyInt_Check(result), err2);
+	asip->verdict = (int)PyInt_AsLong(result);
+ err2:
+	Py_DECREF(result);
+ err:
+	freez(msg);
+	pymod_tstate_return(h->tstate);
+	return 1;
+}
+
+static PyObject *
+p2pship_ac_add_filter(PyObject *self, PyObject *args)
+{
+	PyObject *ret = 0, *callback = 0, *data = 0;
+	pymod_ipc_handler_t *ipc = NULL;
+	
+	if (!PyArg_ParseTuple(args, "O|O:ac_add_filter", &callback, &data)) {
+		goto end;
+	}
+	
+	ASSERT_TRUE(ipc = pymod_ipc_new("message filter", callback, data), err);
+	ASSERT_ZERO(ac_packetfilter_add(pymod_ac_filter, ipc, 0), err);
+	
+	ret = Py_None;
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+	pymod_ipc_free(ipc);
+ end:
 	Py_XINCREF(ret);
 	return ret;
 }
@@ -2317,24 +2438,53 @@ p2pship_ol_ident_subscribe(PyObject *self, PyObject *args)
 	return p2pship_ol_ident_getsub(self, args, 1);
 }
 
+#ifdef CONFIG_MEDIA_ENABLED
+
+static void
+pymod_media_cb(const int handle, const char *msgtype, const char *data, void *userdata)
+{
+	pymod_ipc_handler_t *h = (pymod_ipc_handler_t*)userdata;
+	PyObject *result = 0, *arglist = 0;
+	
+	ship_check_restricts();
+	ASSERT_TRUE(pymod_tstate_ok(h->tstate), end);
+	ASSERT_TRUE(arglist = Py_BuildValue("(iss)", handle, msgtype, data), err);
+	
+	result = PyObject_CallObject(h->callback, arglist);
+	Py_DECREF(arglist);
+	ASSERT_TRUE(result, err);
+	Py_DECREF(result);
+ err:
+	pymod_tstate_return(h->tstate);
+ end:
+	if (!strcmp(msgtype, "destroy")) {
+		pymod_ipc_free(userdata);
+	}
+}
 
 /** media handling */
 static PyObject *
 p2pship_media_pipeline_parse(PyObject *self, PyObject *args)
 {
 	char *str = 0;
-	PyObject *ret = NULL;
+	PyObject *ret = NULL, *callback = NULL;
 	int handle = -1;
+	pymod_ipc_handler_t *userdata = NULL;
 	
-	if (!PyArg_ParseTuple(args, "s", &str))
+	if (!PyArg_ParseTuple(args, "s|O", &str, &callback))
 		goto end;
 
-	handle = media_parse_pipeline(str);
+	if (callback) {
+		ASSERT_TRUE(userdata = pymod_ipc_new("mediaobserver", callback, NULL), err);
+	}
+	
+	handle = media_parse_pipeline(str, (userdata? pymod_media_cb : NULL), userdata);
 	ASSERT_POSITIVE(handle, err);
 	ASSERT_TRUE(ret = PyInt_FromLong(handle), err);
 	goto end;
  err:
 	PyErr_SetString(PyExc_StandardError, "Error creating pipeline");
+	pymod_ipc_free(userdata);
  end:
 	return ret;
 }	
@@ -2376,7 +2526,7 @@ p2pship_media_pipeline_destroy(PyObject *self, PyObject *args)
  end:
 	return ret;
 }	
-
+#endif
 
 
 /* init the extensions */
@@ -2400,6 +2550,8 @@ static PyMethodDef p2pshipMethods[] = {
 
     {"set_name",  p2pship_set_name, METH_VARARGS, "Sets the name of the application instance."},
     {"get_name",  p2pship_get_name, METH_VARARGS, "Gets the name of the application instance."},
+    {"get_file",  p2pship_get_file, METH_VARARGS, "Gets the file from which the application was loaded."},
+    {"get_datadir",  p2pship_get_datadir, METH_VARARGS, "Gets the script-specific data folder path."},
 
     {"config_create",  p2pship_config_create, METH_VARARGS, "Creates a new configuration key."},
     {"config_set",  p2pship_config_set, METH_VARARGS, "Sets a configuration value."},
@@ -2447,6 +2599,10 @@ static PyMethodDef p2pshipMethods[] = {
     {"sip_route_as_local",  p2pship_sip_route_as_local, METH_VARARGS, "Routes a SIP message as if originated from local."},
     {"sip_route_as_remote",  p2pship_sip_route_as_remote, METH_VARARGS, "Routes a SIP message as if originated from remote."},
     {"sip_get_local_contact",  p2pship_sip_get_local_contact, METH_VARARGS, "Returns the local proxy address, as seen by the user."},
+
+    {"ac_add_filter",  p2pship_ac_add_filter, METH_VARARGS, "Adds a message filter."},
+    // {"ac_remove_filter",  p2pship_ac_remove_filter, METH_VARARGS, "Removes a message filter."},
+
 #endif
 
 #ifdef CONFIG_MEDIA_ENABLED
@@ -2739,8 +2895,6 @@ pymod_start_plugins()
 	ship_list_free(list);
 	return ret;
 }
-
-
 
 
 /* the netio_man register */
