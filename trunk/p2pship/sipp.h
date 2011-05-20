@@ -45,7 +45,7 @@ typedef struct sipp_request_s
 
         osip_event_t *evt;        
 
-	addr_t from_addr;
+	addr_t *from_addr;
 
         sipp_listener_t *lis;
 
@@ -147,6 +147,7 @@ void sipp_unregister_client_handler(sipp_client_handler handler,
 int sipp_handle_local_message(char *msg, int len, sipp_listener_t *lis, addr_t *addr, const int filter);
 int sipp_handle_remote_message(char *msg, int msglen, ident_t *ident, char *remote_aor, const int filter);
 void sipp_get_addr_to_ua_or_default(ident_t *ident, addr_t *addr);
+int sipp_sip_to_str(osip_message_t *sip, char **buf, size_t *len);
 
 #endif
 #endif
