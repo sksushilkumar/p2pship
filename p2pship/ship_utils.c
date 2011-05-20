@@ -1233,6 +1233,21 @@ ship_ht_keys_add(ship_ht_t *ht, ship_list_t *ret)
 	ship_unlock(ht);
 }
 
+int
+ship_ht_has_value(ship_ht_t *ht, void *val)
+{
+	int ret = 0;
+	ship_ht_entry_t *e = NULL;
+	void *ptr = 0;
+	ship_lock(ht);
+	while (!ret && (e = ship_list_next(ht, &ptr))) {
+		if (e->value == val)
+			ret = 1;
+	}
+	ship_unlock(ht);
+	return ret;
+}
+
 ship_list_t * 
 ship_ht_keys(ship_ht_t *ht)
 {
@@ -1599,7 +1614,6 @@ ship_read_stream(FILE *f, void *data,
 			}
 			break;
 		}
-		freez(buf);
 		freez(key);
 	}
 	freez(buf);

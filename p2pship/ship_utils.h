@@ -643,6 +643,7 @@ void __NON_INSTRUMENT_FUNCTION__ ship_ht_clear(ship_ht_t *ht);
 void __NON_INSTRUMENT_FUNCTION__ ship_ht_empty_free(ship_ht_t *ht);
 ship_list_t * __NON_INSTRUMENT_FUNCTION__ ship_ht_values(ship_ht_t *ht);
 ship_list_t * __NON_INSTRUMENT_FUNCTION__ ship_ht_keys(ship_ht_t *ht);
+int __NON_INSTRUMENT_FUNCTION__ ship_ht_has_value(ship_ht_t *ht, void *val);
 void ship_ht_keys_add(ship_ht_t *ht, ship_list_t *ret);
 void *ship_ht_get_ptr(ship_ht_t *ht, const void *key);
 void *ship_ht_put_ptr(ship_ht_t *ht, void *key, void *val);
