@@ -79,4 +79,10 @@ int ac_packetfilter_remote(char *local_aor, char *remote_aor, osip_event_t *evt,
 int ac_init(processor_config_t *config);
 void ac_close();
 
+int ac_packetfilter_add(int (*filter)(ac_sip_t *asip, void *data),
+			void *data, const int force);
+void ac_packetfilter_remove(int (*filter)(ac_sip_t *asip, void *data),
+			    void *data);
+
+
 #endif

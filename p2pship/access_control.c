@@ -35,19 +35,83 @@
 
 //#define AC_HTTP_PF
 
-static void ac_packetfilter_debug(ac_sip_t *asip);
-static void ac_packetfilter_simple(ac_sip_t *asip);
+
+/* the access control modules */
+typedef struct ac_packetfilter_s 
+{
+	ship_obj_t parent;
+
+	int (*filter)(ac_sip_t *asip, void *data);
+	void *data;
+
+	/* whether this should be applied to *all* */
+	int force;
+} ac_packetfilter_t;
+
+
+static void
+ac_packetfilter_free(ac_packetfilter_t* filter)
+{
+	/* nothing */
+}
+
+static int
+ac_packetfilter_init(ac_packetfilter_t* filter,
+		     void *data)
+{
+	filter->filter = (int (*)(ac_sip_t *asip, void *data))data;
+	return 0;
+}
+
+SHIP_DEFINE_TYPE(ac_packetfilter);
+
+/* the filters .. */
+static ship_obj_list_t *filters = NULL;
+
+int
+ac_packetfilter_add(int (*filter)(ac_sip_t *asip, void *data),
+		    void *data, const int force)
+{
+	int ret = -1;
+	ac_packetfilter_t* f = NULL;
+
+	ASSERT_TRUE(f = (ac_packetfilter_t*)ship_obj_new(TYPE_ac_packetfilter, filter), err);
+	f->data = data;
+	f->force = force;
+	ship_obj_list_add(filters, f);
+	ret = 0;
+ err:
+	ship_obj_unref(f);
+	return ret;
+}
+
+void
+ac_packetfilter_remove(int (*filter)(ac_sip_t *asip, void *data),
+		       void *data)
+{
+	ac_packetfilter_t* f = NULL;
+	void *ptr = NULL;
+	while ((f = ship_list_next(filters, &ptr))) {
+		if (f->filter == filter && data == f->data) {
+			ship_obj_list_remove(filters, f);
+			break;
+		}
+	}
+}
+
+static int ac_packetfilter_debug(ac_sip_t *asip, void *data);
+static int ac_packetfilter_simple(ac_sip_t *asip, void *data);
 #ifdef AC_HTTP_PF
-static void ac_packetfilter_http(ac_sip_t *asip);
+static int ac_packetfilter_http(ac_sip_t *asip, void *data);
 #endif
-static void ac_packetfilter_trust(ac_sip_t *asip);
+static int ac_packetfilter_trust(ac_sip_t *asip, void *data);
 #ifdef DO_STATS
-static void ac_packetfilter_stats(ac_sip_t *asip);
+static int ac_packetfilter_stats(ac_sip_t *asip, void *data);
 #endif
-static void ac_packetfilter_blacklist(ac_sip_t *asip);
-static void ac_packetfilter_whitelist(ac_sip_t *asip);
+static int ac_packetfilter_blacklist(ac_sip_t *asip, void *data);
+static int ac_packetfilter_whitelist(ac_sip_t *asip, void *data);
 #ifdef CONFIG_OP_ENABLED
-static void ac_packetfilter_op(ac_sip_t *asip);
+static int ac_packetfilter_op(ac_sip_t *asip, void *data);
 #endif
 
 /* white / blacklists */
@@ -347,6 +411,24 @@ ac_init(processor_config_t *config)
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_PDD_LOG, ac_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_PDD_RESET_MODE, ac_cb_config_update);
 
+	ASSERT_TRUE(filters = ship_obj_list_new(), err);
+
+#ifdef DO_STATS
+	ac_packetfilter_add(ac_packetfilter_stats, NULL, 1);
+#endif
+	ac_packetfilter_add(ac_packetfilter_debug, NULL, 1);
+
+	ac_packetfilter_add(ac_packetfilter_simple, NULL, 0);
+	ac_packetfilter_add(ac_packetfilter_blacklist, NULL, 0);
+	ac_packetfilter_add(ac_packetfilter_whitelist, NULL, 0);
+	ac_packetfilter_add(ac_packetfilter_trust, NULL, 0);
+#ifdef AC_HTTP_PF
+	ac_packetfilter_add(ac_packetfilter_http, NULL, 0);
+#endif
+#ifdef CONFIG_OP_ENABLED
+	ac_packetfilter_add(ac_packetfilter_op, NULL, 0);
+#endif
+
 	ac_cb_config_update(config, NULL, NULL);
 
 #ifdef CONFIG_OP_ENABLED
@@ -409,6 +491,9 @@ ac_close()
 		ship_ht_free(black_list);
 		black_list = 0;
 	}
+
+	ship_obj_list_free(filters);
+	filters = NULL;
 }
 
 static void
@@ -420,7 +505,7 @@ ac_sip_free(ac_sip_t *asip)
 		freez(asip->to);
 		freez(asip->from);
 		if (asip->filters) {
-			ship_list_free(asip->filters);
+			ship_obj_list_free(asip->filters);
 		}
 		freez(asip);
 	}
@@ -439,7 +524,7 @@ ac_sip_new(char *local, char *remote, int remotely_got, void *pkg,
 	ASSERT_TRUE(ret->evt = evt, err);
 	ret->pkg = pkg;
 	ASSERT_TRUE(ret->cb_func = func, err);
-	ASSERT_TRUE(ret->filters = ship_list_new(), err);
+	ASSERT_TRUE(ret->filters = ship_obj_list_new(), err);
 	if (local) {
 		ASSERT_TRUE(ret->local = strdup(local), err);
 		ASSERT_TRUE(ret->remote = strdup(remote), err);
@@ -467,11 +552,12 @@ ac_sip_new(char *local, char *remote, int remotely_got, void *pkg,
 static int
 ac_next_packetfilter(ac_sip_t *asip)
 {
-	void (*func) (ac_sip_t *asip);
-	func = ship_list_pop(asip->filters);
-	if (func && (asip->verdict == AC_VERDICT_NONE)) {
-		func(asip);
-		return 0;
+	ac_packetfilter_t* f = NULL;
+
+	f = ship_list_pop(asip->filters);
+	if (f /*&& (asip->verdict == AC_VERDICT_NONE)*/) { // quit or continue?
+		if (f->filter(asip, f->data))
+			ac_next_packetfilter(asip);
 	} else {
 		/* the 'default' policy */
 		if (asip->verdict == AC_VERDICT_NONE)
@@ -479,8 +565,10 @@ ac_next_packetfilter(ac_sip_t *asip)
 
 		asip->cb_func(asip->local, asip->remote, asip->pkg, asip->verdict);
 		ac_sip_free(asip);
-		return 0;
 	}
+	
+	ship_obj_unref(f);
+	return 0;
 }
 
 static int 
@@ -504,21 +592,12 @@ static void
 ac_start_packetfilter(ac_sip_t *asip, const int filter)
 {
 	/* create queue of filters */
-#ifdef DO_STATS
-	ship_list_add(asip->filters, ac_packetfilter_stats);
-#endif
-	ship_list_add(asip->filters, ac_packetfilter_debug);
-	if (filter) {
-		ship_list_add(asip->filters, ac_packetfilter_simple);
-		ship_list_add(asip->filters, ac_packetfilter_blacklist);
-		ship_list_add(asip->filters, ac_packetfilter_whitelist);
-		ship_list_add(asip->filters, ac_packetfilter_trust);
-#ifdef AC_HTTP_PF
-		ship_list_add(asip->filters, ac_packetfilter_http);
-#endif
-#ifdef CONFIG_OP_ENABLED
-		ship_list_add(asip->filters, ac_packetfilter_op);
-#endif
+	void *ptr = 0;
+	ac_packetfilter_t* f = NULL;
+	
+	while ((f = ship_list_next(filters, &ptr))) {
+		if (filter || f->force)
+			ship_obj_list_add(asip->filters, f);
 	}
 	
 	/* do this async! */
@@ -556,8 +635,8 @@ ac_packetfilter_local(sipp_request_t *req,
 	return ret;
 }
 
-static void 
-ac_packetfilter_debug(ac_sip_t *asip)
+static int
+ac_packetfilter_debug(ac_sip_t *asip, void *data)
 {
 	if (MSG_IS_RESPONSE(asip->evt->sip)) {
 		LOG_INFO("PACKETFILTERING: Got a %d response from %s to %s (channel %s:%s, remotely got: %d)\n", 
@@ -570,11 +649,12 @@ ac_packetfilter_debug(ac_sip_t *asip)
 			 asip->from, asip->to,
 			 asip->local, asip->remote, asip->remotely_got);
 	}
-	ac_next_packetfilter(asip);
+
+	return 1;
 }
 
-static void 
-ac_packetfilter_trust(ac_sip_t *asip)
+static int
+ac_packetfilter_trust(ac_sip_t *asip, void *data)
 {
 	osip_message_t* sip = asip->evt->sip;
 
@@ -583,7 +663,8 @@ ac_packetfilter_trust(ac_sip_t *asip)
 	/* filter only inbound, non-response sessions */
 	if (asip->remotely_got && 
 	    !MSG_IS_RESPONSE(sip) && 
-	    (MSG_IS_INVITE(sip) || MSG_IS_MESSAGE(sip))) {
+	    (MSG_IS_INVITE(sip) || MSG_IS_MESSAGE(sip)) &&
+	    asip->verdict == AC_VERDICT_NONE) {
 
 		/* check max path */
 		if (max_path > 0) {
@@ -601,12 +682,13 @@ ac_packetfilter_trust(ac_sip_t *asip)
 			}
 		}
 	}
-	ac_next_packetfilter(asip);
+	
+	return 1;
 }
 
 #ifdef CONFIG_OP_ENABLED
-static void 
-ac_packetfilter_op(ac_sip_t *asip)
+static int
+ac_packetfilter_op(ac_sip_t *asip, void *data)
 {
 	osip_message_t* sip = asip->evt->sip;
 
@@ -615,7 +697,8 @@ ac_packetfilter_op(ac_sip_t *asip)
 	/* filter only inbound, non-response sessions */
 	if (asip->remotely_got && 
 	    !MSG_IS_RESPONSE(sip) && 
-	    (MSG_IS_INVITE(sip) || MSG_IS_MESSAGE(sip))) {
+	    (MSG_IS_INVITE(sip) || MSG_IS_MESSAGE(sip)) &&
+	    asip->verdict == AC_VERDICT_NONE) {
 		int is_known = 0;
 		char* key = 0;
 		reg_package_t *reg = 0;
@@ -657,39 +740,44 @@ ac_packetfilter_op(ac_sip_t *asip)
 			break;
 		}
 	}
-	ac_next_packetfilter(asip);
+
+	return 1;
 }
 #endif
 
-static void 
-ac_packetfilter_blacklist(ac_sip_t *asip)
+static int
+ac_packetfilter_blacklist(ac_sip_t *asip, void *data)
 {
-	if (asip->remotely_got) {
+	if (asip->remotely_got &&
+	    asip->verdict == AC_VERDICT_NONE) {
 		/* ..if in blacklist mark as 'reject' */
 		if (ship_ht_get_string(black_list, asip->remote))
 			asip->verdict = AC_VERDICT_REJECT;
 	}
-	ac_next_packetfilter(asip);
+
+	return 1;
 }
 
-static void 
-ac_packetfilter_whitelist(ac_sip_t *asip)
+static int
+ac_packetfilter_whitelist(ac_sip_t *asip, void *data)
 {
-	if (asip->remotely_got) {
+	if (asip->remotely_got &&
+	    asip->verdict == AC_VERDICT_NONE) {
 		/* ..if in whitelist mark as 'allow' */
 		if (ship_ht_get_string(white_list, asip->remote))
 			asip->verdict = AC_VERDICT_ALLOW;
 
 	}
-	ac_next_packetfilter(asip);
+
+	return 1;
 }
 
 
 /* this is a filter that filters messages that have been responded to
    already by a proxy-generated message. Any new requests */
 
-static void 
-ac_packetfilter_simple(ac_sip_t *asip)
+static int
+ac_packetfilter_simple(ac_sip_t *asip, void *data)
 {
 	osip_message_t* sip = asip->evt->sip;
 	int code = osip_message_get_status_code(sip);
@@ -713,10 +801,6 @@ ac_packetfilter_simple(ac_sip_t *asip)
 		else 
 		*/
 		if (MSG_IS_RESPONSE(sip)) {
-
-			/* todo: check if this is for one of this proxy's call
-			   ids! */
-			TODO("Check if the response is for one of the proxy's messages / invites\n");
 
 			/* reject 482 merges, as server loops aren't of any interest to us */
 			if (code == 482) {
@@ -745,12 +829,13 @@ ac_packetfilter_simple(ac_sip_t *asip)
 		/* allow *all* outgoing! */
 		asip->verdict = AC_VERDICT_ALLOW;
 	}
-	ac_next_packetfilter(asip);
+
+	return 1;
 }
 
 
 #ifdef AC_HTTP_PF
-static void 
+static int
 ac_packetfilter_http_cb(char *url, int respcode, char *data, 
 			int datalen, void *pkg)
 {
@@ -773,12 +858,12 @@ ac_packetfilter_http_cb(char *url, int respcode, char *data,
 			/* we do nothing.. */
 		}
 	}
-
+	
 	ac_next_packetfilter(asip);
 }
 
 /* currently not used, unstatified to supress compiler warning .. */
-static void 
+static int
 ac_packetfilter_http(ac_sip_t *asip)
 {
 	char *data = 0, *tmp = 0;
@@ -814,15 +899,17 @@ ac_packetfilter_http(ac_sip_t *asip)
  err:
 	freez(data);
 	if (asip)
-		ac_next_packetfilter(asip);
+		return 1;
+	else
+		return 0;
 }
 #endif
 
 
 /* measures some stats related to the call setup times etc */
 #ifdef DO_STATS
-static void 
-ac_packetfilter_stats(ac_sip_t *asip)
+static int
+ac_packetfilter_stats(ac_sip_t *asip, void *data)
 {
 	osip_message_t* sip = asip->evt->sip;
 	char *callid = 0;
@@ -912,7 +999,7 @@ ac_packetfilter_stats(ac_sip_t *asip)
 	}
 	
 	freez(callid);
-	ac_next_packetfilter(asip);
+	return 1;
 }
 
 int 
