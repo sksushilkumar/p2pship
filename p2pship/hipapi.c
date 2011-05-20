@@ -122,10 +122,14 @@ hipapi_init(processor_config_t *config)
 	/* rvs & nat? */
 
 	if (processor_config_is_true(config, P2PSHIP_CONF_PROVIDE_RVS))
-		ASSERT_ZERO(hipapi_init_rvs(1), err);
+		if (hipapi_init_rvs(1)) {
+			LOG_WARN("Error initializing RVS provisioning\n");
+		}
 
 	ASSERT_TRUE(rvs_arr = ship_list_new(), err);
-	ASSERT_ZERO(hipapi_update_rvs_registration(), err);
+	if (hipapi_update_rvs_registration()) {
+		LOG_WARN("Error initializing RVS registration\n");
+	}
 	ASSERT_ZERO(processor_tasks_add_periodic(hipapi_update_rvs_registration, NULL, RVS_UPDATE_PERIOD*1000), err);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_NAT_TRAVERSAL, hipapi_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_RVS, hipapi_cb_config_update);
@@ -308,7 +312,6 @@ hipapi_has_linkto(addr_t *remote_hit)
 				if (!strcmp(addr.addr, remote_hit->addr))
 					ret = 1;
 			}
-			freez(buf);
 		}
 		freez(buf);
 		fclose(f);
