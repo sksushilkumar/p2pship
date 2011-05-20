@@ -19,13 +19,15 @@
 #ifndef __MEDIA_H__
 #define __MEDIA_H__
 
+typedef void (*media_observer_cb) (const int handle, const char *msgtype, const char *data, void *userdata);
 
 void media_register();
-int media_parse_pipeline(const char *pipeline);
+int media_parse_pipeline(const char *pipeline, media_observer_cb callback, void *userdata);
 int media_pipeline_start(const int handle);
 int media_pipeline_stop(const int handle);
 int media_pipeline_destroy(const int handle);
 
+int media_check_element(const char *name);
 
 
 #endif

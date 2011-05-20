@@ -22,10 +22,19 @@
 
 #include "ship_debug.h"
 #include "processor.h"
+#include "media.h"
 
 /* the elements */
 static ship_ht_t *elements = 0;
 static int element_count = 1;
+
+struct media_player_s {
+
+	GstElement *player;
+	media_observer_cb callback;
+	void *userdata;
+	int handle;
+};
 
 #if 0
 
@@ -116,7 +125,7 @@ media_element_new_udpsrc(const int port, const int socket)
 #endif
 
 /* checks whether an element exists */
-static int
+int
 media_check_element(const char *name)
 {
 	GstElementFactory *factory = NULL;
@@ -132,25 +141,46 @@ media_check_element(const char *name)
 static GstElement*
 media_get_element(const int handle)
 {
-	GstElement *e = (GstElement*)ship_ht_get_int(elements, handle);
+	GstElement *e = NULL;
+	struct media_player_s *s = (struct media_player_s *)ship_ht_get_int(elements, handle);
+	if (s)
+		e = s->player;
 	return e;
 }
 
 static GstElement*
 media_remove_element(const int handle)
 {
-	GstElement *e = (GstElement*)ship_ht_remove_int(elements, handle);
+	GstElement *e = NULL;
+	struct media_player_s *s = (struct media_player_s *)ship_ht_remove_int(elements, handle);
+	if (s) {
+		e = s->player;
+		if (s->callback) {
+			s->callback(s->handle, "destroy", NULL, s->userdata);
+		}
+		freez(s);
+	}
 	return e;
 }
 
 static int
-media_store_element(GstElement *e)
+media_store_element(GstElement *e, media_observer_cb callback, void *userdata, struct media_player_s **callstr)
 {
 	int ret = -1;
+	struct media_player_s *s = NULL;
+	
+	ASSERT_TRUE(s = (struct media_player_s *)mallocz(sizeof(struct media_player_s)), err);
 	ship_lock(elements);
 	ret = element_count++;
-	ship_ht_put_int(elements, ret, e);
+	s->player = e;
+	s->callback = callback;
+	s->userdata = userdata;
+	s->handle = ret;
+	ship_ht_put_int(elements, ret, s);
 	ship_unlock(elements);
+ err:
+	if (callstr)
+		*callstr = s;
 	return ret;
 }
 
@@ -162,7 +192,8 @@ media_bus_message_cb(GstBus *bus,
 		     gpointer user_data)
 {
 	const gchar* name = NULL;
-	GError* error;
+	GError* error = NULL;
+	char *data = NULL;
 	gchar* debugs;
 
 	LOG_DEBUG("Got message\n");
@@ -175,29 +206,44 @@ media_bus_message_cb(GstBus *bus,
 		LOG_WARN("\tmessage: %s\n", error->message);
 		LOG_WARN("\tdebugs: %s\n", debugs);
 	
-		g_error_free(error);
+		data = error->message;
 		free(debugs);
 	}
+	
+	if (user_data) {
+		struct media_player_s *s = (struct media_player_s *)user_data;
+		if (ship_ht_has_value(elements, s)) {
+			if (s->callback) {
+				s->callback(s->handle, name, data, s->userdata);
+			}
+		}
+	}
+
+	if (error)
+		g_error_free(error);
 }
 
 /* creates a player from the given gst pipeline string. returns a
    handle to it. < 0 on errors / problems. */
 int
-media_parse_pipeline(const char *pipeline)
+media_parse_pipeline(const char *pipeline, media_observer_cb callback, void *userdata)
 {
 	int ret = -1;
+	struct media_player_s *s = NULL;
 	GstElement *e = NULL;
 	GstBus *bus = NULL;
 	
 	LOG_DEBUG("launching pipeline: '%s'\n", pipeline);
 	ASSERT_TRUE(e = gst_parse_launch(pipeline, NULL), err);
-	ret = media_store_element(e);
+	ret = media_store_element(e, callback, userdata, &s);
 	
 	/* add observer */
+	if (!callback)
+		s = NULL;
 	ASSERT_TRUE(bus = gst_element_get_bus(e), err);
 	gst_bus_add_signal_watch(bus);
 	g_signal_connect(G_OBJECT(bus), "message", 
-			 G_CALLBACK(media_bus_message_cb), NULL);
+			 G_CALLBACK(media_bus_message_cb), s);
 	gst_object_unref(GST_OBJECT(bus));
  err:
 	return ret;
@@ -252,14 +298,21 @@ media_init(processor_config_t *config)
 {
 	int ret = -1;
 	guint major, minor, micro, nano;
-
+	GError *err = NULL;
+	
 	ASSERT_TRUE(elements = ship_ht_new(), err);
-	ASSERT_TRUE(gst_init_check(NULL, NULL, NULL), err);
+	//gst_init(NULL, NULL);
+	if (!gst_init_check(NULL, NULL, &err)) {
+		LOG_ERROR("Gstreamer error message: %s\n", err->message);
+		ASSERT_TRUE(0, err);
+	}
 	
 	gst_version(&major, &minor, &micro, &nano);
 	LOG_INFO("Using gstreamer %d.%d.%d/%d\n", major, minor, micro, nano); 
 
-	ASSERT_TRUES(media_check_element("liveadder"), err, "Missing liveadder gstreamer plugin!\n");
+	/* no, do not check these!
+	  ASSERT_TRUES(media_check_element("liveadder"), err, "Missing liveadder gstreamer plugin!\n");
+	*/
 
 	ret = 0;
  err:
@@ -269,12 +322,15 @@ media_init(processor_config_t *config)
 static void
 media_close()
 {
+	struct media_player_s *s = NULL;
 	gst_deinit();
-	GstElement *e = NULL;
 	
-	while ((e = ship_ht_pop(elements))) {
-		gst_element_set_state(e, GST_STATE_NULL);
-		gst_object_unref(GST_OBJECT(e));
+	while ((s = (struct media_player_s *)ship_ht_pop(elements))) {
+		if (s->callback)
+			s->callback(s->handle, "destroy", NULL, s->userdata);
+		gst_element_set_state(s->player, GST_STATE_NULL);
+		gst_object_unref(GST_OBJECT(s->player));
+		freez(s);
 	}
 	ship_ht_free(elements);
 }
