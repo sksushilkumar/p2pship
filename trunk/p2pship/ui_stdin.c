@@ -83,10 +83,10 @@ ui_stdin_query_operation(const char *operation,
 	strcat(q, "]: ");
 	q[0] = toupper(q[0]);
 
-	buf = (char*)mallocz(len+1);
+	buf = NULL;
 	do {
 		USER_PRINT(q);
-		len = 64;
+		len = 0;
 		getline(&buf, &len, stdin);
 		trim(buf);
 		if (strstr(true_op, buf) == true_op) {
@@ -96,6 +96,7 @@ ui_stdin_query_operation(const char *operation,
 		} else {
 			len = 0;
 		}
+		freez(buf);
 	} while (!len);
 
 	if (len == 1)
@@ -141,10 +142,10 @@ ui_stdin_query_three(char *header, char *body, char *one_op, char *two_op, char 
 	strcat(q, "]: ");
 	q[0] = toupper(q[0]);
 
-	buf = (char*)mallocz(len+1);
+	buf = NULL;
 	do {
 		USER_PRINT(q);
-		len = 64;
+		len = 0;
 		getline(&buf, &len, stdin);
 		trim(buf);
 		if (strstr(one_op, buf) == one_op) {
@@ -156,6 +157,7 @@ ui_stdin_query_three(char *header, char *body, char *one_op, char *two_op, char 
 		} else {
 			len = -1;
 		}
+		freez(buf);
 	} while (len < 0);
 
 	return len;
