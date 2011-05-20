@@ -148,11 +148,23 @@ AC_ARG_ENABLE(maemo,
                             [Enable all Maemo-related options (default is NO)]),
              [ac_cv_use_maemo=$enableval], [ac_cv_use_maemo=no])
 
+# maemo, pre
+AC_ARG_ENABLE(maemopre,
+             AC_HELP_STRING([--enable-maemopre],
+                            [Enable all Maemo-related options with PRE (default is NO)]),
+             [ac_cv_use_maemopre=$enableval], [ac_cv_use_maemopre=no])
 
 
 #
 # macros
 #
+
+# maemo-pre almost the same as maemo
+AC_CACHE_CHECK([whether to use maemo pre configuration],
+               [ac_cv_use_maemopre], [ac_cv_use_maemopre=no])
+if test x"$ac_cv_use_maemopre" = x"yes"; then
+	      ac_cv_use_maemo="yes"
+fi
 
 AC_CACHE_CHECK([whether to use maemo configuration],
                [ac_cv_use_maemo], [ac_cv_use_maemo=no])
@@ -163,6 +175,12 @@ if test x"$ac_cv_use_maemo" = x"yes"; then
 	      ac_cv_use_mc="yes"
 	      ac_cv_use_abs="yes"
 	      ac_cv_use_maemoexts="yes"
+	      ac_cv_use_media="no"
+fi
+
+if test x"$ac_cv_use_maemopre" = x"yes"; then
+	      ac_cv_use_media="yes"
+	      ac_cv_use_python="yes"
 fi
 
 #
