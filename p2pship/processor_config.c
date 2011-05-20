@@ -47,8 +47,12 @@
 #ifdef CONFIG_PYTHON_ENABLED
 #define DEFAULT_PYTHON_LIB_DIR ".p2pship/apps/lib"
 #define DEFAULT_PYTHON_SCRIPTS_DIR ".p2pship/apps/scripts"
+#define DEFAULT_PYTHON_DATA_DIR ".p2pship/apps/data"
+
+/*
 #define DEFAULT_PYTHON_INSTANCES_DIR ".p2pship/apps/instances"
 #define DEFAULT_PYTHON_PACKAGES_DIR ".p2pship/apps/packages"
+*/
 #endif
 
 /* the default values for all the configs */
@@ -169,8 +173,12 @@ static char* DEFAULT_CONFIGURATION[] =
 #ifdef CONFIG_PYTHON_ENABLED
 		P2PSHIP_CONF_PYTHON_LIB_DIR, DEFAULT_PYTHON_LIB_DIR, "Python lib directory", "file", 0,
 		P2PSHIP_CONF_PYTHON_SCRIPTS_DIR, DEFAULT_PYTHON_SCRIPTS_DIR, "Python scripts directory", "file", 0,
+		P2PSHIP_CONF_PYTHON_DATA_DIR, DEFAULT_PYTHON_DATA_DIR, "Python script data directory", "file", 0,
+
+		/*
 		P2PSHIP_CONF_PYTHON_INSTANCES_DIR, DEFAULT_PYTHON_INSTANCES_DIR, "Python application instance location", "file", 0,
 		P2PSHIP_CONF_PYTHON_PACKAGES_DIR, DEFAULT_PYTHON_PACKAGES_DIR, "Python application packages location", "file", 0,
+		*/
 #endif
 
 #ifdef CONFIG_OP_ENABLED
@@ -479,8 +487,11 @@ processor_config_ensure_configs(processor_config_t *config)
 #ifdef CONFIG_PYTHON_ENABLED
 	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_PYTHON_LIB_DIR, NULL, config), err);
 	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_PYTHON_SCRIPTS_DIR, NULL, config), err);
+	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_PYTHON_DATA_DIR, NULL, config), err);
+	/*
 	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_PYTHON_INSTANCES_DIR, NULL, config), err);
 	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_PYTHON_PACKAGES_DIR, NULL, config), err);
+	*/
 #endif
 	ret = 0;
  err:

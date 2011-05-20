@@ -882,6 +882,7 @@ processor_run()
 #endif
         
 #ifdef CONFIG_START_GTK
+	/* this should be run in another thread .. */
         LOG_INFO("processor [%s] dedicated to gtk\n", "main-0");
 	gtk_main();
 	gdk_threads_leave();

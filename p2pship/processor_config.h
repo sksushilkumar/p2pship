@@ -63,8 +63,12 @@
 
 #define P2PSHIP_CONF_PYTHON_LIB_DIR "py_lib"
 #define P2PSHIP_CONF_PYTHON_SCRIPTS_DIR "py_scripts"
+#define P2PSHIP_CONF_PYTHON_DATA_DIR "py_data"
+
+/*
 #define P2PSHIP_CONF_PYTHON_INSTANCES_DIR "py_instances"
 #define P2PSHIP_CONF_PYTHON_PACKAGES_DIR "py_packages"
+*/
 #endif
 
 /* hm, should these be in ? */
