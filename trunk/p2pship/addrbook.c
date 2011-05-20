@@ -123,7 +123,6 @@ addrbook_load_imported(ship_list_t *list)
 				}
 			} break;
 			}
-			freez(buf);
 		}
 		fclose(f);
 		freez(buf);
