@@ -43,7 +43,8 @@ See [Configuration#Access_Control Access control- related configuration values]
 
 = SIP Gateway =
 
-See [Configuration#Gateway SIP gateway- related configuration values]
+See the [SIPGateway page about the gateway] feature as well as [Configuration#Gateway SIP gateway- related configuration values]
+
 
 = Hooks =
 
