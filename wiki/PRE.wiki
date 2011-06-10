@@ -26,16 +26,29 @@ By adding the command line option
 p2pship --shell
 }}}
 
-the p2pship system will start with an interactive Python shell, initialized in the same manner as the ones the scripts run in.
+the p2pship system will start with an interactive Python shell, initialized in the same manner as the ones the scripts run in. Note that currently this is not possible if the GTK thread is started (which it is by default).
+
+A script can be run from an arbitrary location using the command line switch
+
+{{{
+p2pship --run <script>
+}}}
+
+This can be combined with the `--no-scripts` option to prevent any other scripts from running (useful when developing new scripts, and wanting to prevent any interference from other). E.g.,
+
+{{{
+p2pship --no-scripts --run test.py
+}}}
 
 The configuration (settings.conf) options relevant for the Python subsystem are:
 
 || *Key* || *Description* || *Default value* ||
-|| {{{start_shell}}} || Whether to start an interactive shell || no ||
+|| {{{py_start_shell}}} || Whether to start an interactive shell || no ||
+|| {{{py_run_script}}} || A script to run at startup || _empty_ ||
+|| {{{py_startup_scripts}}} || Whether the system scripts should be run || yes ||
 || {{{py_lib}}} || Path to the interpreter initialization files || ~/.p2pship/apps/lib ||
 || {{{py_scripts}}} || Path to the Python scripts to run at startup || ~/.p2pship/apps/scripts ||
-|| {{{py_instances}}} || Path to the AppEngine instances (currently not used) || ~/.p2pship/apps/instances ||
-|| {{{py_packages}}} || Path to the AppEngine packages (currently not used) || ~/.p2pship/apps/packages ||
+|| {{{py_data}}} || Path to the data directories || ~/.p2pship/apps/data ||
 
 == Notes & warnings ==
 
@@ -44,6 +57,10 @@ The configuration (settings.conf) options relevant for the Python subsystem are:
 Using GTK within the Python runtime is not recommended. The GTK engine requires a dedicated thread which does not go well when combined with the c-based native system. Apparently, even though the native system would be compiled with a GTK main loop (`./configure --enable-gtk` or an option automatically enabling it [`--enable-meamo`]), Python-side GTK does not seem to work properly with it (results in various faults).
 
 Disabling native-GTK support and using it only from the Python run-time (starting the GTK loop there) might work, but is prone to errors as there should only be one GTK loop for each process, and each Python script runs within the same process. Beware.
+
+*Threading*
+
+Threading does work, but due to the fact that the p2pship proxy is in itself very threaded, adding Python threads into the mix makes it a bit unstable. Effort has been put into trying to prevent problems (= segfaults), but currently it is not 100% safe. In addition to segfaults, you may see data structures starting to loose members as the different environments get mixed up. Running only one script at a time however shouldn't cause any major concerns.
 
 = API =
 
@@ -56,3 +73,21 @@ _todo; see the files in py_lib_
 == Native calls ==
 
 _todo; see the calls in pymod.c_
+
+Sections:
+
+=== Environment, logging, configuration ===
+
+=== Overlay handling, P2P communication ===
+
+=== IPC ===
+
+=== HTTP server ===
+
+=== Persistant storage ===
+
+=== Identity management ===
+
+=== SIP ===
+
+=== Media engine ===
