@@ -78,6 +78,6 @@ In the PRE, these can currently only indicate whether to stop the message, not m
 
 Currently access control filters are used for trust filtering, black and whitelists, as well as for the voicemail, where it is essential that certain (busy, not available responses) messages do not go through the loops as it would tear down the mediaproxies and other state needed for recording the messages.
 
-== Messsage injection ==
+== Message injection ==
 
 Messages can be injected using the `sipp_inject_local_message()` and `sipp_inject_remote_message()` calls. These will be handled just as locally/remotely got messages, except that the caller is able to indicate whether they should be subjected to the filtering process. These will also be tagged as 'internally generated', which can be used by filters and post-processors to identify messages they've generated themselves. In PRE, these are called using the `route_as_local` and `route_as_remote` calls, which are more easily used by calling the `SipMessage` class' `send(as_remote = True/False, filter = True/False)`.
