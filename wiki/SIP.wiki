@@ -20,7 +20,7 @@ The SIP interface (or subsystem) has to be enabled when compiling the source. Th
 ./configure --enable-sip 
 }}}
 
-This requires the osip library to be installed with development files. Version 2 of osip has generally been used by the authors, although version 3 has been tried successfully in the past. On debian-based systems, this can be installed with
+This requires the osip library to be installed with development files. Version 2 of osip has generally been used by the authors, although version 3 is also supported (as it is used with Maemo). On debian-based systems, this can be installed with
 {{{
 apt-get install libosip2-dev
 }}}
