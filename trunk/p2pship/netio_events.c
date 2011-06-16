@@ -90,7 +90,7 @@ netio_events_read(int s, char *data, ssize_t datalen)
 {
 	/* check whether any addresses have actually changed! */
 	if (netio_events_ip_changed())
-		processor_event_generate("net_some_event", NULL, NULL);
+		processor_event_generate_pack("net_ip_changed", NULL);
 	else
 		LOG_DEBUG("skipping net event as no ip has changed!\n");
 }
