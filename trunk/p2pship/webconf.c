@@ -65,6 +65,12 @@ webconf_get_json(const char *url)
 		json = append_str(tmp, json, &size, &len);
 		freez(tmp);
 	}
+	if (strstr(url, "/remote_idents") || all) {
+		LOG_DEBUG("Got remote idents json request\n");
+		ident_data_dump_remote_regs_json(ident_get_remote_regs(), &tmp);
+		json = append_str(tmp, json, &size, &len);
+		freez(tmp);
+	}
 #ifdef CONFIG_SIP_ENABLED
 	if (strstr(url, "/mps") || all) {
 		LOG_DEBUG("Got mps json request\n");
@@ -338,7 +344,7 @@ webconf_cb_config_update(processor_config_t *config, char *k, char *v)
 
 /* callback for receiving sip_log events */
 static void 
-webconf_un_receive_sip_log(char *event, void *data, void *eventdata)
+webconf_un_receive_sip_log(char *event, void *data, ship_pack_t *eventdata)
 {
 	struct sockaddr *addr = 0;
 	socklen_t addrlen = 0;
@@ -347,11 +353,12 @@ webconf_un_receive_sip_log(char *event, void *data, void *eventdata)
 	int len = 0, size = 0, *s = 0;
 	char *str = 0, *tmp = 0, *name = 0;
 
-	call_log_entry_t *e = eventdata;
+	call_log_entry_t *e = 0;
 	reg_package_t *r = 0;
 	ident_t *ident = 0;
 	char buf[32];
 	
+	ship_unpack_keep(eventdata, &e);
 	ship_lock(un_events);
 
 	/* create the event string */
