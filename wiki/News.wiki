@@ -1,5 +1,9 @@
 #summary News
 
+*Bloomsday (16 June) 2011 / jookos*
+
+We're happy to announce that an initial (preview?) version of the [Voicemail] feature has now been commited to the Google Code repository.  Implemented as a Python Plug-In, it has caused a number of reforms and additions in the [PRE], as well as a much awaited redesign of the SIP message flow.  Both local (you leaving messages for an unavailable friend) and remote (a friend leaving a message on your device while you're away/busy) messages are supported with the possibility to use custom greeting messsages.  Please see the [Voicemail] page for details!
+
 *12 May 2011 / jookos*
 
 In anticipation of the upcoming _offline_ message exchange support (namely distributed voice mail), we finally got around to plan the re-work the packaging system for the maemo tablets. We now have two core versions: `p2pship` and `p2pship-pre`. The `-pre` version includes the Python run-time, and is needed for some of the newer features.

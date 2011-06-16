@@ -1,0 +1,25 @@
+#summary A description and discussion concerning P2P voicemail
+
+= Introduction =
+
+_todo: What this is, what it means. Why it is useful_
+
+= Design overview =
+
+_todo: The concept. Terminology: invites, announcements, greetings.._
+
+= Implementation =
+
+_todo: How it was implemented. Basic flow_
+
+== User experience ==
+
+_todo: The UIX, interface for accessing voicemails etc.._
+
+== Configuration ==
+
+_todo: how it is configured_
+
+== Notes and caveats ==
+
+_todo: Whatever we've run into._
