@@ -25,14 +25,7 @@ class SubscriptionHandler:
         pass
         
     def create_pdif_simple(self, basic_status):
-        return """<?xml version="1.0" encoding="UTF-8"?>
-<presence xmlns="urn:ietf:params:xml:ns:pidf" entity="sip:%s">
-  <tuple id="%s">
-     <status>
-        <basic>%s</basic>
-     </status>
-  </tuple>
-</presence>""" % (self.target, self.pdif_id, basic_status)
+        return create_pdif(self.target, self.pdif_id, basic_status)
 
     def publish_got(self, key, data, real_key):
         """Callback for subscribes"""
@@ -121,10 +114,11 @@ class SubscriptionHandler:
         notify.set_param("Subscription-State", "active;expires=%d" % expire)
         notify.set_param("Contact", get_local_sip_contact(self.local_aor))
         notify.target = self.remote_contact
-        notify.send()
+        notify.send(filter = False)
         return 0
 
     def response_got(self, req, resp):
+
         debug("Got a response!")
         return 0
 
@@ -135,7 +129,8 @@ class PresenceHandler(SipHandler):
         self.handlers = {}
         # we need a periodic poller to check the validity of the reg packets!
         p2pship.call_periodically(self.check_handlers, None, 60000)
-
+        self.local_aor = None
+        
     def get_subscribe_handler(self, aor, callid):
         """Each PresenceHandler is tied to one source aor"""
 
@@ -158,10 +153,26 @@ class PresenceHandler(SipHandler):
             p2pship.set_service_param(self.local_aor, SIP_SERVICE, "presence", msg.body)
             return None
 
+        if msg.msg_type == "OPTIONS":
+            print "we got options: %s" % str(msg)
+            print "resp code would be ..%s" % str(msg.hook_data)
+
+            m = msg.create_response(200)
+            m.as_remote = True
+            m.add_param("Allow", "INVITE, ACK, CANCEL, MESSAGE. OPTIONS, BYE, PUBLISH, SUBSCRIBE")
+
+            print "sending message %s" % str(m)
+
+            m.send(filter = False)
+            return 0
+        
     def response_got(self, req, resp):
         """Called by the post processor. If a response has an
         associated request, then it has been sent by us (and we should
         capture it!)"""
+
+        if req is None:
+            return None
 
         if req.msg_type == "NOTIFY" and req is not None:
             # todo: why is req.callid == None??
