@@ -19,7 +19,9 @@ def get_uuid():
     #return str(uuid.uuid4())
     return rand_hex(8) + "-" + rand_hex(4) + "-" + rand_hex(4) + "-" + rand_hex(4) + "-" + rand_hex(12)
 
-def resp_str(code):
+def resp_str(code, msg = None):
+    if msg is not None:
+        return msg
     if code < 200:
         return "Continue"
     elif code < 300:
@@ -41,6 +43,8 @@ def rand_hex(length):
     return ''.join([random.choice('0123456789abcdef') for x in xrange(length)])
 
 def parse_aor(pa):
+    if pa is None:
+        return None
     p = pa.find("<")
     if p > -1:
         pa = pa[p+1:]
@@ -74,6 +78,17 @@ def get_local_sip_contact(aor):
     # todo: verify that it is in the intended format. might contain ;hostname= etc..
     return "<sip:%s>" % p2pship.sip_get_local_contact(aor)
 
+def create_pdif(target, pdif_id, status):
+
+    return """<?xml version="1.0" encoding="UTF-8"?>
+<presence xmlns="urn:ietf:params:xml:ns:pidf" entity="sip:%s">
+  <tuple id="%s">
+     <status>
+        <basic>%s</basic>
+     </status>
+  </tuple>
+</presence>""" % (target, pdif_id, status)
+
 
 # const
 sip_lf = "\r\n"
@@ -99,8 +114,8 @@ class SipMessage:
         self.resp_msg = rmsg
         self.parent = parent
         self.msg_type = msg_type
-        self.target = target
-        self._ser = None
+        self.target = parse_aor(target)
+        #self._ser = None # wth was this?
         self.body = None
         self.body_type = None
         self.params = {}
@@ -108,10 +123,14 @@ class SipMessage:
         self.callid = None
         self.local_aor = None
         self.remote_aor = None
+
+        # as remote.. is remote, pretty much the same, could be combined..
         self.as_remote = None
+        self.is_remote = False
+        self.is_internal = True
         
         if context is not None:
-            self.local_aor = context.aor
+            self.local_aor = context.local_aor
             self.remote_aor = target
 
         if parent: # responses
@@ -144,12 +163,18 @@ class SipMessage:
 
             self.branch = context.create_branch(self)
             self.cseq = str(context.create_cseq(self)) # + " " + self.msg_type
-            self.sfrom = "<sip:" + context.get_aor()+">;tag="+context.create_tag(self)
-            self.sto = "<sip:"+self.target+">"
+            self.set_sfrom_aor(context.get_aor())
+            self.set_sto_aor(self.target)
             self.via.append("SIP/2.0/UDP " + context.via_address() + ";rport;branch=" + self.branch)
 
         if fill:
             self.set_param("User-agent", "AmazingAgent/0.1")
+
+    def set_sfrom_aor(self, aor):
+        self.sfrom = "<sip:" + aor +">;tag="+self.context.create_tag(self)
+
+    def set_sto_aor(self, aor):
+        self.sto = "<sip:"+aor+">"
 
     def set_context(self, context):
         self.context = context
@@ -192,7 +217,7 @@ class SipMessage:
         context = self.context
         ret = ""
         if self.is_response():
-            ret = do_line("SIP/2.0", self.resp_code, resp_str(self.resp_code))
+            ret = do_line("SIP/2.0", self.resp_code, resp_str(self.resp_code, self.resp_msg))
         else:
             if self.msg_type == "REGISTER":
                 ret = do_line(self.msg_type, "sip:"+context.get_domain(), "SIP/2.0")
@@ -235,8 +260,10 @@ class SipMessage:
         m.send()
         return m
 
-    def send(self):
-        self.context.send_msg(self, self.as_remote)
+    def send(self, as_remote = None, filter = True):
+        if as_remote is not None:
+            self.as_remote = as_remote
+        self.context.send_msg(self, self.as_remote, filter)
 
     def create_follow_up(self, msg_type, body=None, body_type=None):
         m = SipMessage(self.context, msg_type=msg_type, target=self.call.remote_aor, call=self.call)
@@ -249,6 +276,19 @@ class SipMessage:
         else:
             m.sfrom = self.sto
             m.sto = self.sfrom
+
+        # create Via's: they are the same as in the original message, but with different branch!
+        """ mm.. not
+        m.via = []
+        for v in self.via:
+            newv = ""
+            for c in v.split(";"):
+                ke, e, va = c.partition("=")
+                if ke == "branch":
+                    va = m.branch
+                newv += ";%s%s%s" % (ke, e, va)
+            m.via.append(newv[1:])
+        """
         return m
 
     def create_as_remote_follow_up(self, msg_type, body=None, body_type=None):
@@ -271,6 +311,7 @@ class SipMessage:
                 self.__init__(context, msg_type=str(m.group(1)), target=m.group(2), fill=False)
                 
         self.raw_msg = data
+        force_len = None
         while len(rest) > 2:
             (line, par, rest) = rest.partition(sip_lf)
             if len(line) == 0:
@@ -286,10 +327,12 @@ class SipMessage:
                             self.branch = v
                 elif k == "Call-ID":
                     self.callid = v
+                elif k == "User-agent": # this might get set in the init!
+                    self.set_param(k, v)
                 elif k == "Content-Type":
                     self.body_type = v
                 elif k == "Content-Length":
-                    pass
+                    force_len = int(v)
                 elif k == "CSeq":
                     self.cseq, s, self.msg_type = v.partition(" ")
                     self.cseq = int(self.cseq)
@@ -302,6 +345,8 @@ class SipMessage:
 
         if len(rest) > 0:
             self.body = rest
+            if force_len is not None and len(self.body) > force_len:
+                self.body = self.body[0:force_len]
         self.set_context(context)
         
 #
@@ -309,7 +354,9 @@ class SipMessage:
 #
 class SipContext:
 
-    def __init__(self, aor, handler = None):
+    # todo: we should have a 'remote context' concept.
+
+    def __init__(self, aor, handler = None, local_aor = None):
         self.aor = aor
         self.handler = handler
         if handler is not None:
@@ -320,6 +367,9 @@ class SipContext:
         self.seen_msgs = []
         self.registered = -1
         self.regthread = None
+        self.local_aor = local_aor
+        if self.local_aor is None:
+            self.local_aor = aor
 
     def verbose(self):
         if self.handler is not None:
@@ -421,24 +471,26 @@ class SipContext:
             msg.set_context(self)
             if self.handler.filter_duplicates and self.handler.is_seen(msg):
                 if self.verbose():
+                    print "self: %s" % str(self.handler)
                     info("skipping already seen message..")
                 return None
             
             if msg.body_type == "application/sdp":
                 msg.call.remote_medias = msg.call.parse_sdp(msg.body)
             if msg.is_response():
+                parent = None
                 if self.msgs.has_key(msg.branch):
                     parent = self.msgs[msg.branch]
                     if msg.resp_code >= 200:
                         self.msgs.pop(msg.branch)
-                    return self.handler.response_got(parent, msg)
-                elif self.verbose():
-                    info("response to something already processed..")
+                return self.handler.response_got(parent, msg)
+                #elif self.verbose():
+                #    info("response to something already processed..")
             else:
                 return self.handler.request_got(msg)
         return None
     
-    def send_msg(self, msg, as_remote = None):
+    def send_msg(self, msg, as_remote = None, filter = True):
         if self.verbose():
             debug("sending message: '"+str(msg)+"'")
         if not msg.is_response():
@@ -447,9 +499,9 @@ class SipContext:
         #info("todo: insert into stream %s -> %s, %s" % (msg.remote_aor, msg.local_aor, str(msg)))
         #p2pship.service_send(msg.remote_aor, msg.local_aor, 1, str(msg))
         if as_remote is not None and as_remote:
-            p2pship.sip_route_as_remote(msg.local_aor, msg.remote_aor, str(msg))
+            p2pship.sip_route_as_remote(msg.local_aor, msg.remote_aor, str(msg), filter)
         else:
-            p2pship.sip_route_as_local(str(msg))
+            p2pship.sip_route_as_local(str(msg), filter)
 
     def register(self):
         self.registered = time.time()
@@ -622,21 +674,66 @@ class SipHandler:
         message.respond(200)
 
 
+###
+
+# a sip filter
+class SipFilter(SipHandler):
+
+    AC_VERDICT_NONE = 0
+    AC_VERDICT_ALLOW = 1
+    AC_VERDICT_REJECT = 2
+    AC_VERDICT_DROP = 3
+    AC_VERDICT_IGNORE = 4
+    AC_VERDICT_UNSUPP = 5
+
+    def __init__(self):
+        print "*********** adding"
+        info("Adding a SIP filter, class %s" % self.__class__.__name__)
+        p2pship.ac_add_filter(self.ac_msg_got)
+        self.contexts = {}
+
+    def ac_msg_got(self, msg, local, remote, fr, to, verdict, is_remote, is_internal):
+
+        ctx = self.contexts.get(local)
+        if ctx is None:
+            ctx = SipContext(local, self)
+            self.contexts[local] = ctx
+
+        m = SipMessage(None)
+        m.parse(msg)
+        m.local_aor = local
+        m.remote_aor = remote
+        m.is_remote = is_remote
+        m.is_internal = is_internal
+        m.set_context(ctx)
+
+        if is_remote:
+            return self.local_msg(m)
+        else:
+            return self.remote_msg(m)
+
+    def local_msg(self, m):
+        return m.context.msg_got(m)
+
+    def remote_msg(self, m):
+        return m.context.msg_got(m)
+
+###
+
 sip_clients = []
 sip_client_instances = []
 
+
 def sip_request_callback(local_aor, remote_aor,
-                         data, code):
-    #print "Got sip callback %s, %s, %s\n--\n%s\n--" % (local_aor, remote_aor,
-    #                                                   str(code), data)
-    return sip_handle_hook(local_aor, remote_aor, data, code, False)
+                         data, remote, internal, code):
+    return sip_handle_hook(local_aor, remote_aor, data, remote == 1, internal == 1, code, False)
 
 def sip_client_callback(local_aor, remote_aor,
                         dest_addr, data):
-    return sip_handle_hook(local_aor, remote_aor, data, dest_addr, True)
+    return sip_handle_hook(local_aor, remote_aor, data, True, False, dest_addr, True)
 
-def sip_handle_hook(local_aor, remote_aor,
-                    data, data2, client_handler = True):
+def sip_handle_hook(local_aor, remote_aor, data, is_remote, is_internal,
+                    data2, client_handler = True):
 
     #print "Got sip callback %s, %s, %s\n--\n%s\n--" % (local_aor, remote_aor,
     #                                                   dest_addr, data)
@@ -645,15 +742,18 @@ def sip_handle_hook(local_aor, remote_aor,
     m.local_aor = local_aor
     m.remote_aor = remote_aor
     m.hook_data = data2
+    m.is_internal = is_internal
+    m.is_remote = is_remote
     
     hi = 2
     if not client_handler:
         hi = 3
-        data = data2
+        data = None
 
     (loc, rem) = m.get_real_to_from()
     if not client_handler:
         (loc, rem) = (rem, loc)
+
     debug("the local and remote are %s, %s" % (loc, rem))
     for h in sip_client_instances:
         if h[0].match(rem) and h[1] == loc and h[hi] is not None:
@@ -672,33 +772,34 @@ def sip_handle_hook(local_aor, remote_aor,
 
     return data
 
-def sip_client_install(event, instance, obj):
-    if event == "sip/install":
-        (from_aor, to_aor, handler, handler2) = obj
-        info("installing %s -> %s" % (str(from_aor), str(to_aor)))
-        sip_clients.append((re.compile(from_aor), re.compile(to_aor), handler, handler2))
-        return True
-    return False
+cli_installed = False
+req_installed = False
 
-# backwards compatibility..
 def install_sip_handler(from_aor, to_aor, handler):
+    global cli_installed
+    if not cli_installed:
+        try:
+            p2pship.register_sip_client_handler("client_handler", sip_client_callback)
+            cli_installed = True
+        except Exception, ex:
+            error("Error installing client handler: " + str(ex))
+            return False
     return install_sip_hooks(from_aor, to_aor, handler, None)
 
 def install_sip_request_handler(from_aor, to_aor, handler):
+    global req_installed
+    if not req_installed:
+        try:
+            p2pship.register_sip_request_handler("request_handler", sip_request_callback)
+            req_installed = True
+        except Exception, ex:
+            error("Error installing request handler: " + str(ex))
+            return False
     return install_sip_hooks(from_aor, to_aor, None, handler)
 
 def install_sip_hooks(from_aor, to_aor, client_handler = None, request_handler = None):
-    ret = None
-    try:
-        ret = p2pship.call_ipc_handler("sip/install", (from_aor, to_aor, client_handler, request_handler))
-    except Exception, ex:
-        warn("Error executing ipc: " + str(ex))
-    return ret
 
-try:
-    p2pship.register_sip_client_handler("client_handler", sip_client_callback)
-    p2pship.register_sip_request_handler("request_handler", sip_request_callback)
-    p2pship.register_ipc_handler("sip/install", sip_client_install)
-except Exception, ex:
-    pass
+    info("installing %s -> %s" % (str(from_aor), str(to_aor)))
+    sip_clients.append((re.compile(from_aor), re.compile(to_aor), client_handler, request_handler))
+    return True
 

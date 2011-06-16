@@ -5,12 +5,15 @@
 import p2pship
 
 class Buddy:
+
+    RELATIONSHIP_NONE = 0
+    RELATIONSHIP_FRIEND = 1
+    
     def __init__(self, arr):
         self.aor = arr.get("aor", "")
         self.name = arr.get("name", "")
         self.secret = arr.get("secret", "")
-        self.friend = arr.get("friend", False)
-
+        self.relationship = arr.get("relationship", 0)
         self._cert = arr.get("cert", "")
 
 
