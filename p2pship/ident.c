@@ -51,8 +51,8 @@ static void ident_clear_idents();
 time_t ident_registration_timeleft(ident_t *ident);
 static void ident_mark_foreign_regs_for_update();
 static int ident_reregister_all();
-static void ident_cb_conn_events(char *event, void *data, void *eventdata);
 static int ident_autoreg_save();
+static void ident_cb_conn_events(char *event, void *data, ship_pack_t *eventdata);
 
 static int ident_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *key);
 static int ident_getsub_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
@@ -61,7 +61,10 @@ static int ident_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
 static reg_package_t *ident_create_new_reg(ident_t *ident);
 static int ident_update_registration_periodic(void *data);
 static time_t ident_regpacket_timeleft(ident_t *ident);
-
+static int ident_update_service_registration(ident_t *ident, service_type_t service_type,
+					     service_t *service, const char *service_handler_id, addr_t *addr, 
+					     int expire, int reg_time, void *pkg);
+	
 static char *idents_file = 0;
 static char *autoreg_file = 0;
 static int ident_allow_untrusted;
@@ -95,6 +98,10 @@ static struct service_s privacy_pairing_service =
 
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 
+static void ident_pp_send_message(char *from, char *to,
+				  int msg_type, char *param);
+static void ident_bb_send_buddies(ident_t *ident, buddy_t *buddy);
+static void ident_pp_start_negotiation(ident_t *ident, buddy_t *peer);
 static int ident_handle_bloombuddy_message(char *data, int data_len, 
 					   ident_t *target, char *source, 
 					   service_type_t service_type);
@@ -135,17 +142,53 @@ ident_cb_config_update(processor_config_t *config, char *k, char *v)
 
 
 static void
-ident_cb_events(char *event, void *data, void *eventdata)
+ident_cb_events(char *event, void *data, ship_pack_t *eventdata)
 {
 	if (str_startswith(event, "net_")) {
 		/* we don't want to discard all, but rather mark them
 		   as should be updated. */
 		ident_mark_foreign_regs_for_update();
-	} else {
+	} else if (str_startswith(event, "ol_")) {
 		/* do not re-register on network events. We well get
 		   an event from the conn for a new listener anyway
 		   soon.. */
 		ident_reregister_all();
+	} else if (str_startswith(event, "conn_")) {
+
+		LOG_DEBUG("got conn event %s\n", event);
+
+		if (!strcmp(event, "conn_made") ||
+		    !strcmp(event, "conn_got")) {
+			conn_connection_t *conn = 0;
+			ident_t *ident = 0;
+			buddy_t *peer = 0;
+		
+			ship_unpack_keep(eventdata, &conn);
+		
+			ASSERT_TRUE(ident = ident_find_by_aor(conn->local_aor), err);
+			ship_lock(conn);
+			ASSERT_TRUE(peer = ident_buddy_find(ident, conn->sip_aor), err);
+			if (peer->shared_secret && strlen(peer->shared_secret) && !renegotiate_secret) {
+				/* have secret, send ack package */
+				ident_pp_send_message(conn->local_aor, conn->sip_aor,
+						      PP_MSG_ACK, peer->shared_secret);
+			} else if (strcmp(ident->sip_aor, peer->sip_aor) || !strcmp(event, "conn_made")) {
+				/* no secret, start negotiation for a new one */
+				freez(peer->my_suggestion);
+				freez(peer->shared_secret);
+				ident_pp_start_negotiation(ident, peer);
+			}
+#ifdef CONFIG_BLOOMBUDDIES_ENABLED
+			/* send only to friends */
+			if (peer->relationship == RELATIONSHIP_FRIEND)
+				ident_bb_send_buddies(ident, peer);
+#endif
+		err:
+			ship_obj_unlockref(conn);
+			ship_obj_unlockref(ident);
+		} else if (!strcmp(event, "conn_new_listener")) {
+			ident_reregister_all();
+		}
 	}
 }
 
@@ -300,14 +343,16 @@ ident_handle_bloombuddy_message(char *data, int data_len,
 #endif
 
 static void
-ident_cb_conn_events(char *event, void *data, void *eventdata)
+ident_cb_conn_events(char *event, void *data, ship_pack_t *eventdata)
 {
 	LOG_DEBUG("got conn event %s\n", event);
 	if (!strcmp(event, "conn_made") ||
 	    !strcmp(event, "conn_got")) {
-		conn_connection_t *conn = eventdata;
+		conn_connection_t *conn = 0;
 		ident_t *ident = 0;
 		buddy_t *peer = 0;
+		
+		ship_unpack_keep(eventdata, &conn);
 		
 		ASSERT_TRUE(ident = ident_find_by_aor(conn->local_aor), err);
 		ship_lock(conn);
@@ -324,7 +369,7 @@ ident_cb_conn_events(char *event, void *data, void *eventdata)
 		}
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 		/* send only to friends */
-		if (peer->is_friend)
+		if (peer->relationship == RELATIONSHIP_FRIEND)
 			ident_bb_send_buddies(ident, peer);
 #endif
 	err:
@@ -506,26 +551,26 @@ _ident_autoreg_load_cb(void *data, int lc, char *key, char *value, char *line)
 			int c = 1;
 			while (c < toklen) {
 				time_t now;
-				ident_service_t *s = 0, *s2;
-				if (!(s = ident_service_new())) {
-					c += 5;
-					continue;
+				service_type_t service_type;
+				char *service_handler_id = 0;
+				service_t *service = NULL;
+				addr_t addr;
+				int expire, reg_time;
+				
+				service_type = atoi(tokens[c++]);
+				service_handler_id = tokens[c++];
+				service = ship_ht_get_string(ident_service_handlers, service_handler_id);
+				ident_addr_str_to_addr(tokens[c++], &(addr));
+				expire = atoi(tokens[c++]);
+				reg_time = atoi(tokens[c++]);
+
+				if (!ident_update_service_registration(ident, service_type,
+								       NULL, service_handler_id, &addr,
+								       expire, reg_time, NULL)) {
+					time(&now);
+					LOG_INFO("Autoreg %s @ %s, port %d, expire in %d seconds..\n",
+						 ident->sip_aor, addr.addr, addr.port, reg_time + expire - now);
 				}
-				
-				s->service_type = atoi(tokens[c++]);
-				s->service_handler_id = strdup(tokens[c++]);
-				ident_addr_str_to_addr(tokens[c++], &(s->contact_addr));
-				s->expire = atoi(tokens[c++]);
-				s->reg_time = atoi(tokens[c++]);
-				
-				s2 = ship_ht_remove_int(ident->services, s->service_type);
-				ident_service_close(s2, ident);
-				ship_ht_put_int(ident->services, s->service_type, s);
-				
-				time(&now);
-				LOG_INFO("Autoreg %s @ %s, port %d, expire in %d seconds..\n",
-					 ident->sip_aor, s->contact_addr.addr,
-					 s->contact_addr.port, s->reg_time + s->expire - now);
 			}
 			
 			ident_update_registration(ident);
@@ -594,6 +639,12 @@ ship_obj_list_t *
 ident_get_identities()
 {
 	return identities;
+}
+
+ship_list_t *
+ident_get_remote_regs()
+{
+	return foreign_idents;
 }
 
 ship_list_t *
@@ -812,13 +863,6 @@ __ident_find_by_aor(const char *aor, const char *file, const char *func, const i
 }
 #endif
 
-static void 
-ident_set_status_done(char *event, void *eventdata)
-{
-	ship_obj_unref(eventdata);
-}
-
-
 /* sets / gets the status */
 void
 ident_set_status(char *aor, char *status)
@@ -837,7 +881,7 @@ ident_set_status(char *aor, char *status)
 
 			/* send an event, cause conn's to be updated */
 			ship_obj_ref(ident);
-			processor_event_generate("ident_status", ident, ident_set_status_done);
+			processor_event_generate_pack("ident_status", "I", ident);
 			if (ship_list_length(ident->services))
 				ident_update_registration(ident);
 			ident_autoreg_save();
@@ -984,11 +1028,11 @@ ident_register_new_empty_ident(char *sip_aor)
 	return ret;
 }
 
-/* ident helpers */
+/* udpates a registration. Either service or service_handler_id should be given. */
 static int
 ident_update_service_registration(ident_t *ident, service_type_t service_type,
-				  service_t *service, addr_t *addr, 
-				  int expire, void *pkg)
+				  service_t *service, const char *service_handler_id, addr_t *addr, 
+				  int expire, int reg_time, void *pkg)
 {
 	int ret = -1;
 	ident_service_t *s;
@@ -996,7 +1040,9 @@ ident_update_service_registration(ident_t *ident, service_type_t service_type,
 	s = ship_ht_get_int(ident->services, service_type);
 	if (expire == 0) {
 		/* check that it is the same handler */
-		if (s && s->service == service) {
+		if (s && ((s->service && service && s->service == service) ||
+			  (service_handler_id && s->service_handler_id && !strcmp(service_handler_id, s->service_handler_id)))) {
+
 			LOG_INFO("removing registration i have for %s, service type %u\n", ident->sip_aor, service_type);
 			
 			/* actually, we dont remove it, because we
@@ -1010,9 +1056,8 @@ ident_update_service_registration(ident_t *ident, service_type_t service_type,
 		} else {
 			LOG_WARN("ignoring service removal for %s, service type %u\n", ident->sip_aor, service_type);
 		}
-	} else {
-		time_t now;
 
+	} else {
 		LOG_INFO("Should update registration for %s, service type %u (exp %d)\n", 
 			 ident->sip_aor, service_type, expire);
 		
@@ -1024,13 +1069,14 @@ ident_update_service_registration(ident_t *ident, service_type_t service_type,
 			s->service->service_closed(s->service_type, ident, s->pkg);
 		}
 
-		now = time(0);
 		s->service_type = service_type;
 		s->service = service;
 		freez(s->service_handler_id);
-		if (service->service_handler_id)
+		if (service && service->service_handler_id)
 			s->service_handler_id = strdup(service->service_handler_id);
-		s->reg_time = now;
+		else if (service_handler_id)
+			s->service_handler_id = strdup(service_handler_id);
+		s->reg_time = reg_time;
 		s->expire = expire;
 		s->pkg = pkg;
 
@@ -1038,6 +1084,15 @@ ident_update_service_registration(ident_t *ident, service_type_t service_type,
 		if (addr)
 			memcpy(&(s->contact_addr), addr, sizeof(addr_t));
 	}
+
+	if (expire == 0)
+		processor_event_generate_pack("ident_unregister", "Iii", ident, service_type, expire);
+	else
+		processor_event_generate_pack("ident_register", "Iii", ident, service_type, expire);
+	
+#ifdef CONFIG_HIP_ENABLED
+	hipapi_check_hipd();
+#endif
 
 	ret = 0;
  err:
@@ -1067,13 +1122,9 @@ _ident_process_register(char *aor, service_type_t service_type, service_t *servi
 			if (ident_require_authentication) {
 				/* todo: how should we actually do this?? */
 				ret = 401;
-			} else if (!ident_update_service_registration(ident, service_type, service,
-								      addr, expire, pkg)) {
+			} else if (!ident_update_service_registration(ident, service_type, service, NULL,
+								      addr, expire, time(0), pkg)) {
 				
-#ifdef CONFIG_HIP_ENABLED
-				hipapi_check_hipd();
-#endif
-
 				/* unless force update, update only if
 				   the current ttl will not fit into
 				   the one that has been assigned
@@ -1859,7 +1910,6 @@ ident_find_foreign_reg(char *sip_aor)
 	ship_unlock(foreign_idents);
         return ret;
 }
-
 
 
 /* callback called after submitting a search for registrations. the

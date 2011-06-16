@@ -97,8 +97,7 @@ processor_event_free(processor_event_receiver_t* ret)
 }
 
 static processor_event_receiver_t*
-processor_event_new(char *event, void *data, 
-		    void (*func) (char *event, void *data, void *eventdata))
+processor_event_new(char *event, void *data, event_receiver_cb *func)
 {
 	processor_event_receiver_t* ret = 0;
 	ASSERT_TRUE(ret = mallocz(sizeof(processor_event_receiver_t)), err);
@@ -194,7 +193,7 @@ int
 processor_tasks_add_periodic(int (*func) (void*), void *data, int period)
 {
 	int ret = -1;
-	void *pack = NULL;
+	ship_pack_t *pack = NULL;
 	processor_task_t *task = 0;
 
 	if (period < 1000) {
@@ -202,7 +201,7 @@ processor_tasks_add_periodic(int (*func) (void*), void *data, int period)
 	}
 	ASSERT_TRUE(pack = ship_pack("pp", func, data), err);
 	ASSERT_TRUE(task = processor_tasks_add_timed(processor_tasks_run_periodic,
-						     pack, processor_tasks_run_periodic_done, period), err);
+						     (void*)pack, processor_tasks_run_periodic_done, period), err);
 	ret = 0;
 	pack = NULL;
  err:
@@ -902,8 +901,7 @@ processor_run()
 }
 
 int 
-processor_event_receive(char *event, void *data, 
-			void (*func) (char *event, void *data, void *eventdata))
+processor_event_receive(char *event, void *data, event_receiver_cb *func)
 {
 	processor_event_receiver_t* evt = processor_event_new(event, data, func);
 	if (evt && event_receivers) {
@@ -915,8 +913,7 @@ processor_event_receive(char *event, void *data,
 }
 
 void 
-processor_event_deregister(char *event, void *data, 
-			   void (*func) (char *event, void *data, void *eventdata))
+processor_event_deregister(char *event, void *data, event_receiver_cb *func)
 {
 	/* this should be better sync'd with the events_generate_do function */
 	/*
@@ -971,12 +968,11 @@ processor_event_generate_do(void *data, processor_task_t **wait, int wait_for_co
 	return 0;
 }
 
-void 
+static void
 processor_event_generate(char *event, void *eventdata, void (*callback) (char *event, void *eventdata))
 {
 	void **d2 = 0;
 	
-	/* we should do this async! */
 	LOG_DEBUG("generating event %s\n", event);
 	ASSERT_TRUE(d2 = mallocz(sizeof(void*) * 3), err);
 	ASSERT_TRUE(d2[0] = strdup(event), err);
@@ -987,7 +983,31 @@ processor_event_generate(char *event, void *eventdata, void (*callback) (char *e
  err:
 	freez_arr(d2, 1);
 }
-			       
+
+/* callback for the pack-based event generation */
+static void
+processor_event_generate_pack_cb(char *event, void *eventdata)
+{
+	ship_pack_free(eventdata);
+}
+
+/* generates an event with ship_pack-type data as parameters. There is
+   no callback, and the data will be automatically taken care of
+   (copies free'd, ship_obj's unreffed etc) */
+void 
+processor_event_generate_pack(char *event, char *fmt, ...)
+{
+	va_list ap;
+	ship_pack_t *ret = 0;
+		
+	va_start(ap, fmt);
+	if (fmt) {
+		ASSERT_TRUE(ret = ship_create_pack(fmt, ap), err);
+	}
+	processor_event_generate(event, ret, processor_event_generate_pack_cb);
+ err:
+	va_end(ap);
+}			       
 
 /******* the async fw **********/
 

@@ -269,6 +269,9 @@ static inline void * __NON_INSTRUMENT_FUNCTION__ mallocz(size_t __size)
         return ret;
 }
 
+/* swapping of pointers */
+#define ship_swap(a, b) { void *__ptr = a; a = b; b = __ptr; }
+
 /**
  * buffers with length
  */
@@ -320,9 +323,8 @@ struct ship_obj_type_s {
 
 	/* the size of the object */
 	int obj_size;
-#ifdef REF_DEBUG
 	char *obj_name;
-#endif
+
 	/* the constructor.  It WILL be passed a valid, object-sized
 	   head-allocated object.  The task of this function is just to 
 	   initialize the stuff *within* the object. 
@@ -359,13 +361,8 @@ struct ship_obj_s {
 #define SHIP_INCLUDE_TYPE(name) \
 struct ship_obj_type_s TYPE_##name;
 
-#ifdef REF_DEBUG
 #define SHIP_DEFINE_TYPE(name) \
 struct ship_obj_type_s TYPE_##name = { sizeof(struct name##_s), #name, (int (*) (ship_obj_t *, void *))name##_init, (void (*) (ship_obj_t *))name##_free }
-#else
-#define SHIP_DEFINE_TYPE(name) \
-struct ship_obj_type_s TYPE_##name = { sizeof(struct name##_s), (int (*) (ship_obj_t *, void *))name##_init, (void (*) (ship_obj_t *))name##_free }
-#endif
 
 
 /**
@@ -811,10 +808,14 @@ int ship_bloom_add_cert(ship_bloom_t *bloom, X509 *cert);
 #endif
 
 /* packing. should replace lenbufs etc atsome point .. */
-void ship_pack_free(void **list);
-void **ship_pack(char *fmt, ...);
+typedef void* ship_pack_t;
 
-int ship_unpack(int keep, int elm, void **list, ...);
+void ship_pack_free(ship_pack_t *list);
+ship_pack_t *ship_pack(char *fmt, ...);
+ship_pack_t *ship_create_pack(char *fmt, va_list ap);
+char ship_pack_type(ship_pack_t *list, const int elm);
+
+int ship_unpack(int keep, int elm, ship_pack_t *list, ...);
 #define ship_unpack_keep(list, args...) ship_unpack(1, -1, list, ##args)
 #define ship_unpack_keep_one(element, list, args...) ship_unpack(1, element, list, ##args)
 #define ship_unpack_transfer(list, args...) ship_unpack(0, -1, list, ##args)

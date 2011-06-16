@@ -112,6 +112,7 @@ typedef struct webcache_tracker_s {
 
 	/* marks that this has been put into the overlay */
 	int published;
+	char *rid;
 	
 } webcache_tracker_t;
 
@@ -233,6 +234,7 @@ webcache_tracker_free(webcache_tracker_t *tracker)
 	freez(tracker->url);
 	freez(tracker->buf);
 	freez(tracker->filename);
+	freez(tracker->rid);
 	free(tracker);
 }
 
@@ -270,7 +272,6 @@ webcache_flush_removed()
 	}
 	ship_unlock(webcache_cache);
 }
-
 
 int
 webcache_get_resource(char *url, char **buf, int *len)
@@ -1007,17 +1008,16 @@ resourcefetch_store(char *filename, char **id)
 
 /* removes a resource from the resource service */
 int
-resourcefetch_remove(char *filename)
+resourcefetch_remove(char *rid)
 {
-	char *tmp = 0, *tmp2 = 0;
+	char *tmp = 0;
 	int ret = -1;
 
-	ASSERT_TRUE(tmp = (char*)ship_hmac_sha1_base64(filename, "todo.."), err);
-	tmp2 = ship_ht_remove_string(resources, tmp);
-	freez(tmp2);
+	ASSERT_TRUE(rid, err);
+	ASSERT_TRUE(tmp = ship_ht_remove_string(resources, rid), err);
 	freez(tmp);
 	ret = 0;
- err:	
+ err:
 	return ret;
 }
 
@@ -1207,7 +1207,7 @@ webcache_p2p_update()
 		if ((buf = mallocz(strlen(e->url) + strlen(WEBCACHE_KEY_PREFIX) + 2))) {
 			strcpy(buf, WEBCACHE_KEY_PREFIX);
 			strcat(buf, e->url);
-			resourcefetch_remove(e->filename);
+			resourcefetch_remove(e->rid);
 			olclient_remove(buf, processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
 			free(buf);
 		}
@@ -1218,7 +1218,7 @@ webcache_p2p_update()
 	while ((e = ship_ht_next(webcache_cache, &ptr))) {
 		char *data = 0, *tmp = 0;
 		int len = 0, size = 0;
-		char *rid = 0, *u = 0;
+		char *u = 0;
 		
 		if (e->published)
 			continue;
@@ -1231,7 +1231,8 @@ webcache_p2p_update()
 			strcat(buf, e->url);
 
 			/* we should create the mapping */
-			ASSERT_ZERO(resourcefetch_store(e->filename, &rid), err);
+			freez(e->rid);
+			ASSERT_ZERO(resourcefetch_store(e->filename, &e->rid), err);
 			
 			ASSERT_TRUE(u = ship_urlencode(e->url), err);
 			sprintf(b2, "%d", e->size);
@@ -1241,7 +1242,7 @@ webcache_p2p_update()
 			/* we should create the data packet! */
 			ASSERT_TRUE((tmp = append_str(u, data, &size, &len)) && (data = tmp), err);
 			ASSERT_TRUE((tmp = append_str("=", data, &size, &len)) && (data = tmp), err);
-			ASSERT_TRUE((tmp = append_str(rid, data, &size, &len)) && (data = tmp), err);
+			ASSERT_TRUE((tmp = append_str(e->rid, data, &size, &len)) && (data = tmp), err);
 			ASSERT_TRUE((tmp = append_str(",", data, &size, &len)) && (data = tmp), err);
 			ASSERT_TRUE((tmp = append_str(b2, data, &size, &len)) && (data = tmp), err);
 			ASSERT_TRUE((tmp = append_str(",", data, &size, &len)) && (data = tmp), err);
@@ -1257,7 +1258,6 @@ webcache_p2p_update()
 	err:
 		freez(u);
 		freez(data);
-		freez(rid);
 		freez(buf);
 	}
 	ship_unlock(webcache_cache);

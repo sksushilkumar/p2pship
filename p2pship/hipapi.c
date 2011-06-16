@@ -27,9 +27,6 @@
 #ifdef CONFIG_HIP_ENABLED
 #include "hipapi.h"
 
-/* the hit to use for hit-communication */
-static addr_t ownhit;
-
 /* the RVS's we are registered to */
 static ship_list_t *rvs_arr = NULL;
 
@@ -50,6 +47,8 @@ hipapi_cb_config_update(processor_config_t *config, char *k, char *v)
 void
 hipapi_check_hipd()
 {
+	static addr_t ownhit;
+	
 	if (processor_config_bool(processor_get_config(), P2PSHIP_CONF_AUTOSTART)
 	    && hipapi_gethit(&ownhit)) {
 		char *args[] = { "hipd", "-k", NULL };
@@ -110,13 +109,14 @@ hipapi_check_hipd()
 int 
 hipapi_init(processor_config_t *config)
 {
+	static addr_t ownhit;
         int ret = -1;
 	LOG_INFO("Initing the hipapi module..\n");
 	
 	if (hipapi_gethit(&ownhit) && !processor_config_bool(config, P2PSHIP_CONF_ALLOW_NONHIP)
 	    && !processor_config_bool(config, P2PSHIP_CONF_AUTOSTART)) {
 		USER_ERROR("Error retrieving HITs. Please check that hipd is running.\n");
-		goto err; // kill
+		// goto err; // kill (do not!)
 	}
 
 	/* rvs & nat? */
@@ -214,6 +214,23 @@ hipapi_update_rvs_registration(void *data)
 	return ret;
 }
 
+//#define HIPCONF_TRACKING
+#ifdef HIPCONF_TRACKING
+static int
+hipconf(int len, char **arr, int sendonly)
+{
+	int ret = -1;
+	
+	LOG_DEBUG(">> sending hipconf: %s %s %s..\n", 
+		  arr[0], (len > 0? arr[1]:""), (len > 1? arr[2]:""));
+	ret = hip_do_hipconf(len, arr, sendonly);
+	LOG_DEBUG("<< -- hipconf sent with %d\n", ret);
+	return ret;
+}
+#else
+#define hipconf(a, b, c) hip_do_hipconf(a, b, c)
+#endif
+
 /* registers to the given RVS */
 int
 hipapi_register_to_rvs(addr_t *rvshit, addr_t *rvsloc, int add)
@@ -239,7 +256,7 @@ hipapi_register_to_rvs(addr_t *rvshit, addr_t *rvsloc, int add)
 	} else
 		arr[len-1] = num;
 	
-	ret = hip_do_hipconf(len, arr, 1);
+	ret = hipconf(len, arr, 1);
 	if (ret) {
 		LOG_WARN("could not %s register to RVS %s at %s\n", arr[1], rvshit->addr, rvsloc->addr);
 	} else {
@@ -256,7 +273,7 @@ hipapi_init_rvs(int on)
 	char *arr[4] = { "hipconf", "add", "service", "rvs"};
 	if (!on)
 		arr[1] = "del";	
-	return hip_do_hipconf(4, arr, 1);
+	return hipconf(4, arr, 1);
 }
 
 /* turns on udp encapsulation for hip */
@@ -269,7 +286,7 @@ hipapi_set_udp_encap(int mode)
 	if (mode > -1 && mode < 3)
 		arr[2] = types[mode];
 	
-	return hip_do_hipconf(3, arr, 1);
+	return hipconf(3, arr, 1);
 }
 
 /* Checks whether we have a working link to the given HIT. */
@@ -350,7 +367,7 @@ hipapi_establish(addr_t *remote_hit, ship_list_t *ips, ship_list_t *rvs)
 		 remote_hit->addr, l2.addr, loc->addr);
 
 	char *arr[5] = { "hipconf", "add", "map", remote_hit->addr, l2.addr };
-	ret = hip_do_hipconf(5, arr, 1);
+	ret = hipconf(5, arr, 1);
  err:
 	return ret;
 }
@@ -530,7 +547,7 @@ int
 hipapi_clear_sas()
 {
 	char *arr[3] = { "hipconf", "rst", "all"};
-	return hip_do_hipconf(3, arr, 1);
+	return hipconf(3, arr, 1);
 }
 
 /* this function creates a mapping from a HIT to a locator so that the

@@ -678,11 +678,15 @@ _httpproxy_tunnel_cb(int s, void *obj)
 	netio_http_conn_t *conn = netio_http_get_conn_by_id(id);
 	
 	/* highjack the socket! */
-	if (conn && !netio_http_redirect_data(conn, s)) {
-		netio_http_respond_str(conn, 200, "Connection established", "");
+	if (conn) {
+		if (!netio_http_redirect_data(conn, s)) {
+			netio_http_respond_str(conn, 200, "Connection established", "");
+		} else {
+			extapi_http_proxy_response(conn, 400, "Could not connect", "");
+			freez(id);
+		}
 	} else {
-		extapi_http_proxy_response(conn, 400, "Could not connect", "");
-		freez(id);
+		/* we've been disconnected, ignore? */
 	}
 	ship_unlock(conn);
 }

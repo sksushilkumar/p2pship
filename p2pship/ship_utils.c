@@ -2019,9 +2019,7 @@ ship_obj_new(struct ship_obj_type_s type, void *param)
 	ASSERT_TRUE(obj->_ship_ref_lock, err);
 	
 	obj->_ship_obj_type.obj_init = type.obj_init;
-#ifdef REF_DEBUG
 	obj->_ship_obj_type.obj_name = type.obj_name;
-#endif
 	obj->_ship_obj_type.obj_free = type.obj_free;
 	obj->_ship_obj_type.obj_size = type.obj_size;
 	
@@ -2115,16 +2113,11 @@ ship_lenbuf_create_ref(char *data, int len)
  * packing
  */
 
-/* packs a bunch of values into a single pack (void**)
-   format: p - pointer, s - string (copy made), i - int,
-   l - long, c - char, m - memory buffer (followed by size, copy made)
-*/
 
-void **
-ship_pack(char *fmt, ...)
+ship_pack_t *
+ship_create_pack(char *fmt, va_list ap)
 {
-	va_list ap;
-	void **ret = 0;
+	ship_pack_t *ret = 0;
 	int p = 1, s, i, elms = strlen((char*)fmt);
 	int vi;
 	long vl;
@@ -2133,7 +2126,6 @@ ship_pack(char *fmt, ...)
 	ASSERT_TRUE(ret = mallocz(sizeof(void*) * (elms+1)), err);
 	ASSERT_TRUE(ret[0] = strdup(fmt), err);
 
-	va_start(ap, fmt);
 	for (i=0; i < elms; i++) {
 		vm = NULL;
 		switch (fmt[i]) {
@@ -2159,29 +2151,53 @@ ship_pack(char *fmt, ...)
 		case 'p':
 			ret[p] = (void*)va_arg(ap, void*);
 			break;
+		case 'O':
+		case 'I':
+		case 'C':
+			ret[p] = (void*)va_arg(ap, void*);
+			ship_obj_ref(ret[p]);
+			break;
 		default:
 			PANIC("Invalid pack: %c\n", fmt[i]);
 		}
 		
 		if (vm) {
-			ASSERT_TRUE(ret[p] = malloc(s), err2);
+			ASSERT_TRUE(ret[p] = malloc(s), err);
 			memcpy(ret[p], vm, s);
 		}
 		p++;
 	}
-	va_end(ap);
 	return ret;
- err2:
-	va_end(ap);
  err:
 	ship_pack_free(ret);
 	return NULL;
 }
 
+
+
+/* packs a bunch of values into a single pack (void**)
+   format: p - pointer, s - string (copy made), i - int,
+   l - long, c - char, m - memory buffer (followed by size, copy made)
+   
+   O - ship_obj, I - ident, C - conn
+*/
+ship_pack_t *
+ship_pack(char *fmt, ...)
+{
+	va_list ap;
+	ship_pack_t *ret = 0;
+	
+	va_start(ap, fmt);
+	ASSERT_TRUE(ret = ship_create_pack(fmt, ap), err);
+ err:
+	va_end(ap);
+	return ret;
+}
+
 /* return the number of values unpacked. ownership transferred, can be
    called only once per pack. */
 int
-ship_unpack(int keep, int elm, void **list, ...)
+ship_unpack(int keep, int elm, ship_pack_t *list, ...)
 {
 	int i, ret = 0;
 	char *fmt;
@@ -2218,6 +2234,16 @@ ship_unpack(int keep, int elm, void **list, ...)
 			if (!keep)
 				list[i+1] = NULL;
 			break;
+		case 'O':
+		case 'I':
+		case 'C':
+			*(void**)vm = (void*)list[i+1];
+			// pass or create new ref before returning
+			if (!keep)
+				list[i+1] = NULL;
+			else 
+				ship_obj_ref(list[i+1]);
+			break;
 		default:
 			PANIC("Invalid unpack: in '%s' unknown char %c\n", fmt, fmt[i]);
 		}
@@ -2232,8 +2258,23 @@ ship_unpack(int keep, int elm, void **list, ...)
 	return ret;
 }
 
+char
+ship_pack_type(ship_pack_t *list, const int elm)
+{
+	char *fmt;
+	
+	if (!list || !list[0])
+		return 0;
+	
+	fmt = list[0];
+	if (elm < strlen(fmt))
+		return fmt[elm];
+	else
+		return 0;
+}
+
 void
-ship_pack_free(void **list)
+ship_pack_free(ship_pack_t *list)
 {
 	int i;
 	char *fmt;
@@ -2248,6 +2289,11 @@ ship_pack_free(void **list)
 		case 'm':
 		case 'l':
 			freez(list[i+1]);
+			break;
+		case 'O':
+		case 'I':
+		case 'C':
+			ship_obj_unref(list[i+1]);
 			break;
 		}
 	}

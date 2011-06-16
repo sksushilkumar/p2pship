@@ -312,7 +312,7 @@ ident_addr_addr_to_sa_to(void *data)
 
 #ifdef CONFIG_HIP_ENABLED
 	/* we do not want to do any hit lookups here! */
-	getaddrinfo_disable_hit_lookup();
+	//getaddrinfo_disable_hit_lookup();
 #endif
 	/* try ipv4 first, then ipv6 */
 	if (!getaddrinfo(addr.addr, NULL, &hints4, &res) ||
