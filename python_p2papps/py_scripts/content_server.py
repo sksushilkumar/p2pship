@@ -129,9 +129,11 @@ p2pship.config_create(conf_key, "p2phttp content server address", "string", http
 http_address = p2pship.config_get(conf_key)
 
 info("starting content server..")
-servo = ContentServer(http_address, "/")
-p2pship.config_set_update(conf_key, servo.update_address_config)
-info("content server running")
-
+try:
+    servo = ContentServer(http_address, "/")
+    p2pship.config_set_update(conf_key, servo.update_address_config)
+    info("content server running")
+except Exception, ex:
+    warn("Error while starting content server at %s: %s" % (str(http_address), str(ex)))
+         
 #ship_start_ui()
-

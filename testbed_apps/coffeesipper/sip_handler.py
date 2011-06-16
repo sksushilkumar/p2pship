@@ -546,10 +546,11 @@ class SipHandler:
 #
 #
 
-from streamer import StreamHandler, ServerHandler
 
 def test():
     print "testing handler.."
+
+    from streamer import StreamHandler, ServerHandler
 
     serv = ServerHandler()
     serv.start()
