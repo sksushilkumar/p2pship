@@ -195,6 +195,11 @@ class MultipartyHandler(SipHandler):
         m.send()
 
     def response_got(self, req, resp):
+
+        if req is None:
+            info("response to something already processed or not sent by me!")
+            return
+
         debug("response " + str(resp.resp_code) + " got to my " + req.msg_type + " request")
         if int(resp.resp_code) >= 200 and req.msg_type == "INVITE":
             m = resp.create_follow_up("ACK")
