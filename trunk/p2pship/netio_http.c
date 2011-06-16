@@ -995,8 +995,8 @@ netio_http_respond_str(netio_http_conn_t *conn,
 
 void
 netio_http_respond_html(netio_http_conn_t *conn, 
-		       int code, char *code_str, 
-		       char *data)
+			int code, char *code_str, 
+			char *data)
 {
 	netio_http_respond(conn, 
 			   code, code_str, 

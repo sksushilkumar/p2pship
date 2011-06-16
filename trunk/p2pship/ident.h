@@ -198,8 +198,14 @@ typedef struct conn_listener_s
 	int queued_data_len;
 } conn_listener_t;
 
-/* A buddy */
 
+/* The different types of friendships (for now ..) */
+enum {
+	RELATIONSHIP_NONE = 0,
+	RELATIONSHIP_FRIEND = 1
+};
+
+/* A buddy */
 typedef struct buddy_s
 {
 	char *name;
@@ -228,11 +234,11 @@ typedef struct buddy_s
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 	/* the bloomfilters of this guy's friends */
 	ship_bloom_t *friends[BLOOMBUDDY_MAX_LEVEL];
+#endif
 
 	/* is this is a buddy we trust (or we have initiated the
 	   contact) or some random person that has called us */
-	int is_friend;
-#endif
+	int relationship;
 
 }
 buddy_t;
@@ -363,6 +369,7 @@ int ident_load_identities();
 int ident_save_identities();
 void ident_save_identities_async();
 ship_list_t *ident_get_identities();
+ship_list_t *ident_get_remote_regs();
 ship_list_t *ident_get_cas();
 
 /* service stuff */
@@ -475,6 +482,7 @@ int ident_data_bb_find_connections_on_level(ship_list_t *buddy_list, char *remot
 
 void ident_data_dump_identities_json(ship_list_t *identities, char **msg);
 void ident_data_dump_cas_json(ship_list_t *cas, char **msg);
+void ident_data_dump_remote_regs_json(ship_list_t *regs, char **msg);
 
 void ident_set_status(char *aor, char *status);
 int ident_has_ident(const char* aor, const char *password);

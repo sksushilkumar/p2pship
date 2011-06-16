@@ -86,9 +86,14 @@ typedef struct processor_queued_packet_s
 }
 processor_queued_packet_t;
 
+/**
+ * events
+ */
+typedef void (event_receiver_cb) (char *event, void *data, ship_pack_t *eventdata);
+
 /* struct for holding eventing info */
 typedef struct processor_event_receiver_s {
-	void (*func) (char *event, void *data, void *eventdata);
+	event_receiver_cb *func;
 	char *event;
 	void *data;
 } processor_event_receiver_t;
@@ -162,11 +167,10 @@ processor_task_t *processor_create_wait();
 void processor_signal_wait(processor_task_t *wait, int status);
 
 /* the event interface */
-int processor_event_receive(char *event, void *data, 
-			    void (*func) (char *event, void *data, void *eventdata));
-void processor_event_deregister(char *event, void *data, 
-				void (*func) (char *event, void *data, void *eventdata));
-void processor_event_generate(char *event, void *eventdata, void (*callback) (char *event, void *eventdata));
+int processor_event_receive(char *event, void *data, event_receiver_cb *func);
+void processor_event_deregister(char *event, void *data, event_receiver_cb *func);
+void processor_event_generate_pack(char *event, char *fmt, ...);
+//void processor_event_generate(char *event, void *eventdata, void (*callback) (char *event, void *eventdata));
 
 void *processor_to_init(const char *name);
 int processor_to(void *thread_id, 

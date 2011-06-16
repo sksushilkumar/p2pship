@@ -379,7 +379,7 @@ ol_broadcast_close_sockets()
 
 /* the event interface */
 static void
-ol_broadcast_events(char *event, void *data, void *eventdata)
+ol_broadcast_events(char *event, void *data, ship_pack_t *eventdata)
 {
 	/* whatna, re-init the sockets completely */
 	LOG_DEBUG("got event %s\n", event);

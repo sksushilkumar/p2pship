@@ -434,7 +434,7 @@ main(int argc, char **argv)
         if (!flag_quiet)
                 print_version();
      
-        /* 1. load the defaults, 2. load the conf file, 3. put on the manual overrides */
+        /* 1. load the defaults (done already), 2. load the conf file, 3. put on the manual overrides */
 	/* ensure that we have a config file! */
 	if (ship_ensure_file(conf_file, "# Autocreated\n\n") || 
 	    processor_config_load(config2, conf_file)) {

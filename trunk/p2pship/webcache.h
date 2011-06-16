@@ -29,5 +29,13 @@ int webcache_record(char *tracking_id, char *url, char *data, int datalen);
 int webcache_p2p_lookup(char *url, void *ptr, void (*func) (char *url, void *obj, char *data, int datalen));
 int webcache_get_resource(char *url, char **buf, int *len);
 
+/* for resource fetching */
+int resourcefetch_remove(char *rid);
+int resourcefetch_store(char *filename, char **id);
+int resourcefetch_get(char *host, char *rid,
+		      char *local_aor,
+		      void (*func) (void *param, char *host, char *rid, char *data, int datalen),
+		      void *data);
+
 #endif
 

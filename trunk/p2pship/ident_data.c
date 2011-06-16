@@ -123,6 +123,9 @@ ident_buddy_find_or_create(ident_t *ident, char *sip_aor)
 	if (!(buddy = ident_buddy_find(ident, sip_aor))) {
 		ASSERT_TRUE(buddy = ident_buddy_new(NULL, sip_aor, NULL), err);
 		ship_list_add(ident->buddy_list, buddy);
+
+		/* announce this new 'friendship' */
+		processor_event_generate_pack("ident_buddy_new", "Is", ident, sip_aor);
 	}
  err:
 	return buddy;
@@ -135,6 +138,39 @@ ident_buddy_find(ident_t *ident, const char *sip_aor)
 	buddy_t *ret = 0;
 	while ((ret = ship_list_next(ident->buddy_list, &ptr)) &&
 	       strcmp(ret->sip_aor, sip_aor));
+	return ret;
+}
+
+
+static const char *RELATIONSHIP_FRIEND_STR = "friend";
+static const char *RELATIONSHIP_NONE_STR = "none";
+
+static int
+ident_buddy_str_to_relationship(const char *str)
+{
+	int ret = RELATIONSHIP_NONE;
+
+	if (!strcmp(str, RELATIONSHIP_FRIEND_STR))
+		ret = RELATIONSHIP_FRIEND;
+	// add more ..
+
+	return ret;
+}
+
+static const char*
+ident_buddy_relationship_to_str(const int rel)
+{
+	const char *ret = NULL;
+	
+	switch (rel) {
+	case RELATIONSHIP_FRIEND:
+		ret = RELATIONSHIP_FRIEND_STR;
+		break;
+		// add more..
+	case RELATIONSHIP_NONE:
+	default:
+		ret = RELATIONSHIP_NONE_STR;
+	}
 	return ret;
 }
 
@@ -164,13 +200,12 @@ ident_buddy_xml_to_struct(buddy_t **__buddy, xmlNodePtr cur)
    	if ((name = ship_xml_get_child_field(cur, "bloombuddies"))) {
 		ident_data_bb_load_ascii(name, buddy->friends);
 	}
-	freez(name);
-   	if ((name = ship_xml_get_child_field(cur, "friend"))) {
-		trim(name);
-		if (ship_is_true(name))
-			buddy->is_friend = 1;
-	}
 #endif
+	freez(name);
+   	if ((name = ship_xml_get_child_field(cur, "relationship"))) {
+		trim(name);
+		buddy->relationship = ident_buddy_str_to_relationship(name);
+	}
    	(*__buddy) = buddy;
    	buddy = NULL;
    	ret = 0;
@@ -1103,8 +1138,9 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 					ASSERT_TRUE(xmlNewTextChild(buddychildnode, NULL, (xmlChar*)"bloombuddies", (xmlChar*)tmp), err);
 					freez(tmp);
 				}
-				ASSERT_TRUE(xmlNewTextChild(buddychildnode, NULL, (xmlChar*)"friend", (xmlChar*)(buddy->is_friend? "true":"false")), err);
 #endif
+				ASSERT_TRUE(xmlNewTextChild(buddychildnode, NULL, (xmlChar*)"relationship", 
+							    (xmlChar*)(ident_buddy_relationship_to_str(buddy->relationship))), err);
 			}
 		}
 		ship_unlock(ident);
@@ -1452,21 +1488,6 @@ ident_data_dump_identities_json(ship_list_t *identities, char **msg)
 			(ident == def? "default": ""),
 			(service_str? service_str: ""));
 		
-
-		/* old format
-		ASSERT_TRUE(tmp = mallocz(len), err);
-		sprintf(tmp, "     \"%s\" : [ \"%s\", \"%d\", \"%s\", \"%s:%d\", \"%s:%d\", \"%s\", \"%s\", \"%s\" ],\n",
-			ident->sip_aor, 
-			(ident->username? ident->username:""), 0, //ident->reg_time, 
-			(ident_registration_timeleft(ident)? "online" : "offline"),
-			"", //ident->contact_addr.addr, 
-			0, //ident->contact_addr.port,
-			"127.0.0.1", 0,
-			ident_modif_state_str(ident->modified),
-			(s2? s2:""),
-			(ident == def? "default": ""));
-		*/
-
 		ASSERT_TRUE(buf = append_str(tmp, buf, &buflen, &datalen), err);
 		ship_unlock(ident);
 		ident = 0;
@@ -1514,6 +1535,37 @@ ident_data_dump_cas_json(ship_list_t *cas, char **msg)
 	freez(tmp);
 }
 
+void
+ident_data_dump_remote_regs_json(ship_list_t *regs, char **msg)
+{
+	reg_package_t *reg = NULL;
+	void *ptr = 0;
+	char *buf = 0;
+	int buflen = 0, datalen = 0;
+	char *tmp = 0;
+		
+	/* format: aor: name, created, valid, imported, valid(1|0), status, { app : data } */
+
+	ASSERT_TRUE(buf = append_str("var p2pship_remote_regs = {\n", buf, &buflen, &datalen), err);
+	while ((reg = ship_list_next(regs, &ptr))) {
+		int len = strlen(reg->name) + strlen(reg->sip_aor) + 128;
+		ASSERT_TRUE(tmp = mallocz(len), err);
+		sprintf(tmp, "     \"%s\" : [ \"%s\", \"%d\", \"%d\", \"%d\", \"%d\", \"%s\" ],\n",
+			reg->sip_aor, reg->name, 
+			(int)reg->created, (int)reg->valid, (int)reg->imported, 1, 
+			reg->status);
+		ASSERT_TRUE(buf = append_str(tmp, buf, &buflen, &datalen), err);
+		freez(tmp);
+	}
+	ASSERT_TRUE(replace_end(buf, &buflen, &datalen, ",\n", "\n"), err);
+	ASSERT_TRUE(buf = append_str("};\n", buf, &buflen, &datalen), err);
+	*msg = buf;
+	buf = 0;
+ err:
+	freez(buf);
+	freez(tmp);
+}
+
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 
 /* encodes a given level of the bloombuddies for a given user. 0 is
@@ -1550,13 +1602,13 @@ ident_data_bb_encode(ship_list_t *buddy_list, buddy_t *buddy, char **buf, int *b
 	ASSERT_TRUE(bloom = ship_bloom_new(BLOOMBUDDIES_BLOOM_SIZE), err);
 	if (level == 0) {
 		while ((bud = ship_list_next(buddy_list, &ptr))) {
-			if (!bud->is_friend || (buddy && !strcmp(bud->sip_aor, buddy->sip_aor)))
+			if (bud->relationship != RELATIONSHIP_FRIEND || (buddy && !strcmp(bud->sip_aor, buddy->sip_aor)))
 				continue;
 			ident_data_bb_add_buddy_to_bloom(bloom, bud);
 		}
 	} else {
 		while ((bud = ship_list_next(buddy_list, &ptr))) {
-			if (!bud->is_friend || (buddy && !strcmp(bud->sip_aor, buddy->sip_aor)))
+			if (bud->relationship != RELATIONSHIP_FRIEND || (buddy && !strcmp(bud->sip_aor, buddy->sip_aor)))
 				continue;
 
 			if (bud->friends[level]) {
@@ -1617,7 +1669,7 @@ ident_data_bb_get_first_level_cert(ship_list_t *buddy_list, X509 *cert)
 	       (ret != 0)) {
 		int i;
 
-		if (!buddy->is_friend)
+		if (buddy->relationship != RELATIONSHIP_FRIEND)
 			continue;
 		if (buddy->cert && !ship_cmp_pubkey(cert, buddy->cert))
 			return 1;
@@ -1643,7 +1695,7 @@ ident_data_bb_get_first_level(ship_list_t *buddy_list, char *to_aor)
 	while ((buddy = (buddy_t*)ship_list_next(buddy_list, &ptr)) &&
 	       (ret != 0)) {
 		int i;
-		if (!buddy->is_friend)
+		if (buddy->relationship != RELATIONSHIP_FRIEND)
 			continue;
 		if (!strcmp(buddy->sip_aor, to_aor))
 			return 1;
@@ -1671,7 +1723,7 @@ ident_data_bb_find_connections_on_level(ship_list_t *buddy_list, char *remote_ao
 	
 	ASSERT_TRUE(level < BLOOMBUDDY_MAX_LEVEL, err);
 	while ((buddy = (buddy_t*)ship_list_next(buddy_list, &ptr))) {
-		if (buddy->is_friend && ship_bloom_check(buddy->friends[level], remote_aor))
+		if (buddy->relationship != RELATIONSHIP_FRIEND && ship_bloom_check(buddy->friends[level], remote_aor))
 			ship_list_add(list, buddy);
 	}
 	ret = 0;
