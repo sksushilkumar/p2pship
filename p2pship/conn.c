@@ -425,7 +425,7 @@ conn_rebind()
 		ship_list_free(ips);
 	}
 	
-	processor_event_generate("conn_new_listener", NULL, NULL);
+	processor_event_generate_pack("conn_new_listener", NULL);
         return ret;
 }
 
@@ -470,12 +470,16 @@ conn_close()
 }
 
 static void
-conn_cb_events(char *event, void *data, void *eventdata)
+conn_cb_events(char *event, void *data, ship_pack_t *eventdata)
 {
 	if (str_startswith(event, "net_"))
 		conn_rebind();
-	else if (str_startswith(event, "ident_"))
-		conn_resend_reg_pkg((ident_t *)eventdata);
+	else if (str_startswith(event, "ident_")) {
+		ident_t *ident;
+		ship_unpack_keep(eventdata, &ident);
+		conn_resend_reg_pkg(ident);
+		ship_obj_unref(ident);
+	}
 }
 
 static void
@@ -513,7 +517,7 @@ conn_init(processor_config_t *config)
 	ASSERT_ZERO(processor_event_receive("net_*", 0, conn_cb_events), err);
 	
 	/* capture the ident_status events */
-	ASSERT_ZERO(processor_event_receive("ident_*", 0, conn_cb_events), err);
+	ASSERT_ZERO(processor_event_receive("ident_status", 0, conn_cb_events), err);
 
 	/* init trust manager */
 	ASSERT_ZERO(trustman_init(config), err);
@@ -813,12 +817,6 @@ conn_ensure_unique_conn_lock(conn_connection_t *conn)
 	return ret;
 }
 
-static void
-conn_event_cb(char *event, void *eventdata)
-{
-	ship_obj_unref((conn_connection_t*)eventdata);
-}
-
 static int
 conn_handshake_done(conn_connection_t *conn)
 {
@@ -828,7 +826,7 @@ conn_handshake_done(conn_connection_t *conn)
 			conn->state = STATE_CONNECTED;
 			STATS_LOG("incoming conn handshake done\n");
 			ship_obj_ref(conn);
-			processor_event_generate("conn_got", conn, conn_event_cb);
+			processor_event_generate_pack("conn_got", "C", conn);
 			return 1;
 		} else
 			return 0;
@@ -2270,11 +2268,11 @@ conn_open_connection_to_done(void *data, int code)
 	ship_obj_ref(conn); // for the event
 	if (code == 0) {
 		conn->state = STATE_CONNECTED;
-		processor_event_generate("conn_made", conn, conn_event_cb);
+		processor_event_generate_pack("conn_made", "C", conn);
 	} else if (code < 0) {
 		conn_conn_close(conn);
 		conn->state = STATE_ERROR;
-		processor_event_generate("conn_failed", conn, conn_event_cb);
+		processor_event_generate_pack("conn_failed", "C", conn);
 	}
 	ship_obj_unlockref(conn);
 }
