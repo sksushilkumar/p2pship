@@ -226,8 +226,8 @@ AC_CACHE_CHECK([whether to use hip],
                [ac_cv_use_hip], [ac_cv_use_hip=yes])
 if test x"$ac_cv_use_hip" = x"yes"; then
         AC_DEFINE(CONFIG_HIP_ENABLED, [1], [Use HIP for connections])
-        AC_CHECK_LIB([inet6],[hip_do_hipconf],,AC_MSG_ERROR([This application needs the hipconf library]),[-lhiptool -lpthread])
-        AC_CHECK_LIB([hiptool],[main],,AC_MSG_ERROR([This application needs the hipconf library]),[])
+        AC_CHECK_LIB([hipcore],[hip_do_hipconf],,AC_MSG_ERROR([This application needs the hipconf library]),[-lhipcore -lpthread -lssl -lcrypto])
+#        AC_CHECK_LIB([hiptool],[main],,AC_MSG_ERROR([This application needs the hipconf library]),[])
 fi
 AM_CONDITIONAL(HIP_ENABLED, test x"$ac_cv_use_hip" = x"yes")
 
