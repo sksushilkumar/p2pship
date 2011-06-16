@@ -500,8 +500,6 @@ static void
 ac_sip_free(ac_sip_t *asip)
 {
 	if (asip) {
-		freez(asip->local);
-		freez(asip->remote);
 		freez(asip->to);
 		freez(asip->from);
 		if (asip->filters) {
@@ -512,36 +510,16 @@ ac_sip_free(ac_sip_t *asip)
 }
 
 static ac_sip_t*
-ac_sip_new(char *local, char *remote, int remotely_got, void *pkg,
-	   osip_event_t *evt,
-	   void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict))
+ac_sip_new(sipp_request_t *req, ac_packetfilter_cb func)
 {	
 	ac_sip_t* ret = 0;
-	osip_message_t* sip = 0;
 
 	ASSERT_TRUE(ret = mallocz(sizeof(ac_sip_t)), err);
-	ret->remotely_got = remotely_got;
-	ASSERT_TRUE(ret->evt = evt, err);
-	ret->pkg = pkg;
+	ASSERT_TRUE(ret->req = req, err);
 	ASSERT_TRUE(ret->cb_func = func, err);
 	ASSERT_TRUE(ret->filters = ship_obj_list_new(), err);
-	if (local) {
-		ASSERT_TRUE(ret->local = strdup(local), err);
-		ASSERT_TRUE(ret->remote = strdup(remote), err);
-	}
 	
-	/* from & to */
-	ASSERT_TRUE(sip = evt->sip, err);
-	ASSERT_TRUE(sip->to && sip->from, err);
-        ASSERT_TRUE(ret->to = sipp_url_to_short_str(sip->to->url), err);
-        ASSERT_TRUE(ret->from = sipp_url_to_short_str(sip->from->url), err);
-	
-        if (MSG_IS_RESPONSE(sip)) {
-                char *tmp = ret->to;
-                ret->to = ret->from;
-                ret->from = tmp;
-        }
-
+	ASSERT_ZERO(sipp_get_sip_aors(req->evt->sip, &ret->from, &ret->to, 0), err);
 	ret->verdict = AC_VERDICT_NONE;
 	return ret;
  err:
@@ -563,7 +541,7 @@ ac_next_packetfilter(ac_sip_t *asip)
 		if (asip->verdict == AC_VERDICT_NONE)
 			asip->verdict = AC_VERDICT_ALLOW;
 
-		asip->cb_func(asip->local, asip->remote, asip->pkg, asip->verdict);
+		asip->cb_func(asip->req, asip->verdict);
 		ac_sip_free(asip);
 	}
 	
@@ -587,67 +565,46 @@ ac_start_packetfilter_done(void *data, int code)
 	}
 }
 
-
-static void
-ac_start_packetfilter(ac_sip_t *asip, const int filter)
+int
+ac_packetfilter(sipp_request_t *req, ac_packetfilter_cb func, const int filter)
 {
-	/* create queue of filters */
+	ac_sip_t *asip = 0;
 	void *ptr = 0;
 	ac_packetfilter_t* f = NULL;
-	
+
+	ASSERT_TRUE(asip = ac_sip_new(req, func), err);
+	asip->filter = filter;
+
 	while ((f = ship_list_next(filters, &ptr))) {
 		if (filter || f->force)
 			ship_obj_list_add(asip->filters, f);
 	}
 	
 	/* do this async! */
-	processor_tasks_add(ac_start_packetfilter_do, 
-			    asip,
-			    ac_start_packetfilter_done);	
-}
-
-int
-ac_packetfilter_remote(char *local_aor, char *remote_aor, osip_event_t *evt, 
-		       void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict),
-		       const int filter)
-{
-	ac_sip_t *asip = 0;
-	if ((asip = ac_sip_new(local_aor, remote_aor, 1, evt, evt, func))) {
-		ac_start_packetfilter(asip, filter);
-		return 0;
-	} else {
-		return -1;
-	}
-}
-
-int 
-ac_packetfilter_local(sipp_request_t *req, 
-		      void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict),
-		      const int filter)
-{
-	int ret = -1;
-	ac_sip_t *asip = 0;
-
-	if ((asip = ac_sip_new(req->local_aor, req->remote_aor, 0, req, req->evt, func))) {
-		ac_start_packetfilter(asip, filter);
-		ret = 0;
-	}	
-	return ret;
+	ASSERT_TRUE(processor_tasks_add(ac_start_packetfilter_do, 
+					asip,
+					ac_start_packetfilter_done), err);
+	return 0;
+ err:
+	ac_sip_free(asip);
+	return -1;
 }
 
 static int
 ac_packetfilter_debug(ac_sip_t *asip, void *data)
 {
-	if (MSG_IS_RESPONSE(asip->evt->sip)) {
-		LOG_INFO("PACKETFILTERING: Got a %d response from %s to %s (channel %s:%s, remotely got: %d)\n", 
-			 osip_message_get_status_code(asip->evt->sip),
+	if (MSG_IS_RESPONSE(asip->req->evt->sip)) {
+		LOG_INFO("PACKETFILTERING: Got a %d response from %s to %s (channel %s:%s, remotely got: %d, internal: %d, filter: %d)\n", 
+			 osip_message_get_status_code(asip->req->evt->sip),
 			 asip->from, asip->to,
-			 asip->local, asip->remote, asip->remotely_got);
+			 asip->req->local_aor, asip->req->remote_aor,
+			 asip->req->remote_msg, asip->req->internally_generated, asip->filter);
 	} else {
-		LOG_INFO("PACKETFILTERING: Got a %s request from %s to %s (channel %s:%s, remotely got: %d)\n", 
-			 asip->evt->sip->sip_method,
+		LOG_INFO("PACKETFILTERING: Got a %s request from %s to %s (channel %s:%s, remotely got: %d, internal: %d, filter: %d)\n", 
+			 asip->req->evt->sip->sip_method,
 			 asip->from, asip->to,
-			 asip->local, asip->remote, asip->remotely_got);
+			 asip->req->local_aor, asip->req->remote_aor, 
+			 asip->req->remote_msg, asip->req->internally_generated, asip->filter);
 	}
 
 	return 1;
@@ -656,12 +613,12 @@ ac_packetfilter_debug(ac_sip_t *asip, void *data)
 static int
 ac_packetfilter_trust(ac_sip_t *asip, void *data)
 {
-	osip_message_t* sip = asip->evt->sip;
+	osip_message_t* sip = asip->req->evt->sip;
 
 	LOG_DEBUG("Performing trust ac on %s->%s\n", asip->from, asip->to);
 
 	/* filter only inbound, non-response sessions */
-	if (asip->remotely_got && 
+	if (asip->req->remote_msg && 
 	    !MSG_IS_RESPONSE(sip) && 
 	    (MSG_IS_INVITE(sip) || MSG_IS_MESSAGE(sip)) &&
 	    asip->verdict == AC_VERDICT_NONE) {
@@ -748,10 +705,10 @@ ac_packetfilter_op(ac_sip_t *asip, void *data)
 static int
 ac_packetfilter_blacklist(ac_sip_t *asip, void *data)
 {
-	if (asip->remotely_got &&
+	if (asip->req->remote_msg &&
 	    asip->verdict == AC_VERDICT_NONE) {
 		/* ..if in blacklist mark as 'reject' */
-		if (ship_ht_get_string(black_list, asip->remote))
+		if (ship_ht_get_string(black_list, asip->req->remote_aor))
 			asip->verdict = AC_VERDICT_REJECT;
 	}
 
@@ -761,10 +718,10 @@ ac_packetfilter_blacklist(ac_sip_t *asip, void *data)
 static int
 ac_packetfilter_whitelist(ac_sip_t *asip, void *data)
 {
-	if (asip->remotely_got &&
+	if (asip->req->remote_msg &&
 	    asip->verdict == AC_VERDICT_NONE) {
 		/* ..if in whitelist mark as 'allow' */
-		if (ship_ht_get_string(white_list, asip->remote))
+		if (ship_ht_get_string(white_list, asip->req->remote_aor))
 			asip->verdict = AC_VERDICT_ALLOW;
 
 	}
@@ -779,12 +736,12 @@ ac_packetfilter_whitelist(ac_sip_t *asip, void *data)
 static int
 ac_packetfilter_simple(ac_sip_t *asip, void *data)
 {
-	osip_message_t* sip = asip->evt->sip;
+	osip_message_t* sip = asip->req->evt->sip;
 	int code = osip_message_get_status_code(sip);
 
-	LOG_DEBUG("Performing simple ac on %s->%s, remote: %d\n", asip->from, asip->to, asip->remotely_got);
+	LOG_DEBUG("Performing simple ac on %s->%s, remote: %d\n", asip->from, asip->to, asip->req->remote_msg);
 	/* filter only inbound */
-	if (asip->remotely_got) {
+	if (asip->req->remote_msg && !asip->req->internally_generated) {
 		
 		/* todo: we should check that the sip from == the aor
 		   associated with the connection (on remote calls) */

@@ -34,27 +34,24 @@
 #define AC_VERDICT_IGNORE 4
 #define AC_VERDICT_UNSUPP 5
 
+typedef void (*ac_packetfilter_cb) (sipp_request_t *msg, int verdict);
+
 /* struct for holding the sipp message info */
 typedef struct ac_sip_s {
-	void *pkg;
 
-	osip_event_t *evt;
-	
-	char *local;
-	char *remote;
+	sipp_request_t *req;
+	ac_packetfilter_cb cb_func;
 
 	char *from;
 	char *to;
 
 	int verdict;
 	
-	void (*cb_func) (char *local_aor, char *remote_aor, void *msg, int verdict);
-	
 	/* the list of packet filters which this should go through */
 	ship_list_t *filters;
-
-	/* whether this was remotely got */
-	int remotely_got;
+	
+	/* indication whether the caller wanted this to be filtered */
+	int filter;
 } ac_sip_t;
 
 ship_ht_t *ac_lists_whitelist();
@@ -70,12 +67,7 @@ void stats_dump_json(char **str);
 #endif
 
 void ac_lists_save();
-int ac_packetfilter_local(sipp_request_t *req, 
-			  void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict),
-			  const int filter);
-int ac_packetfilter_remote(char *local_aor, char *remote_aor, osip_event_t *evt, 
-			   void (*func) (char *local_aor, char *remote_aor, void *msg, int verdict),
-			   const int filter);
+int ac_packetfilter(sipp_request_t *req, ac_packetfilter_cb func, const int filter);
 int ac_init(processor_config_t *config);
 void ac_close();
 
