@@ -365,6 +365,22 @@ function initpage2() {
 
             table.appendChild(tr);
         }
+
+        /* remote */
+        table = document.getElementById("remote_table");
+        for (sip in p2pship_remote_regs) {
+            var tr = document.createElement("tr");
+
+            var reglink = "/reg?remote=" + sip;
+	    /* add_td(tr, "<a href='"+reglink+"'>"+ p2pship_remote_regs[sip][0] + "</a>"); */
+	    add_td(tr, p2pship_remote_regs[sip][0]);
+	    add_td(tr, "<a href='"+reglink+"'>"+ sip + "</a>");
+	    add_td(tr, format_time(p2pship_remote_regs[sip][1]));
+	    add_td(tr, format_time(p2pship_remote_regs[sip][2]));
+	    add_td(tr, format_time(p2pship_remote_regs[sip][3]));
+
+            table.appendChild(tr);
+        }
         
     } else if (page == "mp") {
 
