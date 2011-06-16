@@ -93,7 +93,7 @@ olclient_cb_state_change(struct olclient_module* module, int status, char *info)
 {
 	/* note: this isn't actually called from anywhere .. :( */
 	LOG_INFO("changed state of storage module %s to %d: %s\n", module->name, status, info);
-	processor_event_generate("ol_state_update", NULL, NULL);
+	processor_event_generate_pack("ol_state_update", NULL);
 }
 
 static void
@@ -659,7 +659,7 @@ olclient_getsub_entry(const char *key, void *param, olclient_extra_t *extra,
 		      olclient_get_cb callback, const int subscribe)
 {
 	/* do this async */
-	void *pkg = NULL;
+	ship_pack_t *pkg = NULL;
 
 	ASSERT_TRUE(pkg = ship_pack("spppi", key, param, extra, callback, subscribe), err);
 	ASSERT_TRUE(processor_tasks_add(olclient_get_entry_do,
@@ -1106,7 +1106,7 @@ olclient_remove_done(void *qt, int code)
 int
 olclient_remove(const char *key, const char* secret)
 {
-	void *pkg = NULL;
+	ship_pack_t *pkg = NULL;
 	int ret = -1;
 	
 	ASSERT_TRUE(pkg = ship_pack("ss", key, secret), err);
