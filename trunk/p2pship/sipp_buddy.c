@@ -129,6 +129,7 @@ __sipp_buddy_handle_subscribe(ident_t *from, char *to, int expire, char *callid)
 {
 	buddy_t* buddy = 0;
 	time_t now;
+	int new_relationship = -1;
 	
 	LOG_DEBUG("Got subscribe for %s from %s, exp %d, callid %s\n",
 		  to, from->sip_aor, expire, callid);
@@ -138,11 +139,17 @@ __sipp_buddy_handle_subscribe(ident_t *from, char *to, int expire, char *callid)
 	buddy->created = now;
 	buddy->expire = expire;
 
-#ifdef CONFIG_BLOOMBUDDIES_ENABLED
 	/* mark this as our friend now as we've chosen to subscribe to
 	   its status */
-	buddy->is_friend = 1;
-#endif
+	if (expire > 0)
+		new_relationship = RELATIONSHIP_FRIEND;
+	else
+		new_relationship = RELATIONSHIP_NONE;
+
+	if (buddy->relationship != new_relationship) {
+		buddy->relationship = new_relationship;
+		processor_event_generate_pack("ident_buddy_change", "Is", from, to);
+	}
 	return 0;
  err:
 	return -1;
