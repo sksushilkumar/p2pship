@@ -2,23 +2,97 @@
 
 = Introduction =
 
-_todo: What this is, what it means. Why it is useful_
+_note: this page is under development. Following is a brief introduction to the feature, we'll expand the article as the development efforts progress.._
+
+Voicemail, or more generally _off-line messaging_, is a useful feature for any sort of communication system. By being able to record messages for people currently not reachable, and have them delivered later, we're able to free ourselves from constantly monitoring the status of people. This naturally becomes difficult in a distributed settings where there is no reliable, constantly available, 3rd party to store these messages while the recipient is away.  Instead, we need to leverage, as always in P2P networks, the resources of possibly untrusted peers to deliver the data.  This introduces a number of issues to consider, including
+
+* Reliability
+
+_How can we ensure that a recipient actually receives (in a timely fashion) a message we've left them?_
+
+* Integrity
+
+_How can we ensure the message is not tampered with? How can we ensure the messages aren't being left in our name?_
+
+* Privacy
+
+_How can we limit who is able to interpret (listen to) the message? How can we prevent others from konwing altogether that we've left the messsage or for whom it is intended?_
+
+* Compatibility
+
+_How can we ensure the recipient is able to interpret the message?_
+
+
+Some of these can be solved in a pretty straight-forward manner. With the pre-existing featues of the p2pship system, we can quite safely address at least the integrity concerns. By attaching electronic signatures to the messages, and using the identity authorities or other means of binding keys to users, we're able to detect tampering (or false entries).  The privacy issues can be mitigated by using the privacy extensions of the system, encrypting and obfuscating the overlay storage keys.
+
+Reliability and compatibility, both addressing the delivery of the messages, are harder to perfect. But then again, these are issues which people have learned to accept a reasonable amount of risk. After all, voicemails in traditional centralized systems can always be ignored or accidentally deleted.
+
+The goal with the voicemail extensions of the p2pship system is to provide a reasonably secure platform on which different types of delivery models can be used. We provide the basic tools for creating voicemails, exchanging the necessary parameters and communicating the existence of these in a secure and privacy conscience manner. This will be used to further develop different types of models for storing the messages _offline_, using trust models and similar constructs.
+
 
 = Design overview =
 
-_todo: The concept. Terminology: invites, announcements, greetings.._
+The basic design of the voicemail feature utilizes an _invite-announce-acknowledge_- model. Potential recipients of voicemails (to whom voicemail can be _left_) publish _invites_ for those that they wish to receive voicemails from. These invites can be delivered through the overlay or directly during peer-to-peer sessions. And they can be public, meaning that anyone is able to leave a message (although the risk of spam in public networks does become an issue then).
+
+When leaving a voicemail, for instance if the recipient is busy handling another call or unavailable, the caller fetches the voicemail _invite_ for the recipient. This includes media parameters, greetings and information concerning how the voicemail should be stored. The p2pship proxy (of either the recipient or caller) answers the call as if the user would have, plays the greeting and records a message.
+
+The recorded message is stored and published using _announcements_. These are simple data packets which noteify and describe the message to the intended recipient - types, date, size and how to retrieve it. The voicemail subsystem of the recipient's proxy uses this information to fetch the message and notifies the user.  The recipient can then call a specific "number", intercepted by the local voicemail subsystem, which plays the message. Upon successfully delivering the message to the user, the proxy publishes an _acknoledgement_, which signals that the message has been delivered, and that it can be removed from any resource used for storing it.
+
+Note that the voicemail can be recorded both the recipient or initiator of a call. The typical case for using the initiator for reocrding a voicemail is when the recipient is offline.  This requires the exchange of _invites_, _announcements_ and _acknowledgements_ as described above. Recipient-based voicemail is much simpler in that sense, as it can be transparent for the caller. The proxy of the recipient will answer the call on behalf of the recipient, play a pre-recorded greeting and record the message to the recipient's local device. From a technical point of view of the initiator, this is identical to if the user would have answered the call. No exchange of invites or announcements is needed. This is however only a special case of the voicemail mechanism. In the following we will concentrate on the initiator-based mechanism, as it presents more challanges.
+
+== Invites ==
+
+The invites contain everything needed to create a voicemail for a recipients. These serve also to signal the support for voicemailing in general, and that the caller has been authorized to leave those (or actually that the recipient is not likely to ignore those).  These include (or could include)
+
+*Greetings*
+
+These are meant to be short introductions played before the message is recorded, indicating clearly that the user could not be reached, and it is possible to record a voicemail after the greeting.  Currently pre-recorded audio greetings are supported which can be fetched using the p2pship's _resourcefetch_ interface (basically retrieving a file from a remote user), or stored on a network drive accessible through HTTP.
+
+In the future, we could consider text-based greeting which are played using voice synthesizers or something else. Also, we could have different greetings for different situations. We could have specific greetings for when the user is offline, and others when the user just is not answering the call. These could also vary depending on who is calling, or the time of day ("..I'm probably sleeping, please leave a message!").
+
+*Supported audio formats*
+
+The formats in which messages are accepted. This could include codecs (mp3, wav etc), quality (16bit, 44.1 KHz) and restrictions on size and length (< 1 MB, < 240 seconds).
+
+*Policy hints*
+
+We could imagine different types of policies on when messages are accepted and how they should be handled. We could require the privacy enhancements to be used, or not accept voicemails during vacation periods.
+
+*Storage parameters*
+
+The receiver may wish to indicate trusted peers or network resources that is recommended to be used for storage of the annoucements and message data. Also, if overlay networks are used, randomized storage keys could be indicated to improve privacy.
+
+_Note:_ Currently only the greetings are used. The messages are recorded using a pre-defined format, and the messages are only stored on the initiator's device (accessible for the recipient using the resourcefetch mechanism).
+
+== Announcements ==
+
+The announcements are data packets describing a voicemail that has been recorded for a user. It contains (or could contain) values such as
+
+*Storage*
+
+Where the actually recording can be found. This might include overlay storages, network drives and different peers which have agreed to store the message.
+
+*Message details*
+
+When the message was left, the size and length of it. Audio encoding parameters. And by whom it was left.
+
+Currently only the storage parameters are used, and incdicate a resourcefetch key that can be used by the recipient to access the data.
+
+== Acknowledgements ==
+
+Acknoledgements are not currently used, as we do not yet support external (of the initiator/recipient) storage mechanisms. But these would be used to signal the initiator that the message has been delivered. Furthermore, these would be used also to signal 3rd party storage providers (such as trusted peers) that the message data can now be discarded. Basically this has been thought to work by the initiator creating a random _ack-storage key_, which is included in the announcement. After the message has been delivered, the recipient is expected to publish a signed package confirming the delivery using this key. Peers trusted with storing the message are also given this key, and monitor it for the acknowledgements.
 
 = Implementation =
 
-_todo: How it was implemented. Basic flow_
+The voicemail system is implemented as a PRE plugin. More on this later.
 
 == User experience ==
 
-_todo: The UIX, interface for accessing voicemails etc.._
+Currently the voicemail system uses only standard SIP signalling. Messages are announced to the user using SIP IM, and the user is able to listen to them by calling specially prefixed SIP AORs, which are intercepted by the voicemail system. More on this later.
 
 == Configuration ==
 
-_todo: how it is configured_
+_todo: please see the voicemail-prefixed configuration values. These are created dynamically by the plug-in._
 
 == Notes and caveats ==
 
