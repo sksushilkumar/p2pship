@@ -162,7 +162,8 @@ extapi_data_received_raw(char *data, int data_len, ident_t *ident,
 	}
 	
 	freez(sa);
-	return 0;
+	ret = 0; // always 0, why?
+	return ret;
 }
 
 static struct service_s extapi_raw_service =
@@ -920,7 +921,7 @@ extapi_process_req(netio_http_conn_t *conn, void *pkg)
 		} else {
 			char *trackingid = 0;
 			ASSERT_TRUE(trackingid = strdup(conn->tracking_id), err);
-			ASSERT_ZERO(olclient_get(key, (void*)trackingid, __extapi_get_cb), err);
+			ASSERT_TRUE(olclient_get(key, (void*)trackingid, __extapi_get_cb) != -1, err);
 			ret = 1;
 		}
 	} else if (str_startswith(conn->url, "/put")) {
