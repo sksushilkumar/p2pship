@@ -488,25 +488,27 @@ void ident_set_status(char *aor, char *status);
 int ident_has_ident(const char* aor, const char *password);
 
 /** overlay puts / gets with regards to buddies & privacy policies **/
-int ident_put_open(ident_t *ident, const char *key, const char *value, const int timeout);
-int ident_put_for_all_buddies(ident_t *ident, const char *key, const char *value, const int timeout);
-int ident_put_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key, const char *value, const int timeout);
+int ident_ol_put_open(ident_t *ident, const char *key, const char *value, const int timeout);
+int ident_ol_put_for_all_buddies(ident_t *ident, const char *key, const char *value, const int timeout, const int privacy_only);
+int ident_ol_put_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key, const char *value, const int timeout, const int privacy_only);
 
-int ident_remove_open(ident_t *ident, const char* key);
-int ident_remove_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key);
-int ident_remove_for_all_buddies(ident_t *ident, const char *key);
+int ident_ol_remove_open(ident_t *ident, const char* key);
+int ident_ol_remove_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key);
+int ident_ol_remove_for_all_buddies(ident_t *ident, const char *key);
 
 /* ident_get_cb == olclient_get_cb */
 typedef void (*ident_get_cb) (char *key, char *data, char *signer, void *param, int status);
-int ident_getsub_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key,
-				  void *param, ident_get_cb callback, const int subscribe);
-int ident_getsub_open(ident_t *ident, const char *key, 
-		      void *param, ident_get_cb callback, const int subscribe);
+int ident_ol_getsub_for_all_buddies(ident_t *ident, const char *key, 
+				    void *param, ident_get_cb callback, const int subscribe);
+int ident_ol_getsub_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key,
+				     void *param, ident_get_cb callback, const int subscribe);
+int ident_ol_getsub_open(ident_t *ident, const char *key, 
+			 void *param, ident_get_cb callback, const int subscribe);
 
-#define ident_get_for_buddy_by_aor(ident, buddy_aor, key, param, callback) ident_getsub_for_buddy_by_aor(ident, buddy_aor, key, param, callback, 0)
-#define ident_get_open(ident, key, param, callback) ident_getsub_open(ident, key, param, callback, 0)
-#define ident_subscribe_for_buddy_by_aor(ident, buddy_aor, key, param, callback) ident_getsub_for_buddy_by_aor(ident, buddy_aor, key, param, callback, 1)
-#define ident_subscribe_open(ident, key, param, callback) ident_getsub_open(ident, key, param, callback, 1)
+#define ident_ol_get_for_buddy_by_aor(ident, buddy_aor, key, param, callback) ident_ol_getsub_for_buddy_by_aor(ident, buddy_aor, key, param, callback, 0)
+#define ident_ol_get_open(ident, key, param, callback) ident_ol_getsub_open(ident, key, param, callback, 0)
+#define ident_ol_subscribe_for_buddy_by_aor(ident, buddy_aor, key, param, callback) ident_ol_getsub_for_buddy_by_aor(ident, buddy_aor, key, param, callback, 1)
+#define ident_ol_subscribe_open(ident, key, param, callback) ident_ol_getsub_open(ident, key, param, callback, 1)
 
 /* service parameters */
 #define ident_remove_service_param(i, s, k) ident_set_service_param(i, s, k, NULL)
