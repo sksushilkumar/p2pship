@@ -237,7 +237,7 @@ void
 netio_close_socket(int s)
 {
 	netio_sock_t *e = 0;
-	void *ptr = 0, *last = 0;
+	void *ptr = 0;
 	int closeit = 1;
 
 	if (s == -1)
@@ -263,7 +263,6 @@ netio_close_socket(int s)
 				e->remove = 1;
 			}
 			ship_unlock(e->send_queue);
-			last = ptr;
                 }
 	}
 
