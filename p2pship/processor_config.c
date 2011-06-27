@@ -448,10 +448,9 @@ static int
 processor_config_ensure_config_file(char *conf_name, char *default_content, processor_config_t *config)
 {
 	if (default_content)
-		ship_ensure_file(processor_config_string(config, conf_name), default_content);
+		return ship_ensure_file(processor_config_string(config, conf_name), default_content);
 	else
-		ship_ensure_dir(processor_config_string(config, conf_name));
-	return 0;
+		return ship_ensure_dir(processor_config_string(config, conf_name));
 }
 
 int
