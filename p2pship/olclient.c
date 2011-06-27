@@ -42,7 +42,7 @@
 #define SUBSCRIBE_POLL_PERIOD 30000
 
 /* the crypt functions */
-static unsigned char* olclient_encrypt_for_someone(const char *key, const char *data, buddy_t *receiver);
+static unsigned char* olclient_encrypt_for_someone(const char *data, buddy_t *receiver);
 static char* olclient_create_signed_wrap(const char *key, const char *data, ident_t *signer, const int add_cert, const int timeout);
 static char* olclient_sign_xml_record(const char *data, ident_t *ident, const int addcert);
 static char* olclient_create_wrap_xml_record(const char *key, const char *data, const int timeout);
@@ -146,6 +146,9 @@ olclient_extra_new(const char *cipher_secret, ident_t *receiver,
 	return NULL;
 }
 
+/* running counter of the lookup handles.. */
+static int lookup_handle = 1;
+
 static int 
 olclient_lookup_init(olclient_lookup_t *ret, char *key)
 {
@@ -153,6 +156,12 @@ olclient_lookup_init(olclient_lookup_t *ret, char *key)
         ASSERT_TRUE(ret->tasks = ship_obj_list_new(), err);
         ASSERT_TRUE(ret->results = ship_list_new(), err);
         ASSERT_TRUE(ret->cache = ship_list_new(), err);
+
+	/* this is considered good enough for now .. */
+	if (lookup_handle < 1)
+		lookup_handle = 1;
+	while (!ret->handle)
+		ret->handle = lookup_handle++;
 	ret->status = -1;
         return 0;
      err:
@@ -491,8 +500,8 @@ olclient_get_to(void *data, processor_task_t **wait, int wait_for_code)
 	while ((task = ship_list_next(l->tasks, &ptr))) {
 		LOG_DEBUG("timeout for lookup on module %s..\n", task->mod->name);
 
-		if (l->is_subscribe && task->mod->unsubscribe) {
-			task->mod->unsubscribe(l->key, task);
+		if (l->is_subscribe && task->mod->cancel) {
+			task->mod->cancel(l->key, task);
 		}
 	}
 
@@ -558,20 +567,8 @@ olclient_get_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 	int ret = -1;
 	void *ptr = 0;
 	struct olclient_module *mod;
-	olclient_lookup_t *l = NULL;
+	olclient_lookup_t *l = (olclient_lookup_t *)data;
 
-	int subscribe = 0;
-	char *key;
-	void *param;
-	olclient_extra_t *extra;
-	olclient_get_cb callback = NULL;
-
-	ASSERT_TRUE(ship_unpack_keep(data, &key, &param, &extra, &callback, &subscribe), err);
-	ASSERT_TRUE(l = (olclient_lookup_t *)ship_obj_new(TYPE_olclient_lookup, key), err);
-	l->param = param;
-	l->extra = extra;
-	l->callback = callback;
-	l->is_subscribe = subscribe;
 	while ((mod = (struct olclient_module*)ship_list_next(olclient_modules, &ptr))) {    	    			    
 		int (*fetch) (char *key, olclient_get_task_t *task) = mod->get;
 		int (*fetch_signed) (char *key, olclient_signer_t *signer, olclient_get_task_t *task) = mod->get_signed;
@@ -597,7 +594,7 @@ olclient_get_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 		/* for functions .. get_signed, get_signed_for_someone */ 
 		if (l->extra->verify_flags & VERIFY_SIGNER) {
 			if (l->extra->signer && fetch_signed && 
-			    !fetch_signed(key, l->extra->signer, task)) {
+			    !fetch_signed(l->key, l->extra->signer, task)) {
 				ret = 0;
 			} else {
 				/* if no signer, then fetch whatever and check in olclient 
@@ -605,10 +602,10 @@ olclient_get_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 				/* module doesn't support get_signed, we call mod->get and
 				   ask cb_get_signed to verify the data signature instead */
 				task->callback = olclient_cb_get_signed;
-				if (fetch && !fetch(key, task))
+				if (fetch && !fetch(l->key, task))
 					ret = 0;
 			} 
-		} else if (fetch && !fetch(key, task))
+		} else if (fetch && !fetch(l->key, task))
 			ret = 0;
 		
 		if (ret)
@@ -623,24 +620,15 @@ olclient_get_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 		if (!l->is_subscribe)
 			processor_tasks_add_timed(olclient_get_to, l, NULL, 5000);
 	}
- err:
-	ship_obj_unref(l);
+
 	return ret;
 }
 
 static void 
 olclient_get_entry_done(void *data, int code)
 {
-	char *key;
-	void *param;
-	olclient_get_cb callback = NULL;
-
-	ASSERT_TRUE(ship_unpack_keep(data, &key, &param, NULL, &callback, NULL), err);
-	if (code) {
-		callback(key, 0, 0, param, -1);
-	}
- err:
-	ship_pack_free(data);
+	olclient_lookup_t *l = (olclient_lookup_t *)data;
+	ship_obj_unref(l);
 }
 
 /* request some resource from the dht / other overlay.  The resource
@@ -658,35 +646,41 @@ static int
 olclient_getsub_entry(const char *key, void *param, olclient_extra_t *extra, 
 		      olclient_get_cb callback, const int subscribe)
 {
-	/* do this async */
-	ship_pack_t *pkg = NULL;
+	olclient_lookup_t *l = NULL;
 
-	ASSERT_TRUE(pkg = ship_pack("spppi", key, param, extra, callback, subscribe), err);
+	ASSERT_TRUE(l = (olclient_lookup_t *)ship_obj_new(TYPE_olclient_lookup, (char *)key), err);
+	l->param = param;
+	l->extra = extra;
+	l->callback = callback;
+	l->is_subscribe = subscribe;
+
+	/* do this async, keep the l ref'd */
 	ASSERT_TRUE(processor_tasks_add(olclient_get_entry_do,
-					pkg, 
+					l,
 					olclient_get_entry_done), err);
-	return 0;
+	return l->handle;
  err:
-	ship_pack_free(pkg);
+	ship_obj_unref(l);
 	return -1;
 }
 
 void
-olclient_unsubscribe(const char *key, void *param, olclient_get_cb callback)
+olclient_cancel(const int handle)
 {
 	void *ptr = NULL;
 	olclient_lookup_t *l = NULL;
 	olclient_get_task_t *task = NULL;
-	// int (*unsubscribe) (char *key, olclient_get_task_t *task);
 
 	ship_lock(olclient_lookups);
 	while ((l = ship_list_next(olclient_lookups, &ptr))) {
-		void *ptr2 = NULL;
-		while ((task = ship_list_next(l->tasks, &ptr2))) {
-			if (task->mod->unsubscribe)
-				task->mod->unsubscribe(l->key, task);
-			else
-				olclient_unsubscribe_bypoll(task);
+		if (l->handle == handle) {
+			void *ptr2 = NULL;
+			while ((task = ship_list_next(l->tasks, &ptr2))) {
+				if (task->mod->cancel)
+					task->mod->cancel(l->key, task);
+				else
+					olclient_unsubscribe_bypoll(task);
+			}
 		}
 	}
 	ship_unlock(olclient_lookups);
@@ -806,7 +800,9 @@ err:
 	return ret;
 }
 
-/* lookups something that is encrypted by someone, but signed within the encryption using a shared secret- key */
+/* lookups something using a indexing key made from the shared secret
+   and that is encrypted by someone using our public key, and signed
+   within the encryption */
 int 
 olclient_getsub_anonymous_signed_for_someone_with_secret(const char *key, buddy_t *signer, ident_t *receiver, const char *shared_secret,
 						      void *param, olclient_get_cb callback, const int subscribe)
@@ -819,7 +815,7 @@ olclient_getsub_anonymous_signed_for_someone_with_secret(const char *key, buddy_
 	/* hmac the key and shared secret */
 	ASSERT_TRUE(hmac_key64 = ship_hmac_sha1_base64(key, shared_secret), err);
 	ASSERT_TRUE(extra = olclient_extra_new(NULL, receiver, signer, VERIFY_INTERNAL_SIGNER), err);
-	ASSERT_ZERO(ret = olclient_getsub_entry(hmac_key64, param, extra, callback, subscribe), err);
+	ASSERT_TRUE(ret = olclient_getsub_entry(hmac_key64, param, extra, callback, subscribe) != -1, err);
 	extra = NULL;
 err:
 	olclient_extra_free(extra);
@@ -987,7 +983,7 @@ olclient_put_for_someone(const char *key, const char *data, buddy_t *receiver, c
 	unsigned char *value;
 		
 	/* encrypt the data with receiver's public key */
-	ASSERT_TRUE(value = olclient_encrypt_for_someone(key, data, receiver), err);
+	ASSERT_TRUE(value = olclient_encrypt_for_someone(data, receiver), err);
 	
 	ret = olclient_put(key, (char*)value, timeout, secret);
 	free(value);	
@@ -1008,7 +1004,7 @@ olclient_put_signed_for_someone(const char *key, const char *data, ident_t *sign
 	ASSERT_TRUE(hmac_key64 = ship_hmac_sha1_base64(key, shared_secret), err);
 	
 	/* encrypt the data with receiver's public key */
-	ASSERT_TRUE(value = olclient_encrypt_for_someone(key, data, receiver), err);
+	ASSERT_TRUE(value = olclient_encrypt_for_someone(data, receiver), err);
 	
 	ret = olclient_put_signed(hmac_key64, (char*)value, signer, timeout, secret);
 	free(value);
@@ -1036,7 +1032,7 @@ olclient_put_anonymous_signed_for_someone_with_secret(const char *key, const cha
 	ASSERT_TRUE(wrap_data = olclient_create_signed_wrap((char*)hmac_key64, data, signer, 0, timeout), err);
 	
 	/* encrypt the wrap_data with receiver's public key */
-	ASSERT_TRUE(value = olclient_encrypt_for_someone(key, wrap_data, receiver), err);
+	ASSERT_TRUE(value = olclient_encrypt_for_someone(wrap_data, receiver), err);
 
 	ret = olclient_put(hmac_key64, (char*)value, timeout, secret);	
 	
@@ -1061,7 +1057,7 @@ olclient_put_for_someone_with_secret(const char *key, const char *data, buddy_t 
 	ASSERT_TRUE(hmac_key64 = ship_hmac_sha1_base64(key, shared_secret), err);
 	
 	/* encrypt the wrap_data with receiver's public key */
-	ASSERT_TRUE(value = olclient_encrypt_for_someone(key, data, receiver), err);
+	ASSERT_TRUE(value = olclient_encrypt_for_someone(data, receiver), err);
 
 	ret = olclient_put(hmac_key64, (char*)value, timeout, secret);	
 err:
@@ -1285,7 +1281,10 @@ olclient_decrypt_for_someone(olclient_verifier_t *pr_key, const char *value, cha
 	value64_len = strlen(value);
 	key_and_iv64_len = ((k + 2)/3) * 4; 
 	data64_len = value64_len - key_and_iv64_len;
-	ASSERT_TRUES(data64_len > 0, err, "not enough data to contain what was expected!\n");
+	if (data64_len < 0) {
+		LOG_DEBUG("not enough data to contain what was expected!\n");
+		goto err;
+	}
 
 	/* extract the cipher key & iv ,and data */
 	key_and_iv64 = mallocz(key_and_iv64_len + 1);
@@ -1439,7 +1438,7 @@ olclient_create_signed_wrap(const char *key, const char *data, ident_t *signer, 
 }
 
 static unsigned char*
-olclient_encrypt_for_someone(const char *key, const char *data, buddy_t *receiver)
+olclient_encrypt_for_someone(const char *data, buddy_t *receiver)
 {
 	EVP_PKEY *pkey = NULL;
 	RSA *pu_key = NULL;
