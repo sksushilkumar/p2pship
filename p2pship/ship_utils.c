@@ -598,7 +598,7 @@ ship_tokenize(const char *str, int len, char ***tokens, int *toklen, char token)
 	while (i < nr && tstr < (str+len)) {
 		if ((*tstr) == token) {
 			ASSERT_TRUE((*tokens)[i] = (char*)mallocz(tstr - ltstr + 1), err);
-			memcpy((*tokens)[i], ltstr, tstr-ltstr);
+			memmove((*tokens)[i], ltstr, tstr-ltstr);
 			i++;
 			ltstr = tstr+1;
 		}
@@ -607,7 +607,7 @@ ship_tokenize(const char *str, int len, char ***tokens, int *toklen, char token)
         
 	if (i < nr) {
 		ASSERT_TRUE((*tokens)[i] = (char*)mallocz(tstr - ltstr + 1), err);
-		memcpy((*tokens)[i], ltstr, tstr-ltstr);
+		memmove((*tokens)[i], ltstr, tstr-ltstr);
 	}
         
 	*toklen = nr;
@@ -688,7 +688,7 @@ strdup_trim(char *str)
 
 	ret = (char*)mallocz(e-s+2);
 	if (ret)
-		memcpy(ret, str+s, e-s+1);
+		memmove(ret, str+s, e-s+1);
 
 	return ret;
 }
@@ -1280,11 +1280,12 @@ ship_urldecode(char *str)
 				doagain = 0;
 				goto again;
 			}
+
 			
 			str -= 2;
-			*(str) = (char)(0xff & val);
-			memcpy(str+1, str+3, end-str-3);
 			end -=2;
+			*(str) = (char)(0xff & val);
+			memmove(str+1, str+3, end-str-1);
 			end[0] = 0;
 		}
 	skip:
@@ -1728,9 +1729,11 @@ int
 ship_ensure_file(char *filename, char *initial_data)
 {
 	struct stat sdata;
-	int ret = 0;
+	int ret = -1;
 	FILE *f = NULL;
-	
+
+	ASSERT_TRUE(filename, err);
+		
 	if (stat(filename, &sdata)) {
 		/* create the directory recursively */
 		char *p = strchr(filename, '/');
@@ -1748,6 +1751,7 @@ ship_ensure_file(char *filename, char *initial_data)
 		else
 			ret = -2;
 	}
+	ret = 0;
  err:
 	if (f)
 		fclose(f);	
@@ -1758,7 +1762,9 @@ int
 ship_ensure_dir(char *filename)
 {
 	struct stat sdata;
-	int ret = 0;
+	int ret = -1;
+
+	ASSERT_TRUE(filename, err);
 	if (stat(filename, &sdata)) {
 		/* create the directory recursively */
 		char *p = strchr(filename, '/');
@@ -1775,6 +1781,7 @@ ship_ensure_dir(char *filename)
 		if (stat(filename, &sdata))
 			ret = mkdir(filename, S_IRWXU);
 	}
+	ret = 0;
  err:
 	return ret;
 }
