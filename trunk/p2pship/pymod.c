@@ -486,7 +486,7 @@ p2pship_get_datadir(PyObject *self, PyObject *args)
 	char *dir = NULL;
 	char *datadir = NULL;
 	char *pos = NULL;
-	
+
 	ASSERT_TRUE(state = pymod_get_current_state(), err);
 		
 	ASSERT_TRUE(datadir = processor_config_string(processor_get_config(), P2PSHIP_CONF_PYTHON_DATA_DIR), err);
@@ -503,8 +503,6 @@ p2pship_get_datadir(PyObject *self, PyObject *args)
 	/* create data dir: datadir/scriptname/ ? */
 		
 	ASSERT_ZERO(ship_ensure_dir(dir), err);
-		
-
 
 	ret = Py_BuildValue("s", dir);
 	goto end;
@@ -512,6 +510,7 @@ p2pship_get_datadir(PyObject *self, PyObject *args)
 	freez(dir);
 	ret = Py_None;
  end:
+	LOG_WARN("Please check the Python data dir configuration (%s)\n", processor_config_string(processor_get_config(), P2PSHIP_CONF_PYTHON_DATA_DIR));
 	Py_INCREF(Py_None);
 	return ret;
 }
@@ -1605,7 +1604,6 @@ void pymod_ol_close(struct olclient_module* mod)
 {
 	pymod_ol_handler_t *h = 0;
 	PyObject *result;
-	int ret = -1;
 
 	if (pymod_ol_clients)
 		h = (pymod_ol_handler_t*)ship_list_remove(pymod_ol_clients, mod->module_data);
@@ -1616,7 +1614,6 @@ void pymod_ol_close(struct olclient_module* mod)
 	result = PyObject_CallObject(h->close, NULL);
 	ASSERT_TRUE(result, err);
 	Py_DECREF(result);
-	ret = 0;
  err:
 	pymod_tstate_return(h->tstate);
 	pymod_ol_free(h);
@@ -2582,9 +2579,9 @@ pymod_getsub_cb(char *key, char *data, char *signer, void *param, int status)
 	ship_check_restricts();
 	ASSERT_TRUE(pymod_tstate_ok(h->tstate), err);
 	if (h->callback2) {
-		ASSERT_TRUE(arglist = Py_BuildValue("(ssO)", key, data, h->callback2), err);
+		ASSERT_TRUE(arglist = Py_BuildValue("(sssO)", key, data, signer, h->callback2), err);
 	} else {
-		ASSERT_TRUE(arglist = Py_BuildValue("(ss)", key, data), err);
+		ASSERT_TRUE(arglist = Py_BuildValue("(sss)", key, data, signer), err);
 	}
 	
 	result = PyObject_CallObject(h->callback, arglist);
@@ -2604,20 +2601,24 @@ static PyObject *
 p2pship_ol_ident_getsub(PyObject *self, PyObject *args, const int subscribe)
 {
 	const char *local_aor = 0, *remote_aor = 0, *key = 0;
-	PyObject *callback = NULL, *ret = NULL, *data = NULL;
+	PyObject *callback = NULL, *ret = NULL, *data = NULL, *remote = NULL;
 	pymod_ipc_handler_t *h = NULL;
 	ident_t *ident = NULL;
+	int handle = -1;
 	
-	if (!PyArg_ParseTuple(args, "sssO|O", &local_aor, &remote_aor, &key, &callback, &data))
+	if (!PyArg_ParseTuple(args, "sOsO|O", &local_aor, &remote, &key, &callback, &data))
 		goto end;
 	
 	ASSERT_TRUE(ident = pymod_valid_ident_or_default(local_aor), err);
-
+	
 	ASSERT_TRUE(h = pymod_ipc_new("ident_get", callback, data), err);
-	ASSERT_ZERO(ident_getsub_for_buddy_by_aor(ident, remote_aor, key, h, pymod_getsub_cb, subscribe), err);
-
-	Py_INCREF(Py_None);
-	ret = Py_None;
+	if ((remote_aor = pymod_string_or_none(remote))) {
+		handle = ident_ol_getsub_for_buddy_by_aor(ident, remote_aor, key, h, pymod_getsub_cb, subscribe);
+	} else {
+		handle = ident_ol_getsub_for_all_buddies(ident, key, h, pymod_getsub_cb, subscribe);
+	}
+	ASSERT_TRUE(handle != -1, err);
+	ASSERT_TRUE(ret = PyInt_FromLong(handle), err);
 	goto end;
  err:
 	PyErr_SetString(PyExc_StandardError, "System error");
@@ -2639,23 +2640,45 @@ p2pship_ol_ident_subscribe(PyObject *self, PyObject *args)
 	return p2pship_ol_ident_getsub(self, args, 1);
 }
 
+static PyObject*
+p2pship_ol_cancel(PyObject *self, PyObject *args)
+{
+	PyObject *ret = NULL;
+	int handle = -1;
+
+	if (!PyArg_ParseTuple(args, "i", &handle))
+		goto end;
+	
+	ASSERT_POSITIVE(handle, err);
+	olclient_cancel(handle);
+
+	Py_INCREF(Py_None);
+	ret = Py_None;
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "Invalid handle");
+ end:
+	return ret;
+}
+
 static PyObject *
 p2pship_ol_ident_put(PyObject *self, PyObject *args)
 {
 	const char *local_aor = 0, *remote_aor = 0, *key = 0, *data = NULL;
-	int timeout = 3600;
+	int timeout = 3600, require_priv = 0;
 	ident_t *ident = NULL;
 	PyObject *ret = NULL, *remote = NULL;
 	
-	if (!PyArg_ParseTuple(args, "sOss|i", &local_aor, &remote, &key, &data, &timeout))
+	if (!PyArg_ParseTuple(args, "sOss|ii", &local_aor, &remote, &key, &data, &timeout, &require_priv))
 		goto end;
 	
+	printf("REQUIRING priv: %d\n", require_priv);
 	ASSERT_TRUE(ident = pymod_valid_ident_or_default(local_aor), err);
 
 	if ((remote_aor = pymod_string_or_none(remote))) {
-		ASSERT_ZERO(ident_put_for_buddy_by_aor(ident, remote_aor, key, data, timeout), err);
+		ASSERT_ZERO(ident_ol_put_for_buddy_by_aor(ident, remote_aor, key, data, timeout, require_priv), err);
 	} else {
-		ASSERT_ZERO(ident_put_for_all_buddies(ident, key, data, timeout), err);
+		ASSERT_ZERO(ident_ol_put_for_all_buddies(ident, key, data, timeout, require_priv), err);
 	}
 	
 	Py_INCREF(Py_None);
@@ -2681,9 +2704,9 @@ p2pship_ol_ident_rm(PyObject *self, PyObject *args)
 	ASSERT_TRUE(ident = pymod_valid_ident_or_default(local_aor), err);
 
 	if ((remote_aor = pymod_string_or_none(remote))) {
-		ASSERT_ZERO(ident_remove_for_buddy_by_aor(ident, remote_aor, key), err);
+		ASSERT_ZERO(ident_ol_remove_for_buddy_by_aor(ident, remote_aor, key), err);
 	} else {
-		ASSERT_ZERO(ident_remove_for_all_buddies(ident, key), err);
+		ASSERT_ZERO(ident_ol_remove_for_all_buddies(ident, key), err);
 	}
 
 	Py_INCREF(Py_None);
@@ -2776,7 +2799,6 @@ p2pship_media_pipeline_start(PyObject *self, PyObject *args)
 	Py_INCREF(ret);
 	goto end;
  err:
-	pymod_tstate_ok(tstate);
 	PyErr_SetString(PyExc_StandardError, "Error starting pipeline");
  end:
 	return ret;
@@ -2806,6 +2828,21 @@ p2pship_media_pipeline_destroy(PyObject *self, PyObject *args)
  end:
 	return ret;
 }	
+
+static PyObject *
+p2pship_media_check_element(PyObject *self, PyObject *args)
+{
+	PyObject *ret = NULL;
+	const char *elm = NULL;
+	
+	if (!PyArg_ParseTuple(args, "s", &elm))
+		goto end;
+
+	ret = PyInt_FromLong((long)media_check_element(elm));
+ end:
+	return ret;
+}	
+
 #endif
 
 
@@ -2911,6 +2948,7 @@ static PyMethodDef p2pshipMethods[] = {
     // use of the overlay management - identity specific
     {"ol_ident_get",  p2pship_ol_ident_get, METH_VARARGS, "Gets overlay data according to identity policies."},
     {"ol_ident_subscribe",  p2pship_ol_ident_subscribe, METH_VARARGS, "Subscribes to overlay data according to identity policies."},
+    {"ol_cancel",  p2pship_ol_cancel, METH_VARARGS, "Un-subscribes to overlay data."},
     {"ol_ident_put",  p2pship_ol_ident_put, METH_VARARGS, "Puts overlay data according to identity policies."},
     {"ol_ident_rm",  p2pship_ol_ident_rm, METH_VARARGS, "Removes overlay data according to identity policies."},
 
@@ -2991,6 +3029,7 @@ static PyMethodDef p2pshipMethods[] = {
     {"media_pipeline_parse",  p2pship_media_pipeline_parse, METH_VARARGS, "Creates a media pipeline from the given gstreamer text line."},
     {"media_pipeline_start",  p2pship_media_pipeline_start, METH_VARARGS, "Starts the given media object."},
     {"media_pipeline_destroy",  p2pship_media_pipeline_destroy, METH_VARARGS, "Destroys the given media object."},
+    {"media_check_element",  p2pship_media_check_element, METH_VARARGS, "Checks support for a media element."},
 #endif
 
     // file management operations. These are included to allow some
