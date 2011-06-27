@@ -54,10 +54,10 @@ static int ident_reregister_all();
 static int ident_autoreg_save();
 static void ident_cb_conn_events(char *event, void *data, ship_pack_t *eventdata);
 
-static int ident_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *key);
-static int ident_getsub_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
-				  void *param, ident_get_cb callback, const int subscribe);
-static int ident_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, const char *value, const int timeout);
+static int ident_ol_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *key);
+static int ident_ol_getsub_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
+				     void *param, ident_get_cb callback, const int subscribe);
+static int ident_ol_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, const char *value, const int timeout);
 static reg_package_t *ident_create_new_reg(ident_t *ident);
 static int ident_update_registration_periodic(void *data);
 static time_t ident_regpacket_timeleft(ident_t *ident);
@@ -464,7 +464,6 @@ ident_handle_privacy_pairing_message(char *data, int data_len,
 static int
 ident_autoreg_save_do(void *data, processor_task_t **wait, int wait_for_code)
 {
-	int ret = -1;
 	FILE *f = NULL;
 	ident_t *ident;
 	void *ptr = 0;
@@ -517,7 +516,6 @@ ident_autoreg_save_do(void *data, processor_task_t **wait, int wait_for_code)
 	if (len != fwrite(buf, sizeof(char), len, f))
 		goto err;
 	
-	ret = 0;
  err:
 	if (f)
 		fclose(f);
@@ -526,7 +524,6 @@ ident_autoreg_save_do(void *data, processor_task_t **wait, int wait_for_code)
 
 	/* done always, ignore errors */
 	return 0;
-	/* return ret; */
 }
 
 static int
@@ -553,13 +550,11 @@ _ident_autoreg_load_cb(void *data, int lc, char *key, char *value, char *line)
 				time_t now;
 				service_type_t service_type;
 				char *service_handler_id = 0;
-				service_t *service = NULL;
 				addr_t addr;
 				int expire, reg_time;
 				
 				service_type = atoi(tokens[c++]);
 				service_handler_id = tokens[c++];
-				service = ship_ht_get_string(ident_service_handlers, service_handler_id);
 				ident_addr_str_to_addr(tokens[c++], &(addr));
 				expire = atoi(tokens[c++]);
 				reg_time = atoi(tokens[c++]);
@@ -1383,11 +1378,11 @@ ident_update_registration_do(void *data, processor_task_t **wait, int wait_for_c
 		/* register a 'death' package which has valid-period == 0 */
 		if (ident->published && ident->registered) {
 			ASSERT_TRUE(regxml = ident_get_regxml(ident), err);
-			ASSERT_ZERO(ident_put_for_all_buddies(ident, ident->sip_aor, regxml, timeleft), err);
+			ASSERT_ZERO(ident_ol_put_for_all_buddies(ident, ident->sip_aor, regxml, timeleft, 0), err);
 			ident->published = time(0);
 			ident->registered = 0;
 		} else if (ident->published && (time(0)-ident->published > IDENT_PUBLISH_INTERVAL)) {
-			ident_remove_for_all_buddies(ident, ident->sip_aor);
+			ident_ol_remove_for_all_buddies(ident, ident->sip_aor);
 			ident->published = 0;
 		} else {
 			/* do nothing as we have no reg packet
@@ -1398,7 +1393,7 @@ ident_update_registration_do(void *data, processor_task_t **wait, int wait_for_c
 		}
 	} else {
 		ASSERT_TRUE(regxml = ident_get_regxml(ident), err);
-		ASSERT_ZERO(ident_put_for_all_buddies(ident, ident->sip_aor, regxml, timeleft), err);
+		ASSERT_ZERO(ident_ol_put_for_all_buddies(ident, ident->sip_aor, regxml, timeleft, 0), err);
 		ident->published = time(0);
 		ident->registered = 1;
 	}
@@ -1419,28 +1414,27 @@ err:
  */
 
 static int
-ident_getsub_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
+ident_ol_getsub_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, 
 		       void *param, ident_get_cb callback, const int subscribe)
 {
 	/* check shared secrets etc */
 	ASSERT_TRUES(buddy->cert, err, "Buddy has no certificate!\n");
 	ASSERT_TRUES(buddy->shared_secret, err, "Buddy has no shared secret!\n");
-	ASSERT_ZERO(olclient_getsub_anonymous_signed_for_someone_with_secret(key, buddy, ident, buddy->shared_secret,
-									     param, callback, subscribe), err);
-	return 0;
+	return olclient_getsub_anonymous_signed_for_someone_with_secret(key, buddy, ident, buddy->shared_secret,
+									param, callback, subscribe);
  err:
 	return -1;
 }
 
 int 
-ident_getsub_open(ident_t *ident, const char *key, void *param, ident_get_cb callback, const int subscribe)
+ident_ol_getsub_open(ident_t *ident, const char *key, void *param, ident_get_cb callback, const int subscribe)
 {
-	return olclient_getsub(key, param, callback, subscribe);
+	return olclient_getsub_signed_trusted(key, param, callback, subscribe);
 }
 
 /* gets data according to the current privacy policies. */
 int
-ident_getsub_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key, 
+ident_ol_getsub_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key, 
 			      void *param, ident_get_cb callback, const int subscribe)
 {
 	int get_open = 1;
@@ -1467,44 +1461,61 @@ ident_getsub_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char 
 
 	if (get_open) {
 		LOG_INFO("%s is getting data from the peer %s openly\n", ident->sip_aor, buddy_aor);
-		ASSERT_ZERO(ident_getsub_open(ident, key, param, callback, subscribe), err);
+		return ident_ol_getsub_open(ident, key, param, callback, subscribe);
 	} else {
 		LOG_INFO("%s is getting data from the peer %s secretly\n", ident->sip_aor, buddy->sip_aor);
-		ASSERT_ZERO(ident_getsub_for_buddy(ident, buddy, key, param, callback, subscribe), err);
+		return ident_ol_getsub_for_buddy(ident, buddy, key, param, callback, subscribe);
 	}
-
-	return 0;
  err:
 	return -1;
 }
+
+int
+ident_ol_getsub_for_all_buddies(ident_t *ident, const char *key, 
+			     void *param, ident_get_cb callback, const int subscribe)
+{
+	buddy_t *buddy = NULL;
+	void *ptr = NULL;
+
+	while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
+		if (ident_ol_getsub_for_buddy(ident, buddy, key, param, callback, subscribe) == -1) {
+			LOG_WARN("Get for buddy %s by %s failed\n", buddy->name, ident->sip_aor);
+		}
+	}
+	
+	if (sipp_ua_mode != PARANOID)
+		ident_ol_getsub_open(ident, key, param, callback, subscribe);
+	return 0;
+}
+
 
 /*
  * remove 
  */
 
 int
-ident_remove_open(ident_t *ident, const char* key)
+ident_ol_remove_open(ident_t *ident, const char* key)
 {
 	return olclient_remove(key, processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
 }
 
 int
-ident_remove_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key)
+ident_ol_remove_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key)
 {
 	buddy_t *buddy = NULL;
 
 	buddy = ident_buddy_find(ident, buddy_aor);
 	if (buddy)
-		ident_remove_for_buddy(ident, buddy, key);
+		ident_ol_remove_for_buddy(ident, buddy, key);
 	
 	if (sipp_ua_mode != PARANOID)
-		ident_remove_open(ident, key);
+		ident_ol_remove_open(ident, key);
 	return 0;
 }
 
 /* removes a piece of data wrt a buddy / privacy */
 int
-ident_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *key)
+ident_ol_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *key)
 {
 	ASSERT_TRUES(buddy->shared_secret, err, "Missing secret for buddy\n");
 	ASSERT_ZERO(olclient_remove_with_secret(ident->sip_aor, buddy->shared_secret, 
@@ -1515,19 +1526,19 @@ ident_remove_for_buddy(ident_t *ident, buddy_t *buddy, const char *key)
 }
 
 int
-ident_remove_for_all_buddies(ident_t *ident, const char *key)
+ident_ol_remove_for_all_buddies(ident_t *ident, const char *key)
 {
 	buddy_t *buddy = NULL;
 	void *ptr = NULL;
 
 	while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
-		if (ident_remove_for_buddy(ident, buddy, key)) {
+		if (ident_ol_remove_for_buddy(ident, buddy, key)) {
 			LOG_WARN("Remove for buddy %s by %s failed\n", buddy->name, ident->sip_aor);
 		}
 	}
 	
 	if (sipp_ua_mode != PARANOID)
-		ident_remove_open(ident, key);
+		ident_ol_remove_open(ident, key);
 	return 0;
 }
 
@@ -1536,32 +1547,35 @@ ident_remove_for_all_buddies(ident_t *ident, const char *key)
  */
 
 int
-ident_put_open(ident_t *ident, const char *key, const char *value, const int timeout)
+ident_ol_put_open(ident_t *ident, const char *key, const char *value, const int timeout)
 {
-	return olclient_put(key, value, timeout, 
-			    processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
+	return olclient_put_signed_cert(key, value, ident, timeout,
+					processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET));
 }
 
 /* puts a piece of data out to a buddy, according to the current
    privacy policies */
 int
-ident_put_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key, const char *value, const int timeout)
+ident_ol_put_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const char *key, const char *value,
+			      const int timeout, const int privacy_only)
 {
 	buddy_t *buddy = NULL;
 
 	buddy = ident_buddy_find(ident, buddy_aor);
-	if (buddy)
-		ident_put_for_buddy(ident, buddy, key, value, timeout);
+	if (buddy) {
+		if (ident_ol_put_for_buddy(ident, buddy, key, value, timeout) && privacy_only)
+			LOG_WARN("Put for buddy %s by %s failed\n", buddy->name, ident->sip_aor);
+	}
 	
-	if (sipp_ua_mode != PARANOID)
-		ident_put_open(ident, key, value, timeout);
+	if (sipp_ua_mode != PARANOID && !privacy_only)
+		ident_ol_put_open(ident, key, value, timeout);
 	return 0;
 }
 
 int
-ident_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, const char *value, const int timeout)
+ident_ol_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, const char *value, const int timeout)
 {
-	ASSERT_TRUES(buddy->shared_secret && buddy->cert, err, "Missing cert or secret for buddy\n");
+	ASSERT_TRUES(buddy->shared_secret && buddy->cert, err, "Missing cert or secret for %s's buddy %s\n", ident->sip_aor, buddy->sip_aor);
 	ASSERT_ZERO(olclient_put_anonymous_signed_for_someone_with_secret(key, value, 
 									  ident, buddy, buddy->shared_secret, timeout,
 									  processor_config_string(processor_get_config(), P2PSHIP_CONF_OL_SECRET)), err);
@@ -1572,19 +1586,20 @@ ident_put_for_buddy(ident_t *ident, buddy_t *buddy, const char *key, const char 
 }
 
 int
-ident_put_for_all_buddies(ident_t *ident, const char *key, const char *value, const int timeout)
+ident_ol_put_for_all_buddies(ident_t *ident, const char *key, const char *value,
+			     const int timeout, const int privacy_only)
 {
 	buddy_t *buddy = NULL;
 	void *ptr = NULL;
 
 	while ((buddy = (buddy_t*)ship_list_next(ident->buddy_list, &ptr))) {
-		if (ident_put_for_buddy(ident, buddy, key, value, timeout)) {
+		if (ident_ol_put_for_buddy(ident, buddy, key, value, timeout) && privacy_only) {
 			LOG_WARN("Put for buddy %s by %s failed\n", buddy->name, ident->sip_aor);
 		}
 	}
-		
-	if (sipp_ua_mode != PARANOID) {
-		ident_put_open(ident, key, value, timeout);
+	
+	if (sipp_ua_mode != PARANOID && !privacy_only) {
+		ident_ol_put_open(ident, key, value, timeout);
 		LOG_DEBUG("public put for %s done\n", ident->sip_aor);
 	}
 	return 0;
@@ -2008,7 +2023,7 @@ ident_lookup_registration(ident_t *ident, char *remote_aor,
 #endif
 #endif                    
 			/* find the buddy for that user */
-			if (!ident_get_for_buddy_by_aor(ident, remote_aor, remote_aor, val, ident_cb_lookup_registration))
+			if (ident_ol_get_for_buddy_by_aor(ident, remote_aor, remote_aor, val, ident_cb_lookup_registration) != -1)
 				ret = 1;
 			else {
 				LOG_WARN("Something went wrong when initializing the lookup - too strict mode, no cert/secret?\n", remote_aor);
