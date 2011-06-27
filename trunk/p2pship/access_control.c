@@ -338,7 +338,6 @@ ac_lists_blacklist()
 static int
 _ac_lists_save(ship_ht_t *list, char *filename)
 {
-	int ret = -1;
 	FILE *f = NULL;
 	void *ptr = 0;
 	char *buf = 0, *tmp = 0;
@@ -363,7 +362,6 @@ _ac_lists_save(ship_ht_t *list, char *filename)
 	if (len != fwrite(buf, sizeof(char), len, f))
 		goto err;
 	
-	ret = 0;
  err:
 	if (f)
 		fclose(f);
