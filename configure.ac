@@ -300,10 +300,16 @@ AC_CACHE_CHECK([whether to enable the SIP UA proxy],
                [ac_cv_use_sip], [ac_cv_use_sip=yes])
 if test x"$ac_cv_use_sip" = x"yes"; then
         AC_DEFINE(CONFIG_SIP_ENABLED, [1], [Enable sip interface])
-	AC_CHECK_LIB([osip2],[main],,AC_MSG_ERROR([This application needs the osip2 (dev) library]),[-lpthread])
+	#AC_CHECK_LIB([osip2],[main],,AC_MSG_ERROR([This application needs the osip2 (dev) library]),[-lpthread])
+	PKG_CHECK_MODULES(OSIP, libosip2 >= 2.0)
 	if pkg-config --atleast-version=3.0.0 libosip2; then
 	   AC_DEFINE([HAVE_OSIP2_V3], [1], [You seem to have osip2 v3])
 	fi
+
+	AC_SUBST(OSIP_CFLAGS)
+	AC_SUBST(OSIP_LIBS)
+	CFLAGS="$CFLAGS $OSIP_CFLAGS"
+	LIBS="$LIBS $OSIP_LIBS"
 fi
 AM_CONDITIONAL(SIP_ENABLED, test x"$ac_cv_use_sip" = x"yes")
 
