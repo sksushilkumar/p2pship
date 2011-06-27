@@ -148,7 +148,7 @@ SHIP_DEFINE_TYPE(webcache_p2p_lookup_entry);
 static void
 webcache_save()
 {
-	int ret = -1, len = 0, size = 0, s = 0, c = 0;
+	int len = 0, size = 0, s = 0, c = 0;
 	FILE *f = NULL;
 	webcache_tracker_t *e = 0;
 	void *ptr = 0;
@@ -185,7 +185,6 @@ webcache_save()
 	if (len != fwrite(buf, sizeof(char), len, f))
 		goto err;
 	
-	ret = 0;
  err:
 	ship_unlock(webcache_cache);
 	if (f)
@@ -1165,7 +1164,7 @@ webcache_p2p_lookup(char *url, void *ptr, void (*func) (char *url, void *obj, ch
 	
 		/* from trusted people only, please! */
 		ship_obj_ref(e);
-		ASSERT_ZERO(olclient_get_signed_trusted(k, e, webcache_p2p_lookup_cb), err);
+		ASSERT_TRUE(olclient_get_signed_trusted(k, e, webcache_p2p_lookup_cb) != -1, err);
 	}
 	
 	ret = 0;
