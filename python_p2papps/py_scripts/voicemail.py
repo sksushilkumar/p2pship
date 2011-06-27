@@ -126,9 +126,10 @@ class CallHandler:
 
         (sock, saddr) = self.get_sock()
         caps="application/x-rtp,media=(string)audio,clock-rate=(int)8000,encoding-name=(string)PCMA"
-        line = 'udpsrc caps="%s" port=%s sockfd=%d closefd=false ! .recv_rtp_sink_0 gstrtpbin ! rtppcmadepay ! alawdec ! wavenc ! filesink location=%s' % (caps, saddr[1], sock.fileno(), filename)
+        line = 'udpsrc caps="%s" port=%s sockfd=%d closefd=false ! .recv_rtp_sink_0 gstrtpbin ! rtppcmadepay ! alawdec ! %s ! filesink location=%s' % (caps, saddr[1], sock.fileno(), config.get_codec(), filename)
         
         debug("Recorder: %s" % line)
+        info("Recorder: %s" % line)
         ret = p2pship.media_pipeline_parse(line, self.player_callback)
         if ret > 0:
             return ret
@@ -141,6 +142,7 @@ class CallHandler:
         line = "filesrc location=%s ! decodebin ! audioconvert  ! audioresample ! audio/x-raw-int,channels=1,rate=8000 ! alawenc ! rtppcmapay ! udpsink host=%s port=%s sockfd=%d closefd=false" % (filename, addr[0], addr[1], sock.fileno())
         
         debug("Player: %s" % line)
+        info("Player: %s" % line)
         ret = p2pship.media_pipeline_parse(line, self.player_callback)
         if ret > 0:
             return ret
@@ -190,7 +192,11 @@ class UserCallHandler(CallHandler):
             info("We will start recording into " + self.recofile)
             self.msg_recorder = self.create_recorder(self.recofile)
             if self.msg_recorder is not None:
-                p2pship.media_pipeline_start(self.msg_recorder)
+                try:
+                    p2pship.media_pipeline_start(self.msg_recorder)
+                except Exception, ex:
+                    self.terminate_call(500)
+                    raise ex
             else:
                 self.terminate_call(500)
                 
@@ -256,7 +262,11 @@ class UserCallHandler(CallHandler):
                     self.msg_player = self.create_streamer(filename, remote_addr)
                     
                 if self.msg_player is not None:
-                    p2pship.media_pipeline_start(self.msg_player)
+                    try:
+                        p2pship.media_pipeline_start(self.msg_player)
+                    except Exception, ex:
+                        self.terminate_call(500)
+                        raise ex
                 else:
                     self.terminate_call(500)
 
@@ -369,7 +379,11 @@ class VoicemailPlaybackCallHandler(CallHandler):
                 
             self.msg_player = self.create_streamer(self.v.local, remote_addr)
             if self.msg_player is not None:
-                p2pship.media_pipeline_start(self.msg_player)
+                try:
+                    p2pship.media_pipeline_start(self.msg_player)
+                except Exception, ex:
+                    self.terminate_call(500)
+                    raise ex
             else:
                 self.terminate_call(500)
         
@@ -380,12 +394,6 @@ class VoicemailPlaybackCallHandler(CallHandler):
     def handle_response(self, req, resp):
         pass
 
-
-print """
-Check why we can't write anything to disk
-
-check whether resourcefetch returns len() == 0!!
-"""
 
 class VoicemailRequestHandler(SipHandler):
     """Request processor, post-processor of local messages. This
@@ -468,6 +476,7 @@ class VoicemailManager(SipHandler):
         else:
             self.load()
 
+        self.presence_subscriptions = {}
         self.my_aor = config.get("voicemail_prefix", "voicemail") + "@" + self.aor[self.aor.find("@")+1:]
         self.context = SipContext(self.my_aor, self, aor)
         self.ident = Ident(self.aor)
@@ -484,18 +493,27 @@ class VoicemailManager(SipHandler):
     def resubscribe(self):
 
         self.ident = Ident(self.aor)
+        subkey = "voicemail:announce:%s" % self.aor
+        if not config.is_true("voicemail_friendsonly"):
+            if self.subscribes.get("all") is not None:
+                #p2pship.ol_ident_unsubscribe(self.aor, None, subkey, self.voicemail_found)
 
-        for b in self.ident.buddies.values():
-            if self.subscribes.get(b.aor) is not None:
-                continue
-            
-            if b.relationship == Buddy.RELATIONSHIP_FRIEND or not config.is_true("voicemail_friendsonly"):
-                info("Subscribing to %s's voicemail announcements" % b.aor)
-                p2pship.ol_ident_subscribe(self.aor, b.aor, "voicemail:announce:%s" % self.aor, self.voicemail_found)
-                self.subscribes[b.aor] = True
-            else:
-                # we should stop subscribing to this stuff, but ..
-                pass
+                info("Subscribing to everybody's voicemail announcements")
+                p2pship.ol_ident_subscribe(self.aor, None, subkey, self.voicemail_found)
+                self.subscribes["all"] = 0
+        else:
+            for b in self.ident.buddies.values():
+
+                if b.relationship == Buddy.RELATIONSHIP_FRIEND:
+                    info("Subscribing to %s's voicemail announcements" % b.aor)
+                    if self.subscribes.get(b.aor) is None:
+                        ret = p2pship.ol_ident_subscribe(self.aor, b.aor, subkey, self.voicemail_found)
+                        self.subscribes[b.aor] = ret
+                else:
+                    ret = self.subscribes.get(b.aor)
+                    if ret is not None:
+                        p2pship.ol_cancel(ret)
+                        del self.subscribes[b.aor]
 
     def save(self):
         try:
@@ -619,7 +637,7 @@ class VoicemailManager(SipHandler):
         ret = None
         if for_remote:
             # a remote caller, play the local user's greeting!
-            ret = config.get("voicemail_greeting_file", "")
+            ret = config.get_path("voicemail_greeting_file", "")
         else:
             l = self.greetings.get(remote_aor, [])
             for g in l:
@@ -632,14 +650,16 @@ class VoicemailManager(SipHandler):
             ret = None
 
         if ret is None:
-            gre = config.get("voicemail_default_greeting_file", "")
+            gre = config.get_path("voicemail_default_greeting_file", "")
             if os.path.isfile(gre):
                 ret = gre
             else:
-                warn("The default greeting file %s does not exist!" % ret)
+                warn("The default greeting file %s does not exist!" % gre)
 
         if ret is None:
             error("No valid greeting found by %s for %s (remote: %s)" % (self.aor, remote_aor, str(for_remote)))
+        else:
+            info("Using %s as the greeting.." % ret)
         return ret
 
         
@@ -650,10 +670,11 @@ class VoicemailManager(SipHandler):
         info("initiating fetch by %s for %s's greeting" % (self.aor, remote_aor));
         p2pship.ol_ident_get(self.aor, remote_aor, "voicemail:invite:%s" % remote_aor, self.greeting_got, remote_aor)
 
-    def greeting_got(self, key, data, remote_aor):
+    def greeting_got(self, key, data, from_aor, remote_aor):
 
         try:
             self.invitation_data = pickle.loads(data)
+            info("voicemail invitation got from %s for %s!" % (from_aor, remote_aor))
         except Exception, ex:
             warn("Invalid voicemail invitation got for %s!" % remote_aor)
             return
@@ -721,7 +742,7 @@ class VoicemailManager(SipHandler):
 
     def voicemail_resource_got(self, src, data, v):
 
-        if data is None:
+        if data is None or len(data) == 0:
             self.send_im("Couldn't get voicemail from %s!" % v.from_aor)
         else:
             filename = get_tmpfile()
@@ -734,11 +755,15 @@ class VoicemailManager(SipHandler):
 
         self.save()
 
-    def voicemail_found(self, key, data):
+    def voicemail_found(self, key, data, from_aor):
 
-        info("voicemail found for us, available remotely!")
-        v = pickle.loads(data)
-
+        try:
+            v = pickle.loads(data)
+            info("voicemail found for us from %s, available remotely!" % from_aor)
+        except Exception, ex:
+            debug("invalid voicemail data got, ignoring")
+            return
+        
         for ov in self.own:
             if ov.id == v.id:
                 info("Skipping voicemail %s as we already have it!" % v.id)
@@ -752,6 +777,7 @@ class VoicemailManager(SipHandler):
 
         # .. this needs to be updated ..
         self.own.insert(0, v)
+        self.update_presence()
         fetched = False
         for sub in v.storage:            
             if self.fetch_resource(sub['src'], self.voicemail_resource_got, v):
@@ -804,6 +830,7 @@ class VoicemailManager(SipHandler):
         
         self.send_im("New voicemail from %s (in %s)!" % (remote_aor, filename))
         self.own.insert(0, v)
+        self.update_presence()
         self.save()
 
 
@@ -832,6 +859,7 @@ class VoicemailManager(SipHandler):
             if len(self.own) > 0:
                 h = VoicemailPlaybackCallHandler(msg, self.own.pop())
                 calls[msg.callid] = h
+                self.update_presence()
                 return h.handle_request(msg)
             else:
                 msg.respond(503, as_remote = True)
@@ -841,17 +869,33 @@ class VoicemailManager(SipHandler):
         elif msg.msg_type == "SUBSCRIBE":
 
             resp = msg.respond(202, as_remote = True)
-
-            # respond with a simple 'online' notify
             expire = int(msg.param('Expires', 0))
-            notify = resp.create_as_remote_follow_up("NOTIFY", create_pdif(msg.remote_aor, "abcde", "open"), "application/pidf+xml")
-            notify.set_param("Event", "presence")
-            notify.set_param("Subscription-State", "active;expires=%d" % expire)
-            notify.set_param("Contact", get_local_sip_contact(msg.local_aor))
-            notify.target = msg.local_aor
-            notify.send(filter = False)
+            if expire > 0:
+                self.presence_subscriptions[msg.remote_aor] = resp
+                self.notify_presence(msg.remote_aor, resp)
         else:
             msg.respond(405, as_remote = True)
+
+    def notify_presence(self, remote_aor, resp):
+
+        # respond with a simple 'online' notify
+        notify = resp.create_as_remote_follow_up("NOTIFY", self.get_pdif_status(remote_aor), "application/pidf+xml")
+        notify.set_param("Event", "presence")
+        notify.set_param("Subscription-State", "active;expires=%d" % 3600)
+        notify.set_param("Contact", get_local_sip_contact(self.aor))
+        notify.target = self.aor
+        notify.send(filter = False)
+
+    def update_presence(self):
+        for remote_aor in self.presence_subscriptions.keys():
+            resp = self.presence_subscriptions[remote_aor]
+            self.notify_presence(remote_aor, resp)
+
+    def get_pdif_status(self, remote_aor):
+        if len(self.own) > 0:
+            return create_pdif(remote_aor, "abcde", "open")
+        else:
+            return create_pdif(remote_aor, "abcde", "closed")
 
     def response_got(self, req, resp):
 
@@ -888,12 +932,31 @@ class VoicemailConfigHandler(ConfigHandler):
         self.create("voicemail_greeting_file", "Voicemail greeting audio", "file", "")
         #self.create("voicemail_greeting_url", "Voicemail greeting audio url", "url", "")
 
-        self.create("voicemail_default_greeting_file", "Default greeting file for both local and remote.", "file", "")
+        self.create("voicemail_default_greeting_file", "Default greeting file for both local and remote.", "file", "greeting.mp3")
 
         self.create("voicemail_prefix", "Voicemail identity prefix", "string", "voicemail")
         self.create("voicemail_friendsonly", "Offer voicemail for friends only", "bool", "no")
 
+        # the encoding codecs
+        self.codecs = {}
+        if p2pship.media_check_element("lame"):
+            self.codecs['MP3'] = "lame"
+        if p2pship.media_check_element("wavenc"):
+            self.codecs['WAV'] = "wavenc"
+
+        cstr = "enum:"
+        for c in self.codecs.keys():
+            info("found codec %s.." % self.codecs[c])
+            cstr += "%s," % c
+        cstr = cstr[:-1]
+        self.create("voicemail_codec", "Codec to use", cstr, self.codecs.keys()[0])
+        info("Using codec %s" % self.get_codec())
+
         p2pship.event_receive("ident_*", self.events)
+
+    def get_codec(self):
+        c = self.get("voicemail_codec", self.codecs.keys()[0])
+        return self.codecs[c]
 
     def enabled(self):
         return self.is_true("voicemail_enabled")
@@ -933,7 +996,7 @@ filter = VoicemailFilter()
 load_voicemail_managers()
 
 if install_sip_request_handler(".*", ".*", VoicemailRequestHandler):
-    info("Voicemail handler is installed!")
+    info("\n***********\nVoicemail handler is installed!\n***********")
 else:
     warn("Error installing multiparty handler!")
 

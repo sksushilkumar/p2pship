@@ -27,7 +27,7 @@ class SubscriptionHandler:
     def create_pdif_simple(self, basic_status):
         return create_pdif(self.target, self.pdif_id, basic_status)
 
-    def publish_got(self, key, data, real_key):
+    def publish_got(self, key, data, from_aor, real_key):
         """Callback for subscribes"""
 
         ret = None

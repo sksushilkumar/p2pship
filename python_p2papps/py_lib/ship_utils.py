@@ -4,6 +4,9 @@
 
 import time, p2pship
 import tempfile
+import pwd
+import os
+import re
 
 LOG_ERROR = 0
 LOG_WARN = 1
@@ -55,6 +58,25 @@ class ConfigHandler:
                 return default
             else:
                 raise ex
+
+    def get_path(self, key, default = None):
+        """Translates tildes etc"""
+        data = self.get(key, default)
+        if data is not None and len(data) > 0:
+            m = re.match("^[~]([^ /]*)(.*)$", data)
+            if m is not None:
+                uid = m.group(1)
+                path = m.group(2)
+                if len(uid) == 0:
+                    pw = pwd.getpwuid(os.getuid())
+                else:
+                    pw = pwd.getpwnam(uid)
+
+                if pw is not None:
+                    return pw[5] + path
+            elif data[0] != '/':
+                return get_datadir() + "/" + data
+        return data
         
     def set(self, key, value):
         p2pship.config_set(key, value)
