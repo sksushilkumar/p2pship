@@ -420,10 +420,6 @@ trustman_handle_trustparams(char *from_aor, char *to_aor, char *payload, int pkg
 	trustparams_remote_t *params = 0;
 	char *tmp = 0, *data = 0;
 	X509 *cert = 0;
-
-	/* save trust params somewhere as from_aor - to_aor.. */
-	if ((tmp = mallocz(pkglen+1)))
-		memcpy(tmp, payload, pkglen);
 	
 	/* to ensure we have asciiz now */
 	ASSERT_TRUE(tmp = mallocz(pkglen+1), err);
