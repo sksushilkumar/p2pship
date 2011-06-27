@@ -271,6 +271,8 @@ function initpage2() {
                 inp.type = "text";
                 inp.name = key;
                 inp.value = p2pship_config[key][0];
+	      if (p2pship_config[key][2] == "file")
+		inp.className = "fileclass";
                 td.appendChild(inp);
             } else {
                 td.innerHTML = p2pship_config[key][0];
