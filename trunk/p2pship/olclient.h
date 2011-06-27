@@ -69,6 +69,9 @@ typedef struct olclient_lookup_s
         olclient_get_cb callback;
 	int status;
 
+	/* the handle. this is used to control subscribes / unsubscribes */
+	int handle;
+
 	/* this is where the signer's AOR will be stored after its
 	   been verified .. */
 	char *signer_aor;
@@ -131,7 +134,9 @@ struct olclient_module {
 
 	int (*subscribe) (char *key, olclient_get_task_t *task);
 	int (*subscribe_signed) (char *key, olclient_signer_t *signer, olclient_get_task_t *task);
-	int (*unsubscribe) (char *key, olclient_get_task_t *task);
+
+	/* cancel a get / subscribe */
+	int (*cancel) (char *key, olclient_get_task_t *task);
 
 	void (*close) (struct olclient_module* mod);
 
@@ -223,7 +228,7 @@ void olclient_cb_state_change(struct olclient_module* module, int status, char *
 #define olclient_subscribe_signed_for_someone(key, signer, receiver, shared_secret, param, callback) olclient_getsub_signed_for_someone(key, signer, receiver, shared_secret, param, callback, 1)
 #define olclient_subscribe_anonymous_signed_for_someone_with_secret(key, signer, receiver, shared_secret, param, callback) olclient_getsub_anonymous_signed_for_someone_with_secret(key, signer, receiver, shared_secret, param, callback, 1)
 
-void olclient_unsubscribe(const char *key, void *param, olclient_get_cb callback);
+void olclient_cancel(const int handle);
 
 
 /* 
