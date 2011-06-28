@@ -159,7 +159,7 @@ typedef int (*sipp_request_handler) (sipp_request_t *req, const char *remote_aor
 
 int sipp_register_hook(sipp_client_handler handler, 
 		       sipp_request_handler req_handler,
-		       void *data);
+		       void *data, const int priority);
 void sipp_unregister_client_handler(sipp_client_handler handler, 
 				    sipp_request_handler req_handler,
 				    void *data);
