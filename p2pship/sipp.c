@@ -1462,7 +1462,7 @@ sipp_init(processor_config_t *config)
 
 	ASSERT_TRUE(sipp_client_handlers = ship_list_new(), err);
 #ifdef NATIVE_PRESENCE
-	ASSERT_ZERO(sipp_register_hook(NULL, sipp_presence_handler, NULL), err);
+	ASSERT_ZERO(sipp_register_hook(NULL, sipp_presence_handler, NULL, 0), err);
 #endif
         ret = 0;
 	goto end;
@@ -2155,13 +2155,18 @@ sipp_presence_handler(sipp_request_t *req, const char *remote_aor,
 int
 sipp_register_hook(sipp_client_handler handler, 
 		   sipp_request_handler req_handler,
-		   void *data)
+		   void *data,
+		   const int priority)
 {
 	ship_pack_t *ptr = 0;
 	int ret = -1;
 	
 	ASSERT_TRUE(ptr = ship_pack("ppp", handler, req_handler, data), err);
-	ship_list_add(sipp_client_handlers, ptr);
+	if (priority) {
+		ship_list_push(sipp_client_handlers, ptr);
+	} else {
+		ship_list_add(sipp_client_handlers, ptr);
+	}
 	ret = 0;
  err:
 	return ret;

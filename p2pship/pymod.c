@@ -1918,15 +1918,16 @@ p2pship_register_sip_client_handler(PyObject *self, PyObject *args)
 {
 	PyObject *callback = 0;
 	char *name = 0;
+	int priority = 0;
 	pymod_ipc_handler_t *h = 0;
 
-	if (!PyArg_ParseTuple(args, "sO:register_sip_client_handler", &name, &callback))
+	if (!PyArg_ParseTuple(args, "sO|i:register_sip_client_handler", &name, &callback, &priority))
 		goto err;
 
 	LOG_DEBUG("registering sip client handler for %s..\n", name);
 	ASSERT_TRUE(h = pymod_ipc_new(name, callback, NULL), err);
 	ship_list_add(pymod_callback_handlers, h);
-	sipp_register_hook(pymod_sipp_client_handler, NULL, h);
+	sipp_register_hook(pymod_sipp_client_handler, NULL, h, priority);
 
 	LOG_DEBUG("registered sip client handler for %s done\n", name);
 	Py_INCREF(Py_None);
@@ -1941,15 +1942,16 @@ p2pship_register_sip_request_handler(PyObject *self, PyObject *args)
 {
 	PyObject *callback = 0;
 	char *name = 0;
+	int priority = 0;
 	pymod_ipc_handler_t *h = 0;
 
-	if (!PyArg_ParseTuple(args, "sO:register_sip_request_handler", &name, &callback))
+	if (!PyArg_ParseTuple(args, "sO|i:register_sip_request_handler", &name, &callback, &priority))
 		goto err;
 
 	LOG_DEBUG("registering sip request handler for %s..\n", name);
 	ASSERT_TRUE(h = pymod_ipc_new(name, callback, NULL), err);
 	ship_list_add(pymod_callback_handlers, h);
-	sipp_register_hook(NULL, pymod_sipp_request_handler, h);
+	sipp_register_hook(NULL, pymod_sipp_request_handler, h, priority);
 
 	LOG_DEBUG("registered sip request handler for %s done\n", name);
 	Py_INCREF(Py_None);
@@ -2672,7 +2674,6 @@ p2pship_ol_ident_put(PyObject *self, PyObject *args)
 	if (!PyArg_ParseTuple(args, "sOss|ii", &local_aor, &remote, &key, &data, &timeout, &require_priv))
 		goto end;
 	
-	printf("REQUIRING priv: %d\n", require_priv);
 	ASSERT_TRUE(ident = pymod_valid_ident_or_default(local_aor), err);
 
 	if ((remote_aor = pymod_string_or_none(remote))) {
