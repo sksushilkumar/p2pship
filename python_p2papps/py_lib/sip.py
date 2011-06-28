@@ -775,22 +775,22 @@ def sip_handle_hook(local_aor, remote_aor, data, is_remote, is_internal,
 cli_installed = False
 req_installed = False
 
-def install_sip_handler(from_aor, to_aor, handler):
+def install_sip_handler(from_aor, to_aor, handler, priority = False):
     global cli_installed
     if not cli_installed:
         try:
-            p2pship.register_sip_client_handler("client_handler", sip_client_callback)
+            p2pship.register_sip_client_handler("client_handler", sip_client_callback, priority)
             cli_installed = True
         except Exception, ex:
             error("Error installing client handler: " + str(ex))
             return False
     return install_sip_hooks(from_aor, to_aor, handler, None)
 
-def install_sip_request_handler(from_aor, to_aor, handler):
+def install_sip_request_handler(from_aor, to_aor, handler, priority = False):
     global req_installed
     if not req_installed:
         try:
-            p2pship.register_sip_request_handler("request_handler", sip_request_callback)
+            p2pship.register_sip_request_handler("request_handler", sip_request_callback, priority)
             req_installed = True
         except Exception, ex:
             error("Error installing request handler: " + str(ex))
