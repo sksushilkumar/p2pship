@@ -53,7 +53,22 @@ class Voicemail:
         self.created = time.time()
         self.announced = 0
         self.storage = []
+
         self.local = None
+        self.received = 0
+        self.heard = False
+        self.local_id = -1
+
+    def dump(self):
+        return pickle.dumps((self.id, self.from_aor, self.to_aor, self.created, self.storage))
+
+    def load(self, data):
+        (self.id, self.from_aor, self.to_aor, self.created, self.storage) = pickle.loads(data)
+        self.received = time.time()        
+
+    def remove(self):
+        if self.local is not None:
+            os.remove(self.local)
 
 
 class CallHandler:
@@ -114,10 +129,13 @@ class CallHandler:
         warn("Forced to terminate call!");
         if self.response is not None:
             m = self.response.create_as_remote_follow_up("BYE")
-            m.send()
+            m.send(as_remote = not self.invite.is_remote)
         else:
             self.send_response(code, False)
-        del calls[self.id]
+        try:
+            del calls[self.id]
+        except Exception, ex:
+            pass
 
     def player_callback(self, handler, msgtype, data):
         pass
@@ -344,24 +362,114 @@ class UserCallHandler(CallHandler):
                 del calls[self.id]
             
         return None
-        
+
 #
 #
 #
 
+class GreetingRecorderCallHandler(CallHandler):
+    """Handler for calls between users that may need voicemail injection"""
 
-class VoicemailPlaybackCallHandler(CallHandler):
-    
-    def __init__(self, invite, v):
+    def __init__(self, invite, greeting, man):
         CallHandler.__init__(self, invite)
-        info("Handling call %s to the voicemail box, playing file %s" % (str(self.id), str(v.local)))
-        self.v = v
+
+        self.man = man
+        self.recofile = get_tmpfile()
+        self.greeting = greeting
+
+        # For the calls the local user initiates, we need to fetch the greeting!
+        info("Recording new greeting through call %s" % str(self.id))
+
+    def start_recording(self):
+
+        if self.msg_recorder is not None:
+            return
+        
+        info("We will start recording into " + self.recofile)
+        self.msg_recorder = self.create_recorder(self.recofile)
+        if self.msg_recorder is not None:
+            try:
+                p2pship.media_pipeline_start(self.msg_recorder)
+            except Exception, ex:
+                self.terminate_call(500)
+                raise ex
+        else:
+            self.terminate_call(500)
+
 
     def player_callback(self, handler, msgtype, data):
 
         #.. when it has played, start recording:
-        if msgtype == "eos" and self.msg_recorder is None:
+        if msgtype == "eos":
+            if self.msg_player is not None:
+                p2pship.media_pipeline_destroy(self.msg_player)
+                self.msg_player = None
+
+            self.start_recording()
+
+    def handle_response(self, req, resp):
+        pass
+
+    def handle_request(self, req):
+
+        if req.msg_type == "INVITE":
+
+            self.send_response(200)
+
+        elif req.msg_type == "ACK":
+
+            is_playing = False
+            if self.greeting is not None and self.msg_player is None:
+                info("Starting the message playback")
+                remote_addr = None
+                if self.invite.call.remote_medias is not None and self.invite.call.remote_medias.has_key('audio'):
+                    remote_addr = (str(self.invite.call.remote_medias['audio'][0]), int(self.invite.call.remote_medias['audio'][1]))
+                    debug("** audio streaming to " + str(remote_addr))
+                
+                self.msg_player = self.create_streamer(self.filename, remote_addr)
+                if self.msg_player is not None:
+                    try:
+                        p2pship.media_pipeline_start(self.msg_player)
+                        is_playing = True
+                    except Exception, ex:
+                        pass
+                    
+            if not is_playing:
+                self.start_recording()
+        
+        elif req.msg_type == "BYE" or req.msg_type == "CANCEL":
+            del calls[self.id]
+            req.respond(200, as_remote = True)
+
+            if self.msg_recorder is not None:
+
+                debug("Stopping the message recorder!")
+                p2pship.media_pipeline_destroy(self.msg_recorder)
+                self.msg_recorder = None
+
+                self.man.greeting_recorded(self.recofile)
+
+#
+#
+#
+
+class FilePlaybackCallHandler(CallHandler):
+    
+    def __init__(self, invite, filename):
+        CallHandler.__init__(self, invite)
+        info("Handling call %s to the voicemail box, playing file %s" % (str(self.id), str(filename)))
+        self.filename = filename
+
+    def player_callback(self, handler, msgtype, data):
+
+        #.. when it has played, start recording:
+        if msgtype == "eos":
+            time.sleep(1)
             self.terminate_call()
+
+    def file_is_playing(self):
+        # the call has been answered, and the file is playing ..
+        pass
         
     def handle_request(self, req):
 
@@ -377,10 +485,11 @@ class VoicemailPlaybackCallHandler(CallHandler):
                 remote_addr = (str(self.invite.call.remote_medias['audio'][0]), int(self.invite.call.remote_medias['audio'][1]))
                 debug("** audio streaming to " + str(remote_addr))
                 
-            self.msg_player = self.create_streamer(self.v.local, remote_addr)
+            self.msg_player = self.create_streamer(self.filename, remote_addr)
             if self.msg_player is not None:
                 try:
                     p2pship.media_pipeline_start(self.msg_player)
+                    self.file_is_playing()
                 except Exception, ex:
                     self.terminate_call(500)
                     raise ex
@@ -393,6 +502,22 @@ class VoicemailPlaybackCallHandler(CallHandler):
 
     def handle_response(self, req, resp):
         pass
+
+#
+#
+#
+
+
+class VoicemailPlaybackCallHandler(FilePlaybackCallHandler):
+    
+    def __init__(self, invite, v, man):
+        FilePlaybackCallHandler.__init__(self, invite, v.local)
+        self.v = v
+        self.man = man
+
+    def file_is_playing(self):
+        self.v.heard = True
+        self.man.update_presence()
 
 
 class VoicemailRequestHandler(SipHandler):
@@ -467,6 +592,7 @@ class VoicemailManager(SipHandler):
 
         self.filter_duplicates = False
         self.aor = aor
+        self.presence_subscriptions = {}
         if not load:
             self.timeout = 0
             self.start = time.time()
@@ -476,7 +602,6 @@ class VoicemailManager(SipHandler):
         else:
             self.load()
 
-        self.presence_subscriptions = {}
         self.my_aor = config.get("voicemail_prefix", "voicemail") + "@" + self.aor[self.aor.find("@")+1:]
         self.context = SipContext(self.my_aor, self, aor)
         self.ident = Ident(self.aor)
@@ -520,7 +645,7 @@ class VoicemailManager(SipHandler):
             filename = get_datadir() + "/manager_" + self.aor
             f = open(filename, "w")
 
-            data = (self.aor, self.timeout, self.start, self.greetings, self.own, self.announced)
+            data = (self.aor, self.timeout, self.start, self.greetings, self.own, self.announced, self.presence_subscriptions)
             pickle.dump(data, f)
             f.close()
         except Exception, ex:
@@ -530,7 +655,7 @@ class VoicemailManager(SipHandler):
         try:
             filename = get_datadir() + "/manager_" + self.aor
             f = open(filename, "r")
-            (self.aor, self.timeout, self.start, self.greetings, self.own, self.announced) = pickle.load(f)
+            (self.aor, self.timeout, self.start, self.greetings, self.own, self.announced, self.presence_subscriptions) = pickle.load(f)
             f.close()
         except Exception, ex:
             warn("Couldn't read voicemail manager state! %s" % str(ex))
@@ -627,8 +752,13 @@ class VoicemailManager(SipHandler):
         p2pship.ol_ident_put(self.aor, None, "voicemail:invite:%s" % self.aor, datastr, timeout)
         
     #
-    # remote greetings
+    # The greetings: local and remote
     #
+
+    def greeting_recorded(self, recofile):
+        info("We have a new greeting at %s" % recofile)
+        config.set("voicemail_greeting_file", recofile)
+        self.update()
 
     def get_greetingfile(self, remote_aor, for_remote = False):
         """Returns the greeting audiofile to use for a remote peer. O
@@ -737,8 +867,31 @@ class VoicemailManager(SipHandler):
 
 
     #
-    # Voicemail storage
+    # Remote voicemails
     #
+
+    def get_local_id(self):
+        """Returns an unused id for a voicemail for the local user"""
+        ret = 1
+        while True:
+            found = False
+            for v in self.own:
+                if v.local_id == ret:
+                    found = True
+                    break
+            if not found:
+                return ret
+            else:
+                ret += 1
+
+    def add_voicemail(self, v):
+        v.local_id = self.get_local_id()
+        self.own.append(v)
+        self.update_presence()
+
+        if v.local is not None:
+            self.send_im("New voicemail [%d] from %s!" % (v.local_id, v.from_aor))
+
 
     def voicemail_resource_got(self, src, data, v):
 
@@ -751,18 +904,25 @@ class VoicemailManager(SipHandler):
             f.close()
 
             v.local = filename
-            self.send_im("New voicemail from %s, stored in %s" % (v.from_aor, filename))
+            self.send_im("New voicemail [%d] from %s!" % (v.local_id, v.from_aor))
 
         self.save()
 
     def voicemail_found(self, key, data, from_aor):
 
         try:
-            v = pickle.loads(data)
+            v = Voicemail()
+            v.load(data)
+
             info("voicemail found for us from %s, available remotely!" % from_aor)
         except Exception, ex:
             debug("invalid voicemail data got, ignoring")
             return
+
+        if v.from_aor != from_aor:
+            warn("Voicemail was not retrieved from source (from: %s, but got from %s)" % (v.from_aor, from_aor))
+        if v.to_aor != self.aor:
+            warn("Voicemail was not intended for us (for %s)" % v.to_aor)
         
         for ov in self.own:
             if ov.id == v.id:
@@ -773,21 +933,21 @@ class VoicemailManager(SipHandler):
         if v is None:
             return
 
-        self.send_im("New voicemail from %s, fetching.." % v.from_aor)
-
         # .. this needs to be updated ..
-        self.own.insert(0, v)
-        self.update_presence()
         fetched = False
         for sub in v.storage:            
             if self.fetch_resource(sub['src'], self.voicemail_resource_got, v):
                 fetched = True
             else:
                 warn("Couldn't fetch url: %s" % sub['src'])
-        self.save()
-        
-        #if not self.fetch_resource(src, self.greeting_resource_got, remote_aor):
-        #    warn("Couldn't fetch url: %s" % src)
+
+        if fetched:
+            self.add_voicemail(v)
+
+
+    #
+    # Local voicemails
+    # 
 
     def voicemail_created(self, remote_aor, filename):
         """When we have recorded a voicemail that should now be sent to a remote peer"""
@@ -806,7 +966,7 @@ class VoicemailManager(SipHandler):
 
         # the ones we have announced!
         self.announced[v.id] = v
-        datastr = pickle.dumps(v)
+        datastr = v.dump()
         p2pship.ol_ident_put(self.aor, remote_aor, "voicemail:announce:%s" % remote_aor, datastr, 3600)
         v.announced = time.time()
         self.save()
@@ -814,7 +974,7 @@ class VoicemailManager(SipHandler):
     def reannounce(self):
         for v in self.announced.values():
             if (time.time() - v.announced) > 60:
-                datastr = pickle.dumps(v)
+                datastr = v.dump()
                 remote_aor = v.to_aor
                 p2pship.ol_ident_put(self.aor, remote_aor, "voicemail:announce:%s" % remote_aor, datastr, 3600)
 
@@ -828,10 +988,7 @@ class VoicemailManager(SipHandler):
         v.to_aor = self.aor
         v.local = filename
         
-        self.send_im("New voicemail from %s (in %s)!" % (remote_aor, filename))
-        self.own.insert(0, v)
-        self.update_presence()
-        self.save()
+        self.add_voicemail(v)
 
 
     #
@@ -844,6 +1001,56 @@ class VoicemailManager(SipHandler):
             m.set_sfrom_aor(from_aor)
         m.send(as_remote = True)
 
+    def handle_im(self, msg, remote_aor):
+
+        ret = "Sorry, couldn't understand! /help for help!"
+        cmd, s, param = msg.partition(" ")
+        cmd = cmd.lower()
+        if cmd == "/list":
+            ret = ""
+            for v in self.own:
+                if not v.heard:
+                    ret += "[%d] From %s, recorded %s" % (v.local_id, v.from_aor, str(v.created))
+                    if v.local is None:
+                        ret += " (fetching data..)\n"
+                    else:
+                        ret += "\n"
+            if len(ret) == 0:
+                ret = "You have no pending voice mails"
+        elif cmd == "/all":
+            ret = ""
+            for v in self.own:
+                ret += "[%d] From %s, recorded %s" % (v.local_id, v.from_aor, str(v.created))
+                if v.heard:
+                    ret += " (old)"
+                ret += "\n"
+            if len(ret) == 0:
+                ret = "You have no pending voice mails"
+        elif cmd == "/remove":
+            i = -1
+            try:
+                i = int(param)
+            except Exception, ex:
+                i = -1
+
+            rv = None
+            if i != -1:
+                for v in self.own:
+                    if v.local_id == i:
+                        rv = v
+                        break
+            if rv is not None:
+                self.own.remove(rv)
+                rv.remove()
+                ret = "Voicemail removed"
+                self.update_presence()
+            else:
+                ret = "No such voicemail (%s)" % param
+
+        elif cmd == "/help":
+            ret = "/list, /all, /remove #"
+        return ret
+
     def request_got(self, msg):
 
         h = calls.get(msg.callid)
@@ -852,12 +1059,43 @@ class VoicemailManager(SipHandler):
 
         if msg.msg_type == "MESSAGE":
             msg.respond(200, as_remote = True)
-            self.send_im("You've got %d pending voicemails!" % len(self.own), msg.remote_aor)
+            self.send_im(self.handle_im(msg.body, msg.remote_aor), msg.remote_aor)
 
         elif msg.msg_type == "INVITE":
 
-            if len(self.own) > 0:
-                h = VoicemailPlaybackCallHandler(msg, self.own.pop())
+            to = parse_aor(msg.sto)
+            rv = None
+            suffix = None
+            
+            #m = re.match(config.get("voicemail_prefix", "voicemail") + "[+]?([0-9]+)@.*", to)
+            m = re.match(config.get("voicemail_prefix", "voicemail") + "[+]?(.+)@.*", to)
+            if m:
+                suffix = m.group(1)
+                if re.match("^[0-9]+$", suffix):
+                    mid = int(m.group(1))
+                    for v in self.own:
+                        if v.local_id == mid:
+                            rv = v
+                            break
+                elif suffix == "greeting":
+                    h = FilePlaybackCallHandler(msg, self.get_greetingfile("", True))
+                    calls[msg.callid] = h
+                    return h.handle_request(msg)
+                elif suffix == "record":
+                    h = GreetingRecorderCallHandler(msg, None, self)
+                    calls[msg.callid] = h
+                    return h.handle_request(msg)
+                else:
+                    msg.respond(404, as_remote = True)
+                    return
+            else:
+                for v in self.own:
+                    if not v.heard and v.local is not None:
+                        rv = v
+                        break
+
+            if rv is not None:
+                h = VoicemailPlaybackCallHandler(msg, rv, self)
                 calls[msg.callid] = h
                 self.update_presence()
                 return h.handle_request(msg)
@@ -873,6 +1111,7 @@ class VoicemailManager(SipHandler):
             if expire > 0:
                 self.presence_subscriptions[msg.remote_aor] = resp
                 self.notify_presence(msg.remote_aor, resp)
+                self.save()
         else:
             msg.respond(405, as_remote = True)
 
@@ -890,9 +1129,16 @@ class VoicemailManager(SipHandler):
         for remote_aor in self.presence_subscriptions.keys():
             resp = self.presence_subscriptions[remote_aor]
             self.notify_presence(remote_aor, resp)
+        self.save()
 
     def get_pdif_status(self, remote_aor):
-        if len(self.own) > 0:
+        hasnew = False
+        for v in self.own:
+            if not v.heard and v.local is not None:
+                hasnew = True
+                break
+            
+        if hasnew:
             return create_pdif(remote_aor, "abcde", "open")
         else:
             return create_pdif(remote_aor, "abcde", "closed")
@@ -995,7 +1241,8 @@ config = VoicemailConfigHandler()
 filter = VoicemailFilter()
 load_voicemail_managers()
 
-if install_sip_request_handler(".*", ".*", VoicemailRequestHandler):
+# note: instead of using the 'priority' switch of sip_request_handler, we could use the filter for it also!
+if install_sip_request_handler(".*", ".*", VoicemailRequestHandler, True):
     info("\n***********\nVoicemail handler is installed!\n***********")
 else:
     warn("Error installing multiparty handler!")
