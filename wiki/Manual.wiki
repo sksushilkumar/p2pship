@@ -37,9 +37,17 @@ For lookup:
 
 Transports:
 
- * TCP-HIP
- * Plain-TCP
+ * HIP (TCP/UDP)
+ * Unencrypted TCP/UDP
 
+== P2P SIP feature support ==
+
+ * Voice / Video calls
+ * Instant messaging
+ * Presence
+ * Transparent multi-party conferencing
+ * Transparent voicemail
+ 
 = Sections =
 
  * [Compiling Building and installing form source]
