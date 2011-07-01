@@ -8,6 +8,7 @@ decline_codes = [ 603 ]
 notfound_codes = [ 404, 400 ]
 
 calls = {}
+voicemail_store_time = (7 * 24 * 3600)
 
 # The local voicemail invite managers
 invite_managers = {}
@@ -44,6 +45,15 @@ def load_voicemail_managers():
     except Exception, ex:
         warn("Couldn't read voicemail managers' state! %s" % str(ex))
 
+
+def playback_delay():
+    time.sleep(1)
+
+
+#
+# The voicemails as objects
+#
+
 class Voicemail:
     
     def __init__(self):
@@ -53,22 +63,64 @@ class Voicemail:
         self.created = time.time()
         self.announced = 0
         self.storage = []
-
+        self.expires = 0
+        
         self.local = None
         self.received = 0
         self.heard = False
         self.local_id = -1
 
     def dump(self):
-        return pickle.dumps((self.id, self.from_aor, self.to_aor, self.created, self.storage))
+        return pickle.dumps((self.id, self.from_aor, self.to_aor, self.created, self.expires, self.storage))
 
     def load(self, data):
-        (self.id, self.from_aor, self.to_aor, self.created, self.storage) = pickle.loads(data)
+        (self.id, self.from_aor, self.to_aor, self.created, self.expires, self.storage) = pickle.loads(data)
         self.received = time.time()        
 
     def remove(self):
         if self.local is not None:
             os.remove(self.local)
+
+#
+# The invites as objects
+#
+
+class VoicemailInvite:
+
+    def __init__(self, aor = "", expire = 3600):
+        self.aor = aor
+        self.accept = []
+        self.greetings = []
+        self.storage = []
+        self.created = time.time()
+        self.expire = time.time() + expire
+
+        # local stuff
+        self.local_greetings = []
+        self.received = time.time()
+
+    def remove(self):
+        print "todo: del all the invite files i may have.."
+
+    def is_valid(self):
+        return True
+
+    def add_accept(self, mediatype, size):
+        self.accept.append((mediatype, size))
+
+    def add_greeting(self, mediatype, url = None, value = None):
+        self.greetings.append((mediatype, url, value))
+
+    def add_storage(self, mediatype, url):
+        self.storage.append((mediatype, url))
+
+    def load(self, data):
+        (self.aor, self.created, self.expire, self.accept, self.greetings, self.storage) = pickle.loads(data)
+        self.received = time.time()
+
+    def dump(self):
+        return pickle.dumps((self.aor, self.created, self.expire, self.accept, self.greetings, self.storage))
+
 
 
 class CallHandler:
@@ -85,7 +137,6 @@ class CallHandler:
         self.msg_recorder = None
         self.sock = None
         self.response = None
-        self.invitation_data = None
 
         (self.target, self.initiator) = invite.get_real_to_from()
 
@@ -122,7 +173,7 @@ class CallHandler:
             m.set_body(req.call.get_my_sdp(), "application/sdp")
             m.set_param('Contact', "<sip:whatever@127.0.0.1:5060;transport=udp>")
 
-        m.send(as_remote = not self.invite.is_remote) #as_remote = True)
+        m.send(as_remote = not self.invite.is_remote)
         self.response = m
 
     def terminate_call(self, code = 503):
@@ -193,7 +244,7 @@ class UserCallHandler(CallHandler):
         # For the calls the local user initiates, we need to fetch the greeting!
         info("Tracking call %s" % str(self.id))
         if not self.invite.is_remote:
-            self.man.fetch_greeting(self.remote_aor)
+            self.man.fetch_invitation(self.remote_aor)
 
 
     def player_callback(self, handler, msgtype, data):
@@ -281,6 +332,7 @@ class UserCallHandler(CallHandler):
                     
                 if self.msg_player is not None:
                     try:
+                        playback_delay()
                         p2pship.media_pipeline_start(self.msg_player)
                     except Exception, ex:
                         self.terminate_call(500)
@@ -333,6 +385,11 @@ class UserCallHandler(CallHandler):
                     caller = "local"
                     if self.invite.is_remote:
                         caller = "remote"
+                    elif not self.man.has_invite(self.invite.remote_aor) and not config.leave_blindly():
+                        info("Got %d response, but have no voicemail invite for %s, so skipping!" % (resp.resp_code, self.invite.remote_aor))
+                        del calls[self.id]
+                        return None
+
                     info("Got %d response, initiating voice mailing for %s caller!" % (resp.resp_code, caller))
                     req = self.invite
                 else:
@@ -340,7 +397,7 @@ class UserCallHandler(CallHandler):
                     info("Got %d response, but policy prevents voicemail!" % resp.resp_code)
                     del calls[self.id]
                     return None
-            
+                    
                 self.send_response(200)
                 self.active = True
 
@@ -429,6 +486,7 @@ class GreetingRecorderCallHandler(CallHandler):
                 self.msg_player = self.create_streamer(self.filename, remote_addr)
                 if self.msg_player is not None:
                     try:
+                        playback_delay()
                         p2pship.media_pipeline_start(self.msg_player)
                         is_playing = True
                     except Exception, ex:
@@ -462,9 +520,8 @@ class FilePlaybackCallHandler(CallHandler):
 
     def player_callback(self, handler, msgtype, data):
 
-        #.. when it has played, start recording:
         if msgtype == "eos":
-            time.sleep(1)
+            playback_delay()
             self.terminate_call()
 
     def file_is_playing(self):
@@ -488,6 +545,7 @@ class FilePlaybackCallHandler(CallHandler):
             self.msg_player = self.create_streamer(self.filename, remote_addr)
             if self.msg_player is not None:
                 try:
+                    playback_delay()
                     p2pship.media_pipeline_start(self.msg_player)
                     self.file_is_playing()
                 except Exception, ex:
@@ -530,7 +588,7 @@ class VoicemailRequestHandler(SipHandler):
     # or anything else that the proxy might process!
 
     def __init__(self):
-        self.filter_duplicates = False
+        self.filter_duplicates = True #False
 
     def response_got(self, req, resp):
 
@@ -596,7 +654,7 @@ class VoicemailManager(SipHandler):
         if not load:
             self.timeout = 0
             self.start = time.time()
-            self.greetings = {}
+            self.invitations = {}
             self.own = []
             self.announced = {}
         else:
@@ -620,7 +678,7 @@ class VoicemailManager(SipHandler):
         self.ident = Ident(self.aor)
         subkey = "voicemail:announce:%s" % self.aor
         if not config.is_true("voicemail_friendsonly"):
-            if self.subscribes.get("all") is not None:
+            if self.subscribes.get("all") is None:
                 #p2pship.ol_ident_unsubscribe(self.aor, None, subkey, self.voicemail_found)
 
                 info("Subscribing to everybody's voicemail announcements")
@@ -645,7 +703,7 @@ class VoicemailManager(SipHandler):
             filename = get_datadir() + "/manager_" + self.aor
             f = open(filename, "w")
 
-            data = (self.aor, self.timeout, self.start, self.greetings, self.own, self.announced, self.presence_subscriptions)
+            data = (self.aor, self.timeout, self.start, self.invitations, self.own, self.announced, self.presence_subscriptions)
             pickle.dump(data, f)
             f.close()
         except Exception, ex:
@@ -655,7 +713,7 @@ class VoicemailManager(SipHandler):
         try:
             filename = get_datadir() + "/manager_" + self.aor
             f = open(filename, "r")
-            (self.aor, self.timeout, self.start, self.greetings, self.own, self.announced, self.presence_subscriptions) = pickle.load(f)
+            (self.aor, self.timeout, self.start, self.invitations, self.own, self.announced, self.presence_subscriptions) = pickle.load(f)
             f.close()
         except Exception, ex:
             warn("Couldn't read voicemail manager state! %s" % str(ex))
@@ -676,79 +734,24 @@ class VoicemailManager(SipHandler):
         if not config.enabled() or timeout < 1:
             p2pship.ol_ident_rm(self.aor, None, "voicemail:invite:%s" % self.aor)
             return
-        
-        data = {}
-        data['subject'] = self.aor
 
-        #
-        data['accept'] = []
-
-        """
-        sub = {}
-        sub['format'] = "audio/mp3"
-        sub['size'] = 1000000
-        data['accept'].append(sub)
-
-        sub = {}
-        sub['format'] = "audio/wav"
-        sub['size'] = 1000000
-        data['accept'].append(sub)
-
-        sub = {}
-        sub['format'] = "text/plain"
-        data['accept'].append(sub)
-        """
-        
-        #
-        data['greeting'] = []
+        inv = VoicemailInvite(self.aor)
+        inv.add_accept("audio/mp3", 0)
+        inv.add_accept("audio/wav", 0)
         
         gre = config.get("voicemail_greeting", "")
         if len(gre) > 0:
-            sub = {}
-            sub['type'] = "text/plain"
-            sub['value'] = gre
-            data['greeting'].append(sub)
+            inv.add_greeting("text/plain", value = gre)
         
         gre = config.get("voicemail_greeting_file", "")
         if len(gre) > 0:
             res = p2pship.resourcefetch_store(gre)
-            sub = {}
-            sub['type'] = "audio/mp3"
-            sub['src'] = "p2p://%s/%s" % (self.aor, res)
-            data['greeting'].append(sub)
+            inv.add_greeting("audio/mp3", url = "p2p://%s/%s" % (self.aor, res))
+        
+        # inv.add_storage("", "")
 
-        """
-        gre = config.get("voicemail_greeting_url", "")
-        if len(gre) > 0:
-            sub = {}
-            sub['type'] = "audio/mp3"
-            sub['src'] = gre
-            data['greeting'].append(sub)
-        """
-        
-        #
-        data['storage'] = []
-
-        """
-        sub = {}
-        sub['type'] = "key"
-        sub['value'] = "voicemail:randomkeyvalue"
-        data['storage'].append(sub)
-        
-        sub = {}
-        sub['type'] = "peer"
-        sub['value'] = "myfriend@p2psip.hiit.fi"
-        data['storage'].append(sub)
-
-        sub = {}
-        sub['type'] = "webdav"
-        sub['value'] = "http://ip92.infrahip.net/webdav"
-        data['storage'].append(sub)
-        """
-        
-        datastr = pickle.dumps(data)
-        
         # put invites for all!
+        datastr = inv.dump()
         p2pship.ol_ident_put(self.aor, None, "voicemail:invite:%s" % self.aor, datastr, timeout)
         
     #
@@ -757,8 +760,20 @@ class VoicemailManager(SipHandler):
 
     def greeting_recorded(self, recofile):
         info("We have a new greeting at %s" % recofile)
+
+        # this would require that we save the configuration!
         config.set("voicemail_greeting_file", recofile)
+        config.save()
+
+        # move instead. except that this may be empty.. or something important..
+        # os.rename(recofile, config.set("voicemail_greeting_file"))
+
         self.update()
+
+    def has_invite(self, aor):
+        if self.invitations.get(aor) is None:
+            return False
+        return True
 
     def get_greetingfile(self, remote_aor, for_remote = False):
         """Returns the greeting audiofile to use for a remote peer. O
@@ -769,12 +784,10 @@ class VoicemailManager(SipHandler):
             # a remote caller, play the local user's greeting!
             ret = config.get_path("voicemail_greeting_file", "")
         else:
-            l = self.greetings.get(remote_aor, [])
-            for g in l:
-                if os.path.isfile(g):
-                    ret = g
-                    break
-        
+            inv = self.invitations.get(remote_aor)
+            if inv is not None and len(inv.local_greetings) > 0:
+                ret = inv.local_greetings[0]
+                
         if ret is not None and not os.path.isfile(ret):
             warn("The greeting file %s does not exist!" % ret)
             ret = None
@@ -793,58 +806,64 @@ class VoicemailManager(SipHandler):
         return ret
 
         
-    def fetch_greeting(self, remote_aor):
+    def fetch_invitation(self, remote_aor):
         """Starts the retrieval of a greeting for a remote
         peer. Unless a valid cached copy exists!"""
+
+        inv = self.invitations.get(remote_aor)
+        if inv is not None and inv.is_valid():
+            return
         
-        info("initiating fetch by %s for %s's greeting" % (self.aor, remote_aor));
-        p2pship.ol_ident_get(self.aor, remote_aor, "voicemail:invite:%s" % remote_aor, self.greeting_got, remote_aor)
+        info("initiating fetch by %s for %s's greeting" % (self.aor, remote_aor))
+        p2pship.ol_ident_get(self.aor, remote_aor, "voicemail:invite:%s" % remote_aor, self.invitation_got, remote_aor)
 
-    def greeting_got(self, key, data, from_aor, remote_aor):
+    def invitation_got(self, key, data, from_aor, remote_aor):
 
+        if from_aor != remote_aor:
+            warn("Invitation for %s got from another peer (%s)" % (remote_aor, from_aor))
+
+        inv = VoicemailInvite()
         try:
-            self.invitation_data = pickle.loads(data)
+            inv.load(data)
             info("voicemail invitation got from %s for %s!" % (from_aor, remote_aor))
         except Exception, ex:
-            warn("Invalid voicemail invitation got for %s!" % remote_aor)
+            warn("Invalid voicemail invitation got for %s: %s" % (remote_aor, str(ex)))
             return
 
-        greetings = self.greetings.get(remote_aor)
-        if greetings is None:
-            greetings = []
-            self.greetings[remote_aor] = greetings
-            
-        for g in self.invitation_data['greeting']:
+        if not inv.is_valid():
+            # what should we do now?
+            pass
 
-            info("got invitation type %s, value %s/%s" % (str(g.get('type')), str(g.get('value')), str(g.get('src'))))
+        
+        self.invitations[remote_aor] = inv
+        for g in inv.greetings:
 
-            t = g.get('type')
-            if t == "text/plain":
-                # record one ..
-                pass
-            elif t.startswith("audio/"):
-                val = g.get('value')
-                src = g.get('src')
+            (typ, src, val) = g
+            info("got invitation type %s, src %s, value %s" % (str(typ), str(src), str(val)))
+
+            if typ == "text/plain":
+                # do voice synthesis..
+                warn("Got greeting type %s, but cannot handle that yet .. " % typ)
+            elif typ.startswith("audio/"):
                 if val is not None:
                     (handle, fn) = get_tmpfile()
                     handle.write(val)
                     handle.close()
-                    greetings.insert(0, fn)
+                    inv.local_greetings.insert(0, fn)
                 elif src is not None:
-                    if not self.fetch_resource(src, self.greeting_resource_got, remote_aor):
+                    if not self.fetch_resource(src, self.greeting_resource_got, inv):
                         warn("Couldn't fetch url: %s" % src)
         self.save()
 
-    def greeting_resource_got(self, src, data, remote_aor):
+    def greeting_resource_got(self, src, data, inv):
 
-        greetings = self.greetings.get(remote_aor)
         if data is not None and len(data) > 0:
             info("We got data from %s, len %d" % (src, len(data)))
             fn = get_tmpfile()
             f = open(fn, "w")
             f.write(data)
             f.close()
-            greetings.insert(0, fn)
+            inv.local_greetings.insert(0, fn)
         self.save()
 
     def resource_got(self, remote, id, data, pkg):
@@ -905,6 +924,7 @@ class VoicemailManager(SipHandler):
 
             v.local = filename
             self.send_im("New voicemail [%d] from %s!" % (v.local_id, v.from_aor))
+            self.update_presence()
 
         self.save()
 
@@ -957,8 +977,9 @@ class VoicemailManager(SipHandler):
         v = Voicemail()
         v.from_aor = self.aor
         v.to_aor = remote_aor
-
-        res = p2pship.resourcefetch_store(filename)
+        v.expires = voicemail_store_time
+        
+        res = p2pship.resourcefetch_store(filename, v.expires, remote_aor)
         sub = {}
         sub['type'] = "audio/mp3"
         sub['src'] = "p2p://%s/%s" % (self.aor, res)
@@ -967,16 +988,22 @@ class VoicemailManager(SipHandler):
         # the ones we have announced!
         self.announced[v.id] = v
         datastr = v.dump()
-        p2pship.ol_ident_put(self.aor, remote_aor, "voicemail:announce:%s" % remote_aor, datastr, 3600)
+        p2pship.ol_ident_put(self.aor, remote_aor, "voicemail:announce:%s" % remote_aor, datastr, v.expires)
         v.announced = time.time()
         self.save()
 
     def reannounce(self):
         for v in self.announced.values():
-            if (time.time() - v.announced) > 60:
+            expire = time.time() - v.created + v.expires
+            if expire > 0:
+                #if (time.time() - v.announced) > 60:
                 datastr = v.dump()
                 remote_aor = v.to_aor
-                p2pship.ol_ident_put(self.aor, remote_aor, "voicemail:announce:%s" % remote_aor, datastr, 3600)
+                p2pship.ol_ident_put(self.aor, remote_aor, "voicemail:announce:%s" % remote_aor, datastr, expire)
+                v.announced = time.time()
+            else:
+                v.remove()
+                del self.announced[v.id]
 
     def voicemail_received(self, remote_aor, filename):
         """When a remote party has left a voicemail on our machine"""
@@ -1183,6 +1210,8 @@ class VoicemailConfigHandler(ConfigHandler):
         self.create("voicemail_prefix", "Voicemail identity prefix", "string", "voicemail")
         self.create("voicemail_friendsonly", "Offer voicemail for friends only", "bool", "no")
 
+        self.create("voicemail_blind", "Leave voicemail even though no voicemail invite is found.", "bool", "no")
+
         # the encoding codecs
         self.codecs = {}
         if p2pship.media_check_element("lame"):
@@ -1215,6 +1244,9 @@ class VoicemailConfigHandler(ConfigHandler):
 
     def rejected(self):
         return self.is_true("voicemail_rejected")
+
+    def leave_blindly(self):
+        return self.is_true("voicemail_blind")
 
     def events(self, event, eventdata, mydata = None):
         """Handle p2pship identity registration events. Used to plant

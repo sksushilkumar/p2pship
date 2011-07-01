@@ -80,6 +80,10 @@ class ConfigHandler:
         
     def set(self, key, value):
         p2pship.config_set(key, value)
+
+    def save(self):
+        """Saves the config to disk"""
+        p2pship.config_save()
         
     def track(self, key):
         p2pship.config_set_update(key, self.value_update)
