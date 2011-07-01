@@ -36,6 +36,7 @@
 #include "netio_http.h"
 #include "addrbook.h"
 #include "osso_dbus.h"
+#include "resourceman.h"
 
 #ifdef CONFIG_START_GTK
 #include <glib.h>
@@ -491,6 +492,7 @@ main(int argc, char **argv)
 #ifdef CONFIG_WEBCACHE_ENABLED
 	webcache_register();
 #endif
+	resourceman_register();
 	olclient_register();
 	conn_register();
 	netio_register();

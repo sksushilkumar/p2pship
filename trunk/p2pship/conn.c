@@ -991,9 +991,6 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 {
         int ret = -3;
 
-	// todo: this might have to be separated from the conn lock .. (as a processor task, that is .. )
-	// -> the s->data_received function to be exact.
-
 	LOG_VDEBUG("Processing service 0x%x packet, %d bytes ..\n", service_type, pkglen);
         if (conn->state == STATE_CONNECTED) {
                 if (conn->ident) {
@@ -1008,103 +1005,12 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 				ret = -2;
 			} else {
 				/* parse the packet, process split packets */
-				/*
-				if (pkglen >= CONN_SERVICE_NORMAL_HEADER_LEN) {
-					int v;
-					ship_unroll(v, payload, 1);
-					if (v == 0) {
-				*/
-				if (s->data_received(payload /*+CONN_SERVICE_NORMAL_HEADER_LEN*/, 
-						     pkglen /*-CONN_SERVICE_NORMAL_HEADER_LEN*/, 
+				if (s->data_received(payload,
+						     pkglen,
 						     conn->ident, conn->sip_aor, service_type))
 					ret = -1;
 				else
 					ret = 0;
-
-				/*
-					} else if (v == 1 && pkglen >= CONN_SERVICE_SPLIT_HEADER_LEN) {
-						int id, p, tot;
-						ship_ht_t *parts = 0;
-
-						ship_unroll(id, payload+1, 4);
-						ship_unroll(p, payload+5, 4);
-						ship_unroll(tot, payload+9, 4);
-
-						/ * store into the conn these .. * /
-						parts = ship_ht_get_int(conn->fragments, id);
-						if (!parts && (parts = ship_ht_new())) {
-							ship_ht_put_int(conn->fragments, id, parts);
-						}
-						
-						if (parts) {
-							void **arr = 0;
-							
-							// todo: lenbuf's
-
-							/ * sanity check * / 
-							if (p > -1 && p < tot)
-								arr = mallocz(sizeof(void*) * 2);
-							payload += CONN_SERVICE_SPLIT_HEADER_LEN;
-							pkglen -= CONN_SERVICE_SPLIT_HEADER_LEN;
-							if (arr) {
-								arr[0] = mallocz(sizeof(pkglen));
-								arr[1] = mallocz(pkglen);
-								if (arr[0] && arr[1]) {
-									memcpy(arr[0], &pkglen, sizeof(pkglen));
-									memcpy(arr[1], payload, pkglen);
-
-									LOG_VDEBUG("Got part %d / %d for id %d\n", p, tot, id);
-									ship_ht_put_int(parts, p, arr);
-									arr = 0;
-									ret = 0;
-								}
-							}
-							freez_arr(arr, 2);
-							
-							if (ret) {
-								/ * something went wrong, cancel all parts! * /
-							} else if (ship_list_length(parts) == tot) {
-								/ * combine these parts into one * /
-								void *ptr = 0;
-								char *totbuf = 0;
-								int totlen = 0;
-								
-								while ((arr = ship_ht_next(parts, &ptr))) {
-									totlen += *((int*)arr[0]);
-								}
-								LOG_VDEBUG("Got all parts: for id %d: %d, total length %d\n", id, tot, totlen);
-								
-								if ((totbuf = mallocz(totlen + 1))) {
-									int i;
-									ptr = 0;
-									totlen = 0;
-									
-									/ * go through the parts in order * /
-									for (i=0; i < tot; i++) {
-										if ((arr = ship_ht_get_int(parts, i))) {
-											memcpy(totbuf + totlen, arr[1], *((int*)arr[0]));
-											totlen += *((int*)arr[0]);
-										}
-									}
-									ret = s->data_received(totbuf, totlen, 
-											       conn->ident, conn->sip_aor, service_type);
-									freez(totbuf);
-								}
-							} else {
-								parts = 0;
-							}
-
-							if (parts) {
-								ship_ht_remove_int(conn->fragments, id);
-								while ((arr = ship_ht_pop(parts)))
-									freez_arr(arr, 2);
-								ship_ht_free(parts);
-							}
-						}
-						}
-						} else {
-					ret = s->data_received(payload, pkglen, conn->ident, conn->sip_aor, service_type);
-				*/
 			}
 		} else {
                         LOG_ERROR("FAILING as no ident!\n");
@@ -1374,7 +1280,7 @@ conn_packet_process_data(char *payload, int pkglen, conn_connection_t *conn)
 					       p->service, conn);
 		LOG_DEBUG("processed it with %d\n", ret);
 		if (ret < 1)
-			conn_send_ack(p, ret, "he23o", 6);
+			conn_send_ack(p, ret, "", 6);
 		/* don't kill the connection just because of a misguided request! */
 		ret = 0;
 	} else {

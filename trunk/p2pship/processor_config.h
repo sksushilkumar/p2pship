@@ -56,6 +56,9 @@
 
 #define P2PSHIP_CONF_CONN_KEEPALIVE "conn_keepalive"
 
+#define P2PSHIP_CONF_RESOURCEMAN_STATE_FILE "resourceman_state_file"
+
+
 #ifdef CONFIG_PYTHON_ENABLED
 #define P2PSHIP_CONF_START_SHELL "py_start_shell"
 #define P2PSHIP_CONF_RUN_SCRIPT "py_run_script"

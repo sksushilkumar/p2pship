@@ -16,18 +16,18 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
-/*
- * Module for managing the connections to peers. Sort of an adapter
- * between the ident module and the hip api (and the sipp)
- */
-#ifndef __WEBCACHE_H__
-#define __WEBCACHE_H__
+#ifndef __RESOURCEMAN_H__
+#define __RESOURCEMAN_H__
 
-void webcache_register();
-void webcache_close_trackers(char *tracking_id);
-int webcache_record(char *tracking_id, char *url, char *data, int datalen);
-int webcache_p2p_lookup(char *url, void *ptr, void (*func) (char *url, void *obj, char *data, int datalen));
-int webcache_get_resource(char *url, char **buf, int *len);
+/* for resource fetching */
+int resourcefetch_remove(char *rid);
+int resourcefetch_store(const char *filename, const int expire, 
+			const char *recipient, char **id);
+int resourcefetch_get(char *host, char *rid,
+		      char *local_aor,
+		      void (*func) (void *param, char *host, char *rid, char *data, int datalen),
+		      void *data);
+
+void resourceman_register();
 
 #endif
-

@@ -843,6 +843,14 @@ append_str(const char *str, char *buf, int *buflen, int *datalen)
 }
 
 char *
+append_int(const int val, char *buf, int *buflen, int *datalen)
+{
+	char tmp[20];
+	sprintf(tmp, "%d", val);
+	return append_str(tmp, buf, buflen, datalen);
+}
+
+char *
 combine_str(const char *str1, const char *str2)
 {
 	char *ret = 0;
@@ -852,6 +860,19 @@ combine_str(const char *str1, const char *str2)
 	}
 	return ret;
 }
+
+/* compares 2 possibly null strings. if both null, then 0, only one
+   null then != 0, after that as strcmp */
+int 
+zstrcmp(const char *str1, const char *str2)
+{
+	if (!str1 && !str2)
+		return 0;
+	if (!str1 || !str2)
+		return -1;
+	return strcmp(str1, str2);
+}
+
 
 /********** The HT stuff **************/
 
@@ -1479,6 +1500,23 @@ ship_get_random(unsigned char *random, size_t len)
 	return ret;
 }
 
+char *
+ship_get_random_base64(const int bytes)
+{
+	unsigned char *tmp = NULL;
+	char *ret = NULL;
+	
+	ASSERT_TRUE(tmp = mallocz(bytes+1), err);
+	ASSERT_ZERO(ship_get_random(tmp, bytes), err);
+
+	/* hmac key and shared secret */
+	ret = ship_encode_base64((char*)tmp, bytes);
+ err:
+	freez(tmp);
+	return ret;
+}
+
+
 /* read a file into a buffer */
 int
 ship_load_file(const char* file, char **rbuf, int *len)
@@ -1738,14 +1776,16 @@ ship_ensure_file(char *filename, char *initial_data)
 		/* create the directory recursively */
 		char *p = strchr(filename, '/');
 		while (p) {
-			p[0] = 0;
-			if (p != filename && stat(filename, &sdata))
-				ret = mkdir(filename, S_IRWXU);
-			p[0] = '/';
+			if (p != filename) {
+				p[0] = 0;
+				if (stat(filename, &sdata)) {
+					ASSERT_ZERO(mkdir(filename, S_IRWXU), err);
+				}
+				p[0] = '/';
+			}
 			p = strchr(p+1, '/');
-			
-			ASSERT_ZERO(ret, err);
 		}
+
 		if ((f = fopen(filename, "w")))
 			fwrite(initial_data, sizeof(char), strlen(initial_data), f);
 		else
