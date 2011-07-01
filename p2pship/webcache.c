@@ -25,6 +25,7 @@
 #include "webcache.h"
 #include "conn.h"
 #include "olclient.h"
+#include "resourceman.h"
 
 /* the currently in-progree dls */
 static ship_ht_t *all_dls = 0;
@@ -46,48 +47,6 @@ static void webcache_p2p_update();
 
 static int cache_strictness = STRICTNESS_ALL;
 
-/* the list of pending calls */
-static ship_list_t *pending_rfs = 0;
-
-void resourcefetch_close();
-int resourcefetch_init(processor_config_t *config);
-static int resourcefetch_handle_message(char *data, int data_len, 
-					ident_t *target, char *source, 
-					service_type_t service_type);
-
-static struct service_s resourcefetch_service =
-{
- 	.data_received = resourcefetch_handle_message,
-	.service_closed = 0,
-	.service_handler_id = "resourcefetch_service"
-};
-
-/* the resource fetches */
-typedef struct pending_rf_s {
-	
-	void (*func)(void *param, char *host, char *rid, char *data, int datalen);
-	void *data;
-	
-	time_t start;
-	char *host;
-	char *rid;
-	
-} pending_rf_t;
-
-/* the list tracking urls to hosts, to ids */
-static ship_ht2_t *resource_id_cache = 0;
-
-/* the list of stored resources */
-static ship_ht_t *resources = 0;
-
-/* each entry of the cache is a ht. each entry of that ht the following struct: */
-typedef struct resource_id_cache_s {
-	
-	char *resource;
-	int size;
-	time_t expires;
-
-} resource_id_cache_t;
 
 typedef struct webcache_tracker_s {
 
@@ -116,6 +75,17 @@ typedef struct webcache_tracker_s {
 	
 } webcache_tracker_t;
 
+/* the list tracking urls to hosts, to ids */
+static ship_ht2_t *resource_id_cache = 0;
+
+/* each entry of the cache is a ht. each entry of that ht the following struct: */
+typedef struct resource_id_cache_s {
+	
+	char *resource;
+	int size;
+	time_t expires;
+
+} resource_id_cache_t;
 
 /* the cache of all p2p webcache resources */
 static ship_ht_t *p2p_mappings = 0;
@@ -139,6 +109,7 @@ typedef struct webcache_p2p_lookup_entry_s {
 static webcache_tracker_t *webcache_tracker_new(char *url);
 static void webcache_p2p_lookup_entry_free(webcache_p2p_lookup_entry_t *e);
 static int webcache_p2p_lookup_entry_init(webcache_p2p_lookup_entry_t *e, char *url);
+static int webcache_p2p_lookup_cb_do(void *data, processor_task_t **wait, int wait_for_code);
 
 /* define the types */
 SHIP_DEFINE_TYPE(webcache_p2p_lookup_entry);
@@ -557,7 +528,8 @@ webcache_init(processor_config_t *config)
 	ASSERT_TRUE(all_dls = ship_ht_new(), err);
 	ASSERT_TRUE(webcache_cache = ship_ht_new(), err);
 	ASSERT_TRUE(webcache_removed = ship_list_new(), err);
- 
+ 	ASSERT_TRUE(resource_id_cache = ship_ht2_new(), err);
+
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_WEBCACHE_FILELIMIT, webcache_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_WEBCACHE_LIMIT, webcache_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_WEBCACHE_STRICTNESS, webcache_cb_config_update);
@@ -572,7 +544,6 @@ webcache_init(processor_config_t *config)
 	tmp[0] = 0;
 
 	ASSERT_ZERO(webcache_load(), err);
-	ASSERT_ZERO(resourcefetch_init(config), err);
 	processor_run_async(webcache_p2p_update);
 	ret = 0;
  err:
@@ -582,7 +553,6 @@ webcache_init(processor_config_t *config)
 static void
 webcache_close()
 {
-	resourcefetch_close();
 	webcache_tracker_t *cache;
 	if (all_dls) {
 		ship_ht_t *dl = 0;
@@ -608,6 +578,18 @@ webcache_close()
 		ship_list_free(webcache_removed);
 		ship_ht_free(webcache_cache);
 	}
+
+	if (resource_id_cache) {
+		resource_id_cache_t *rid = 0;
+		ship_lock(resource_id_cache);
+		while ((rid = ship_ht2_pop(resource_id_cache))) {
+			freez(rid->resource);
+			free(rid);
+		}
+		ship_ht2_free(resource_id_cache);
+		resource_id_cache = 0;
+	}
+
 	freez(webcache_index);
 	freez(webcache_dir);
 }
@@ -726,8 +708,6 @@ webcache_p2p_store_resource_id(char *host, char *url, char *resource, int size, 
 	ship_unlock(resource_id_cache);
 }
 
-static int webcache_p2p_lookup_cb_do(void *data, processor_task_t **wait, int wait_for_code);
-
 /* the callback for the resource-lookup func */
 static void
 webcache_p2p_lookup_rl_cb(void *param, char *host, char *rid, char *data, int datalen)
@@ -746,278 +726,6 @@ webcache_p2p_lookup_rl_cb(void *param, char *host, char *rid, char *data, int da
 	
 	/* loop, fetch next if necessary */
 	processor_tasks_add(webcache_p2p_lookup_cb_do, e, NULL);
-}
-
-/*** the resource fetch things ****/
-
-static void
-resourcefetch_free(pending_rf_t *rf)
-{
-	if (rf) {
-		freez(rf->host);
-		freez(rf->rid);
-		free(rf);
-	}
-}
-
-static pending_rf_t *
-resourcefetch_new(char *host, char *rid, 
-		  void (*func) (void *param, char *host, char *rid, char *data, int datalen),
-		  void *data)
-{
-	pending_rf_t *rf = 0;
-	ASSERT_TRUE(rf = mallocz(sizeof(*rf)), err);
-	ASSERT_TRUE(rf->host = strdup(host), err);
-	ASSERT_TRUE(rf->rid = strdup(rid), err);
-	rf->start = time(0);
-	rf->func = func;
-	rf->data = data;
-	return rf;
- err:	
-	resourcefetch_free(rf);
-	return NULL;
-}
-
-
-int
-resourcefetch_init(processor_config_t *config)
-{
-	int ret = -1;
-	ASSERT_TRUE(pending_rfs = ship_list_new(), err);
-	ASSERT_TRUE(resource_id_cache = ship_ht2_new(), err);
-	ASSERT_TRUE(resources = ship_ht_new(), err);
-	ident_register_default_service(SERVICE_TYPE_RESOURCEFETCH, &resourcefetch_service);
-	ret = 0;
- err:
-	return ret;
-}
-
-void
-resourcefetch_close()
-{
-	if (pending_rfs) {
-		pending_rf_t *rf;
-		ship_lock(pending_rfs);
-		while ((rf = ship_list_pop(pending_rfs))) {
-			rf->func(rf->data, rf->host, rf->rid, NULL, 0);
-			resourcefetch_free(rf);
-		}
-		ship_list_free(pending_rfs);
-		pending_rfs = 0;
-	}
-	
-	if (resource_id_cache) {
-		resource_id_cache_t *rid = 0;
-		ship_lock(resource_id_cache);
-		while ((rid = ship_ht2_pop(resource_id_cache))) {
-			freez(rid->resource);
-			free(rid);
-		}
-		ship_ht2_free(resource_id_cache);
-		resource_id_cache = 0;
-	}
-	
-	if (resources) {
-		char *val;
-		ship_lock(resources);
-		while ((val = ship_ht_pop(resources))) {
-			freez(val);
-		}
-		ship_ht_free(resources);
-		resources = 0;
-	}
-}
-
-static int
-resourcefetch_handle_message(char *data, int data_len, 
-			     ident_t *target, char *source, 
-			     service_type_t service_type)
-{
-	int ret = -1;
-	char *d = 0, *rid = 0;
-	char *buf = 0;
-	FILE *f = 0;
-	
-	ASSERT_TRUE(d = strchr(data, '\n'), err);
-	d[0] = 0;
-	d++;
-
-	if (str_startswith(data, "req:")) {
-		char *fn = 0;
-		struct stat sdata;
-
-		rid = data+4;
-		LOG_DEBUG("got request for resource %s\n", rid);
-
-		/* todo: access control of any sort? */
-		ship_lock(resources);
-		fn = ship_ht_get_string(resources, rid);
-		ship_unlock(resources);
-		
-		/* read file, send the data! */
-		if (!fn || stat(fn, &sdata)) {
-			LOG_WARN("Requested non-existing file %s\n", fn);
-			sdata.st_size = 0;
-		}
-			
-		/* load file .. */
-		if (sdata.st_size && !(f = fopen(fn, "r")))
-			sdata.st_size = 0;
-		if ((buf = malloc(sdata.st_size + strlen(rid) + 32))) {
-			size_t r = 0;
-			int l = 0;
-			
-			strcpy(buf, "resp:");
-			strcat(buf, rid);
-			strcat(buf, "\n");
-			l = strlen(buf);
-			
-			if (sdata.st_size)
-				r = fread(buf + l, 1, sdata.st_size, f);
-			if (r == sdata.st_size) {
-				/* dtn: here we should just respond with the data! */
-				ASSERT_ZERO(conn_send_default(source, target->sip_aor, 
-							      SERVICE_TYPE_RESOURCEFETCH,
-							      buf, l+r,
-							      NULL, NULL), 
-					    err);
-			}
-		}
-	} else if (str_startswith(data, "resp:")) {
-		pending_rf_t *rf;
-		void *ptr = 0, *last = 0;
-		rid = data+5;
-		LOG_DEBUG("got response for resource %s\n", rid);
-		
-		/* find the entry .. */
-		ship_lock(pending_rfs);
-		while ((rf = ship_list_next(pending_rfs, &ptr))) {
-			if (!strcmp(rid, rf->rid) && !strcmp(source, rf->host)) {
-				ship_list_remove(pending_rfs, rf);
-				// halt
-				rf->func(rf->data, rf->host, rf->rid, d, data_len - strlen(data) - 1);
-				resourcefetch_free(rf);
-				ptr = last;
-			}
-			last = ptr;
-		}
-		ship_unlock(pending_rfs);
-	} else
-		goto err;
-	ret = 0;
- err:
-	freez(buf);
-	if (f)
-		fclose(f);
-	return ret;
-}
-
-static void
-resourcefetch_get_cb(char *to, char *from, service_type_t service,
-		     int code, char *return_data, int data_len, void *ptr)
-{
-	pending_rf_t *rf = ptr;
-	if (code && (rf = ship_list_remove(pending_rfs, rf))) {
-		rf->func(rf->data, rf->host, rf->rid, NULL, 0);
-		resourcefetch_free(rf);
-	}
-}
-
-static int
-resourcefetch_get_to(void *data, processor_task_t **wait, int wait_for_code)
-{
-	resourcefetch_get_cb(NULL, NULL, 0, -1, NULL, 0, data);
-	return 0;
-}
-
-int
-resourcefetch_get(char *host, char *rid,
-		  char *local_aor,
-		  void (*func) (void *param, char *host, char *rid, char *data, int datalen),
-		  void *data) 
-{
-	pending_rf_t *rf = 0;
-	char *dp = 0;
-	int ret = -1;
-	
-	/* this is quite simple for now. Just fetch the resource as one big blob. */
-	LOG_DEBUG("fetching resource '%s' from '%s'\n", rid, host);
-	
-	/* 
-	   protocol:
-	   
-	   the request:
-	   req:<rid>\n
-	   
-	   the response:
-	   resp:<rid>\n<data>
-	*/
-	
-	/* create the data packet */
-	ASSERT_TRUE(dp = mallocz(strlen(rid) + 64), err);
-	strcpy(dp, "req:");
-	strcat(dp, rid);
-	strcat(dp, "\n");
-
-	/* store the callbacks */
-	ASSERT_TRUE(rf = resourcefetch_new(host, rid, func, data), err);
-	ship_list_add(pending_rfs, rf);
-
-	/* dtn: here we could actually use the ack-response data! */
-	ASSERT_ZERO(conn_send_slow(host, local_aor, 
-				   SERVICE_TYPE_RESOURCEFETCH,
-				   dp, strlen(dp), 
-				   rf, resourcefetch_get_cb), 
-		    err);
-
-	/* create some sort of timeout for this */
-	processor_tasks_add_timed(resourcefetch_get_to, rf, NULL, 10000);
-	
-	rf = 0;
-	ret = 0;
- err:
-	freez(dp);
-	if (rf) {
-		ship_list_remove(pending_rfs, rf);
-	}
-	return ret;
-}
-
-/* this stores a data file into the resource-fetch service */
-int
-resourcefetch_store(char *filename, char **id)
-{
-	int ret = -1;
-	char *dup = 0, *old = 0;
-	
-	ASSERT_TRUE(*id = (char*)ship_hmac_sha1_base64(filename, "todo.."), err);
-	ASSERT_TRUE(dup = strdupz(filename), err);
-	LOG_DEBUG("storing resource %s under id %s\n", filename, *id);
-	
-	ship_lock(resources);
-	old = ship_ht_remove_string(resources, *id);
-	freez(old);
-	
-	ship_ht_put_string(resources, *id, dup);
-	ret = 0;
-	ship_unlock(resources);
- err:
-	return ret;
-}
-
-/* removes a resource from the resource service */
-int
-resourcefetch_remove(char *rid)
-{
-	char *tmp = 0;
-	int ret = -1;
-
-	ASSERT_TRUE(rid, err);
-	ASSERT_TRUE(tmp = ship_ht_remove_string(resources, rid), err);
-	freez(tmp);
-	ret = 0;
- err:
-	return ret;
 }
 
 /* this func performs the lookups using the resource-transfer protocol */
@@ -1231,7 +939,7 @@ webcache_p2p_update()
 
 			/* we should create the mapping */
 			freez(e->rid);
-			ASSERT_ZERO(resourcefetch_store(e->filename, &e->rid), err);
+			ASSERT_ZERO(resourcefetch_store(e->filename, 3600, NULL, &e->rid), err);
 			
 			ASSERT_TRUE(u = ship_urlencode(e->url), err);
 			sprintf(b2, "%d", e->size);
@@ -1269,7 +977,7 @@ static struct processor_module_s processor_module =
 	.init = webcache_init,
 	.close = webcache_close,
 	.name = "webcache",
-	.depends = "",
+	.depends = "resourceman",
 };
 
 /* register func */

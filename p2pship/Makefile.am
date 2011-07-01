@@ -65,7 +65,8 @@ bin_PROGRAMS = p2pship #httptest
 p2pship_SOURCES = main.c processor.c processor_config.c hipapi.c ident.c\
 		  olclient.c conn.c netio.c ship_utils.c ship_crypto.c ship_debug.c\
 		  ident_addr.c ident_data.c webconf.c netio_http.c netio_man.c\
-		  sipp_buddy.c trustman.c netio_events.c ui.c ui_stdin.c $(extra_sources) addrbook.c
+		  sipp_buddy.c trustman.c netio_events.c ui.c ui_stdin.c $(extra_sources)\
+		  addrbook.c resourceman.c
 
 #httptest_SOURCES = httptest.c processor.c processor_config.c sipp.c hipapi.c ident.c\
 #		  olclient.c conn.c netio.c ship_utils.c sipp_mp.c ship_debug.c\

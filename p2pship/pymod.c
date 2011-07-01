@@ -46,6 +46,7 @@
 #ifdef CONFIG_MEDIA_ENABLED
 #include "media.h"
 #endif
+#include "resourceman.h"
 
 static ship_ht_t *pymod_config_updaters = 0;
 static ship_ht_t *pymod_http_servers = 0;
@@ -727,6 +728,20 @@ p2pship_config_set(PyObject *self, PyObject *args)
 	freez(k2);
 	return ret;
 }
+
+static PyObject *
+p2pship_config_save(PyObject *self, PyObject *args)
+{
+	PyObject *ret = NULL;
+	processor_config_t *conf = processor_get_config();
+
+	processor_config_save(conf, processor_config_string(conf, P2PSHIP_CONF_CONF_FILE));
+	
+	Py_INCREF(Py_None);
+	ret = Py_None;
+	return ret;
+}
+
 
 static PyObject *
 p2pship_config_get(PyObject *self, PyObject *args)
@@ -2847,21 +2862,18 @@ p2pship_media_check_element(PyObject *self, PyObject *args)
 #endif
 
 
-#ifdef CONFIG_WEBCACHE_ENABLED
-
-#include "webcache.h"
-
 static PyObject*
 p2pship_resourcefetch_store(PyObject *self, PyObject *args)
 {
 	PyObject *ret = NULL;
-	char *filename = NULL;
+	char *filename = NULL, *recipient = NULL;
 	char *id = NULL;
+	int expire = 3600;
 	
-	if (!PyArg_ParseTuple(args, "s", &filename))
+	if (!PyArg_ParseTuple(args, "s|is", &filename, &expire, &recipient))
 		goto end;
 	
-	ASSERT_ZERO(resourcefetch_store(filename, &id), err);
+	ASSERT_ZERO(resourcefetch_store(filename, expire, recipient, &id), err);
 	ASSERT_TRUE(ret = PyString_FromString(id), err);
 	goto end;
  err:
@@ -2934,7 +2946,6 @@ p2pship_resourcefetch_get(PyObject *self, PyObject *args)
 	return ret;
 }	
 
-#endif
 
 
 
@@ -2965,6 +2976,7 @@ static PyMethodDef p2pshipMethods[] = {
 
     {"config_create",  p2pship_config_create, METH_VARARGS, "Creates a new configuration key."},
     {"config_set",  p2pship_config_set, METH_VARARGS, "Sets a configuration value."},
+    {"config_save",  p2pship_config_save, METH_VARARGS, "Saves the configuration."},
     {"config_get",  p2pship_config_get, METH_VARARGS, "Gets a configuration value."},
     {"config_set_update",  p2pship_config_set_update, METH_VARARGS, "Installs a dynamic update."},
 
@@ -3007,12 +3019,10 @@ static PyMethodDef p2pshipMethods[] = {
     {"call_async",  p2pship_call_async, METH_VARARGS, "Calls a function asynchronously."},
     {"call_periodically",  p2pship_call_periodically, METH_VARARGS, "Calls a function periodically."},
 
-#ifdef CONFIG_WEBCACHE_ENABLED
     // resourcefetch
     {"resourcefetch_store",  p2pship_resourcefetch_store, METH_VARARGS, "Stores a file for P2P resource fetch."},
     {"resourcefetch_remove",  p2pship_resourcefetch_remove, METH_VARARGS, "Removes a file from P2P resource fetch."},
     {"resourcefetch_get",  p2pship_resourcefetch_get, METH_VARARGS, "Retrieves a resource using P2P fetch."},
-#endif
 
 #ifdef CONFIG_SIP_ENABLED
     {"register_sip_request_handler",  p2pship_register_sip_request_handler, METH_VARARGS, "Registers a SIP request handler"},

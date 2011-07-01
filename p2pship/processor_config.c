@@ -33,6 +33,7 @@
 #define DEFAULT_WEB_DIR ".p2pship/web"
 #define DEFAULT_LOG_FILE ".p2pship/log"
 #define DEFAULT_WEBCACHE_INDEX ".p2pship/webcache/index.txt"
+#define DEFAULT_RESOURCEMAN_STATE_FILE ".p2pship/resourceman.state"
 #ifdef CONFIG_SIP_ENABLED
 #define DEFAULT_SIPP_ROUTING_FILE ".p2pship/sip-routing.xml"
 #endif
@@ -157,6 +158,7 @@ static char* DEFAULT_CONFIGURATION[] =
 		P2PSHIP_CONF_CONTACTS_FILE, DEFAULT_CONTACTS_FILE, "The contacts database", "file", 0,
 		P2PSHIP_CONF_WHITELIST_FILE, DEFAULT_WHITELIST_FILE, "The whitelist location", "file", 0,
 		P2PSHIP_CONF_BLACKLIST_FILE, DEFAULT_BLACKLIST_FILE, "The blacklist location", "file", 0,
+		P2PSHIP_CONF_RESOURCEMAN_STATE_FILE, DEFAULT_RESOURCEMAN_STATE_FILE, "The resource manager state file", "file", 0,
 	
 #ifdef CONFIG_SIP_ENABLED
 		P2PSHIP_CONF_SIPP_ROUTING_FILE, DEFAULT_SIPP_ROUTING_FILE, "SIP gateway routing configuration", "file", 0,
@@ -469,6 +471,7 @@ processor_config_ensure_configs(processor_config_t *config)
 							       "# The whitelist for P2PSHIP\n# Please don't edit white the proxy is running!\n#\n\n", config), err);
 	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_BLACKLIST_FILE, 
 							       "# The blacklist for P2PSHIP\n# Please don't edit white the proxy is running!\n#\n\n", config), err);
+	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_RESOURCEMAN_STATE_FILE, "", config), err);
 	
 #ifdef CONFIG_SIP_ENABLED
 	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_SIPP_ROUTING_FILE, 

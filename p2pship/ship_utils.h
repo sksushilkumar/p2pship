@@ -674,6 +674,7 @@ int __NON_INSTRUMENT_FUNCTION__ str_startswith(const char *str, const char *toke
 char *__NON_INSTRUMENT_FUNCTION__ strstr_after(char *str, char *token);
 char *__NON_INSTRUMENT_FUNCTION__ memmem_after(char *str, int len, char *token, int len2);
 char *__NON_INSTRUMENT_FUNCTION__ append_mem(const char *str, int strlen, char *buf, int *buflen, int *datalen);
+char *append_int(const int val, char *buf, int *buflen, int *datalen);
 char *__NON_INSTRUMENT_FUNCTION__ append_str(const char *str, char *buf, int *buflen, int *datalen);
 int __NON_INSTRUMENT_FUNCTION__ append_str2(char **str, char *buf);
 char *combine_str(const char *str1, const char *str2);
@@ -681,6 +682,7 @@ char *replace_end(char *str, int *buflen, int *datalen, char *end, char *newend)
 
 #define zstrcat(target, source) if (source && target) { strcat(target, source); }
 #define zstrlen(str) (str? strlen(str):0)
+int zstrcmp(const char *str1, const char *str2);
 
 #define zdefault(str, def) (str? str:def)
 
@@ -722,6 +724,7 @@ int ship_move(const char *from, const char *to);
 /**
  * Cryto functions 
  */
+char *ship_get_random_base64(const int bytes);
 int ship_get_random (unsigned char *random, size_t len);
 int ship_hash (const char *algo, unsigned char *data, unsigned char **hash);
 char *ship_hmac_sha1_base64(const char *key, const char *secret);
