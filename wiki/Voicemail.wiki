@@ -113,12 +113,20 @@ The IM interface accepts commands to query and modify the voicemail database.  T
 
 For instance, when the voicemail manager discovers a new voicemail, its presence status will change into 'online', and an instant message such as the following will be sent to the user:
 
-_New voicemail [8] from alice@p2psip.hiit.fi!_
+{{{
+New voicemail [8] from alice@p2psip.hiit.fi!
+}}}
 
 The number assigned to the voicemail is here 8.  By calling the voicemail controller (`voicemail@localhost`), this message will be played.  As there are no other unheard voicemails, a call to the number again will be terminated.
 
 By adding the voicemail number to the voicemail controller's AOR, the voicemail can be heard again.  In this example that would be done by calling the AOR `voicemail8@localhost`.
 
+By sending the instant message
+{{{
+/remove 8
+}}}
+
+to the voicemail controller, the message will be deleted.
 
 == Notes and caveats ==
 
