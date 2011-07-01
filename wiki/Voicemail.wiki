@@ -2,8 +2,6 @@
 
 = Introduction =
 
-_note: this page is under development. Following is a brief introduction to the feature, we'll expand the article as the development efforts progress.._
-
 Voicemail, or more generally _off-line messaging_, is a useful feature for any sort of communication system. By being able to record messages for people currently not reachable, and have them delivered later, we're able to free ourselves from constantly monitoring the status of people. This naturally becomes difficult in a distributed settings where there is no reliable, constantly available, 3rd party to store these messages while the recipient is away.  Instead, we need to leverage, as always in P2P networks, the resources of possibly untrusted peers to deliver the data.  This introduces a number of issues to consider, including
 
 * Reliability
@@ -84,16 +82,44 @@ Acknoledgements are not currently used, as we do not yet support external (of th
 
 = Implementation =
 
-The voicemail system is implemented as a PRE plugin. More on this later.
+The voicemail system is implemented as a PRE plugin.
 
-== User experience ==
-
-Currently the voicemail system uses only standard SIP signalling. Messages are announced to the user using SIP IM, and the user is able to listen to them by calling specially prefixed SIP AORs, which are intercepted by the voicemail system. More on this later.
 
 == Configuration ==
 
-_todo: please see the voicemail-prefixed configuration values. These are created dynamically by the plug-in._
+Please see the voicemail-prefixed configuration values. These are created dynamically by the plug-in.  Following is an overview of the most important ones:
+
+_Voicemail identityprefix_ - The prefix of the special voicemail contact that is used to control the voicemail.  This should be something specific, as all AORs beginning with it will be captured by the voicemail controller. The default is _voicemail_, meaning that, for instance, _voicemail@domain.com_, _voicemail+something@localhost_, _voicemailing.dude@here.com_ will all be captured by it.
+
+_Type of voicemail: for local caller only, remote caller only or both_ - Whether the local user should be able to leave voicemails for remote peers (local), or viceversa (local) or both.
+
+_Codec to use_ - How the voicemails will be encoded. If the option is available, we recommend MP3.
+
+
+== User experience ==
+
+Currently the voicemail system uses only standard SIP signalling. Messages are announced to the user using SIP IM, and the user is able to listen to them by calling specially prefixed SIP AORs, which are intercepted by the voicemail system.  This special SIP AOR, or AOR prefix actually, can be set in the configuration.
+
+When a voicemail has been received, the presence status of this voicemail contact will turn into 'online'. By calling this contact, the oldest un-heard voicemail will always play.
+
+Each voicemail will be assigned a non-overlapping number, starting from 1.  When a voicemail is received, the IM notification will contain this number for the message.  Calling the voicemail contact and appending this number to its name will result in that specific message to be played, even though it has been heard before.  This can be used to listen to old voicemails.
+
+The IM interface accepts commands to query and modify the voicemail database.  The commands accepted are:
+{{{
+/list     - lists all unheard voicemails
+/all      - lists all stored voicemails (also old ones)
+/remove # - deletes voicemail number #
+}}}
+
+For instance, when the voicemail manager discovers a new voicemail, its presence status will change into 'online', and an instant message such as the following will be sent to the user:
+
+_New voicemail [8] from alice@p2psip.hiit.fi!_
+
+The number assigned to the voicemail is here 8.  By calling the voicemail controller (`voicemail@localhost`), this message will be played.  As there are no other unheard voicemails, a call to the number again will be terminated.
+
+By adding the voicemail number to the voicemail controller's AOR, the voicemail can be heard again.  In this example that would be done by calling the AOR `voicemail8@localhost`.
+
 
 == Notes and caveats ==
 
-_todo: Whatever we've run into._
+We have noticed that some systems (or versions of GStreamer) has difficulties streaming WAV data over RTP.  For this reason (as well as obvious other ones) we therefore recommend that you use mp3 encoding for all audio.  The gstreamer plug-in needed for this is the lame gstreamer encoder. This can be found in many distributions within the gstreamer-plugins-ugly package. For Maemo4, the HIIT repository maintains pre-compiled packages of both lame itself as well as the lame gstreamer plugin.

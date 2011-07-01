@@ -1,5 +1,13 @@
 #summary News
 
+*30 June 2011 / jookos*
+
+The [Voicemail] plugin / support has now officially been released! Pre-compiled packages are available in the HIIT repository, and the source can be found right here on Google Code.  The feature allows you to both leave messages for friends that are currently offline or unavailable, as well as have friends leave messages for you locally when away. 
+
+The plugin notifies you of these voicemails through the presence status of a special contact, `voicemail@domain`, which becomes 'online' whenever there is a pending voicemail. Also, an instant message notification is sent providing the details, and allowing the user to control (list, delete) stored messages. Listening to the messages is as easy as to place a VoIP call to the special voicemail contact.
+
+Greetings can also be customized and recorded by calling an extension number of the voicemail contact. The audio is recorded as mp3 files (if a suitable gstreamer plug-in is present) or wav. The HIIT repository contains pre-compiled packages of lame for gstreamer which enable mp3 encoding.
+
 *Bloomsday (16 June) 2011 / jookos*
 
 We're happy to announce that an initial (preview?) version of the [Voicemail] feature has now been commited to the Google Code repository.  Implemented as a Python Plug-In, it has caused a number of reforms and additions in the [PRE], as well as a much awaited redesign of the SIP message flow.  Both local (you leaving messages for an unavailable friend) and remote (a friend leaving a message on your device while you're away/busy) messages are supported with the possibility to use custom greeting messsages.  Please see the [Voicemail] page for details!
