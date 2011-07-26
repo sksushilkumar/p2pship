@@ -50,6 +50,8 @@ The API would allow extensions to:
  * Insert media stream
  * Add / remove participants
 
+_note:_ These could actually work on a higher level, above the multiparty conferencing feature also, as it could be interesting to be able to record all phone calls, or insert messages in any chat. Actually, as the multiparty thing is on the way of becoming part of standard calls (any call we make would actually be a conference with 2 participants), the extensions could be multiparty-specific, but the nature of the multiparty plugin would be more of a 'tap into calls'- plugin. Which, out-of-the-box, happens to support multiparty conferencing.
+
 ==== Plug-ins in planning ====
 
 *audioplay*: The ability to insert audio files into the conference. For instance, typing '/play song1.mp3' into the group chat would cause the p2pship conference manager to insert (play) that audio file just as if it was an additional participant.
@@ -61,6 +63,19 @@ The API would allow extensions to:
 *taskmanager*: Bot that reacts on certain strings entered in the group chat to automatically form task lists, bug reports, or anything else. Use case: A work-related remote meeting. While discussing matters, todos and tasks are identified. The chair of the meeting enters into the group chat strings like '/task John Check the current sale figures' or '/task Mona Design a new logo for the project by friday'. These would end up in a task manager (which ever you're using) or somewhere else as a task for John, and another for Mona (with a deadline on Friday).
 
 *mediaforward*: Forward media streams from the conference to other sinks. UPNP projectors, external screens, sound systems etc.
+
+*misc bots*: As seen on _IRC_; '/magic8ball should i do this-or-that?`
+
+==== Social / web integration ====
+
+_Investigate if there's any synergy in tapping into social networks. This might be also something that affects the system more profoundly, not only the multiparty functionality_
+
+*Google+*: Somehow use the google+ groups for creating automatic conferences / content sharing environments.
+
+*Cross-platform chats*: Support for inviting facebook etc friends into the group IM sessions. This might be more useful as a system-wide feature (possibility to translate SIP IM to XMMP, with AOR/account mapping rules).
+
+*Cross-platform content sharing*: Possibility to share stuff from your facebook wall or something like that. Picasa photos. UI a problem. Perhaps a browser plugin would be necessary here (not too bad of an idea; [BrowserPlugin])
+
 
 = Milestones overview =
 
@@ -92,10 +107,14 @@ SIP support for basic centralized conferencing on a P2P network:
 == Milestone 3 ==
 
  * Advanced access control and session management
+   * Basically being able to expel users, invite others, find out who's participating
+ * Default conferences (creating one ad-hoc from an ongoing call)
 
 == Milestone 4 ==
 
  * Support for multi-proxy topology
+   * Session keys (possibly)
+   * Multi-topology presence
 
 == Milestone X ==
 
