@@ -113,11 +113,18 @@ AC_ARG_ENABLE(dbus,
              AC_HELP_STRING([--enable-dbus],
                             [Enable DBUS IPC support (default is NO)]),
              [ac_cv_use_dbus=$enableval], [ac_cv_use_dbus=no])
+# gtk ui
+AC_ARG_ENABLE(gtkui,
+             AC_HELP_STRING([--enable-gtkui],
+                            [Enable GTK-based UI (default is NO)]),
+             [ac_cv_use_gtkui=$enableval], [ac_cv_use_gtkui=no])
+
 # maemo ui
 AC_ARG_ENABLE(maemoui,
              AC_HELP_STRING([--enable-maemoui],
                             [Enable Maemo-specific UI (default is NO)]),
              [ac_cv_use_maemoui=$enableval], [ac_cv_use_maemoui=no])
+
 # libebook
 AC_ARG_ENABLE(libebook,
              AC_HELP_STRING([--enable-libebook],
@@ -176,6 +183,7 @@ if test x"$ac_cv_use_maemo" = x"yes"; then
 	      ac_cv_use_abs="yes"
 	      ac_cv_use_maemoexts="yes"
 	      ac_cv_use_media="no"
+	      ac_cv_use_python="no"
 fi
 
 if test x"$ac_cv_use_maemopre" = x"yes"; then
@@ -339,9 +347,29 @@ if test x"$ac_cv_use_maemoui" = x"yes"; then
 	AC_SUBST(MAEMOUI_LIBS)
 	CFLAGS="$CFLAGS $MAEMOUI_CFLAGS"
 	LIBS="$LIBS $MAEMOUI_LIBS"
-        ac_cv_use_gtk="yes"
+        ac_cv_use_gtkui="yes"
 fi
 AM_CONDITIONAL(MAEMOUI_ENABLED, test x"$ac_cv_use_maemoui" = x"yes")
+
+# gtkui
+AC_CACHE_CHECK([whether to use gtkui],
+               [ac_cv_use_gtkui], [ac_cv_use_gtkui=no])
+if test x"$ac_cv_use_gtkui" = x"yes"; then
+        AC_DEFINE(CONFIG_GTKUI_ENABLED, [1], [Enable GTK UI interface])
+        ac_cv_use_gtk="yes"
+
+	PKG_CHECK_MODULES([LIBNOTIFY],[libnotify >= 0.4.1],
+ 			  [HAVE_LIBNOTIFY="yes"],[HAVE_LIBNOTIFY="no"])
+ 	AC_SUBST([LIBNOTIFY_CFLAGS])
+ 	AC_SUBST([LIBNOTIFY_LIBS])
+	CFLAGS="$CFLAGS $LIBNOTIFY_CFLAGS"
+	LIBS="$LIBS $LIBNOTIFY_LIBS"
+ 	
+ 	if test "x$HAVE_LIBNOTIFY" = "xyes"; then
+	 	AC_DEFINE([HAVE_LIBNOTIFY],[1],[libnotify is available on this machine])
+ 	fi
+fi
+AM_CONDITIONAL(GTKUI_ENABLED, test x"$ac_cv_use_gtkui" = x"yes")
 
 # libebook
 AC_CACHE_CHECK([whether to use libebook],
