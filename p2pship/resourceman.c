@@ -170,8 +170,8 @@ _resourceman_load_cb(void *data, int lc, char *key, char *value, char *line)
 			entry->access_counter = atoi(tokens[5]);
 			ship_ht_put_string(resources, entry->id, entry);
 			
-			LOG_HL("loaded resource %s: %s for %s, %d, %d, %d\n", entry->id, entry->filename,
-			       entry->recipient, entry->expire, entry->created, entry->access_counter);
+			LOG_DEBUG("loaded resource %s: %s for %s, %d, %d, %d\n", entry->id, entry->filename,
+				  entry->recipient, entry->expire, entry->created, entry->access_counter);
 		}
 	err:
 		ship_tokens_free(tokens, toklen);
@@ -214,7 +214,6 @@ resourceman_save()
 			ship_ht_remove(resources, entry);
 			resourceman_entry_free(entry);
 			ptr = last;
-			printf("releasing expired %s\n", entry->id);
 		} else {
 			/* save id, filename, for whom, created, expire, access counter .. */
 			ASSERT_TRUE((tmp = append_str(entry->id, buf, &size, &len)) && (buf = tmp), err);

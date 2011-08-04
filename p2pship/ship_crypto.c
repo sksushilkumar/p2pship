@@ -16,6 +16,7 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
+#define _GNU_SOURCE /* strndup */
 #include "ship_utils.h"
 #include "ship_debug.h"
 #include <stdio.h>
@@ -432,9 +433,9 @@ ship_get_pubkey(X509 *cert)
 	ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
 	ASSERT_TRUE(PEM_write_bio_RSA_PUBKEY(bio, pu_key), err);
 	ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
-	tmp[bufsize] = 0;
+	//tmp[bufsize] = 0;
 
-	ret = strdup(tmp);
+	ret = strndup(tmp, bufsize);
  err:
 	if (pkey) EVP_PKEY_free(pkey);
 	if (pu_key) RSA_free(pu_key);

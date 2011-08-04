@@ -84,6 +84,17 @@ ui_define_operation(ui_query_three, "ui_query_three",
 		    (char *header, char *body, char *one_op, char *two_op, char *three_op), 
 		    (header, body, one_op, two_op, three_op));
 
+/* new ones */
+ui_define_operation(ui_query_filechooser, "ui_query_filechooser",
+		    (const char *header, const char *title, const char *dir, ship_list_t *filetypes, char **ret),
+		    (header, title, dir, filetypes, ret));
+
+ui_define_operation(ui_query_listchooser, "ui_query_listchooser",
+		    (const char *header, const char *title, ship_list_t *options, char **ret),
+		    (header, title, options, ret));
+
+
+/* these require wrappers for the variable arguments .. */
 void
 ui_popup(const char *template, ...)
 {

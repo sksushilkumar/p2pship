@@ -29,6 +29,7 @@
 #include "ident.h"
 #include "p2pship_version.h"
 #include "conn.h"
+#include "ui.h"
 
 static void ident_free(ident_t *ident);
 static int ident_init(ident_t *ret, char *sip_aor);
@@ -88,6 +89,7 @@ ident_buddy_free(buddy_t *buddy)
 	    freez(buddy->my_suggestion);
 	    if (buddy->cert) X509_free(buddy->cert);
 	    buddy->cert = NULL;
+	    freez(buddy->cert_cache);
 	    free(buddy);
     }
 }
@@ -194,6 +196,8 @@ ident_buddy_xml_to_struct(buddy_t **__buddy, xmlNodePtr cur)
 
    	if ((certificate = ship_xml_get_child_field(cur, "certificate"))) {
 		ASSERT_TRUE(buddy->cert = ship_parse_cert(certificate), err);
+		buddy->cert_cache = certificate;
+		certificate = NULL;
    	}
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
 	freez(name);
@@ -416,6 +420,8 @@ ident_free(ident_t *ident)
 	ident->private_key = NULL;
 	if (ident->cert) X509_free(ident->cert);
 	ident->cert = NULL;
+	freez(ident->cert_cache);
+	freez(ident->private_key_cache);
 }
 
 /* creates a new identity */
@@ -440,6 +446,7 @@ ident_ca_free(ca_t *ca)
                 freez(ca->digest);
 		if (ca->cert) X509_free(ca->cert);
 		ca->cert = NULL;
+		freez(ca->cert_cache);
                 free(ca);
         }
 }
@@ -499,6 +506,7 @@ ident_data_check_cert(ident_t *ident)
 		if (!ident_is_self_signed(ident)) {
 			LOG_ERROR("The certificate for %s is not valid!\n", ident->sip_aor);
 			/* we don't want no trouble .. */
+			ui_popup("Certificate for %s is expired!\n", ident->sip_aor);
 #ifdef CONFIG_OP_ENABLED
 		} else if (ident_is_op_ident(ident)) {
 			/* get the op system to create a self-signed cert with me as subject */
@@ -517,6 +525,9 @@ ident_data_check_cert(ident_t *ident)
 	}
 	ret = 0;
  err:
+	if (ret)
+		ui_popup("No valid certificate exists for %s!\n", ident->sip_aor);
+
 	freez(data);
 	return ret;
 }
@@ -660,8 +671,12 @@ ident_create_reg_xml(reg_package_t *reg, ident_t *ident, char **text)
 	ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
 	ASSERT_TRUE(PEM_write_bio_X509(bio, ident->cert), err);
 	ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &cert), err);
-	cert[bufsize] = 0;
-	ASSERT_TRUE(xmlNewTextChild(doc->children, NULL, (xmlChar*)"certificate", (xmlChar*)cert), err);
+
+	//cert[bufsize] = 0;
+	//ASSERT_TRUE(xmlNewTextChild(doc->children, NULL, (xmlChar*)"certificate", (xmlChar*)cert), err);
+
+	ASSERT_TRUE(tree = xmlNewTextChild(doc->children, NULL, (xmlChar*)"certificate", (xmlChar*)""), err);
+	xmlNodeAddContentLen(tree, (xmlChar*)cert, bufsize);
 
 	/* done. dump the xml */
 	xmlDocDumpFormatMemory(doc, &xmlbuf, &bufsize, 1);
@@ -719,7 +734,7 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	(*__reg) = NULL;
 	ASSERT_TRUE(data, err);
 	ASSERT_TRUE(strlen(data), err);
-	ASSERT_TRUE(data[0] == '<', err); // try to avoid libxml2 bugs.. :(
+	ASSERT_TRUES(data[0] == '<', err, "No XML detected!\n"); // try to avoid libxml2 bugs.. :(
 	
 	ASSERT_TRUE(reg = ident_reg_new(NULL), err);
 	ASSERT_TRUE(doc = xmlParseMemory(data, strlen(data)), err);
@@ -729,7 +744,7 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	/* certificate */
 	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "certificate"), err);
 	ASSERT_TRUE(reg->cert = ship_parse_cert(result), err);
-	
+
 	/* get key into public_key */
 	ASSERT_TRUE(pkey = X509_get_pubkey(reg->cert), err);
 	ASSERT_TRUE(public_key = EVP_PKEY_get1_RSA(pkey), err);
@@ -929,6 +944,8 @@ ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur)
 		ASSERT_TRUE(ident->private_key = PEM_read_bio_RSAPrivateKey(bio_key, NULL, 
 									    ident_cb_openssl_pass, 
 									    "private key"), err);
+		ident->private_key_cache = result;
+		result = NULL;
 #ifdef CONFIG_OP_ENABLED
 	}
 #endif 
@@ -936,9 +953,10 @@ ident_ident_xml_to_struct(ident_t **__ident, xmlNodePtr cur)
 
 	if ((result = ship_xml_get_child_field(cur, "certificate"))) {
 		ASSERT_TRUE(ident->cert = ship_parse_cert(result), err);
+		ident->cert_cache = result;
+		result = NULL;
 
 		/* read sip aor from cert, compare */
-		freez(result);
 		ASSERT_TRUE(result = ident_data_x509_get_cn(X509_get_subject_name(ident->cert)), err);
 		ASSERT_ZERO(ident_set_aor(&cn, result), err);
 		if (strcmp(cn, ident->sip_aor)) {
@@ -992,6 +1010,8 @@ ident_ca_xml_to_struct(ca_t **__ca, xmlNodePtr cur)
 
 	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "certificate"), err);
 	ASSERT_TRUE(ca->cert = ship_parse_cert(result), err);
+	ca->cert_cache = result;
+	result = NULL;
 	
 	/* extract key id */
 	ASSERT_TRUE(ca->digest = ident_data_x509_get_subject_digest(ca->cert), err);
@@ -1080,13 +1100,25 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 			xmlSetProp(pkey, (xmlChar*)"src", (xmlChar*)"op");
 		} else {
 #endif
-			ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
-			ASSERT_TRUE(PEM_write_bio_RSAPrivateKey(bio, ident->private_key, NULL, NULL, 0, NULL, NULL), err);
-			ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+			if (ident->private_key_cache) {
+				tmp = ident->private_key_cache;
+				bufsize = strlen(tmp);
+			} else {
+				ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+				ASSERT_TRUE(PEM_write_bio_RSAPrivateKey(bio, ident->private_key, NULL, NULL, 0, NULL, NULL), err);
+				ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+			}
+			/*
 			tmp[bufsize] = 0;
 			ASSERT_TRUE(pkey = xmlNewTextChild(node, NULL, (xmlChar*)"private-key", (xmlChar*)tmp), err);
-			BIO_free(bio);
-			bio = NULL;
+			*/
+			ASSERT_TRUE(pkey = xmlNewTextChild(node, NULL, (xmlChar*)"private-key", (xmlChar*)""), err);
+			xmlNodeAddContentLen(pkey, (xmlChar*)tmp, bufsize);
+			
+			if (bio) {
+				BIO_free(bio);
+				bio = NULL;
+			}
 #ifdef CONFIG_OP_ENABLED
 		}
 		
@@ -1095,14 +1127,28 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 #endif		
 
 		if (!ident_is_self_signed(ident)) {
-			ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
-			ASSERT_TRUE(PEM_write_bio_X509(bio, ident->cert), err);
-			ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+
+			if (ident->cert_cache) {
+				tmp = ident->cert_cache;
+				bufsize = strlen(tmp);
+			} else {
+				ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+				ASSERT_TRUE(PEM_write_bio_X509(bio, ident->cert), err);
+				ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+			}
+
+			/*
 			tmp[bufsize] = 0;
-			ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"certificate", (xmlChar*)tmp), err);
+			ASSERT_TRUE(pkey = xmlNewTextChild(node, NULL, (xmlChar*)"certificate", (xmlChar*)tmp), err);
+			*/
 			
-			BIO_free(bio);
-			bio = NULL;
+			ASSERT_TRUE(pkey = xmlNewTextChild(node, NULL, (xmlChar*)"certificate", (xmlChar*)""), err);
+			xmlNodeAddContentLen(pkey, (xmlChar*)tmp, bufsize);
+			
+			if (bio) {
+				BIO_free(bio);
+				bio = NULL;
+			}
 		}
 		
 		/* save buddy list */
@@ -1123,14 +1169,24 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 					ASSERT_TRUE(xmlNewTextChild(buddychildnode, NULL, (xmlChar*)"shared-secret", (xmlChar*)buddy->shared_secret), err);
 				
 				if (buddy->cert) {
-					ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
-					ASSERT_TRUE(PEM_write_bio_X509(bio, buddy->cert), err);
-					ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
-					tmp[bufsize] = 0;
-					ASSERT_TRUE(xmlNewTextChild(buddychildnode, NULL, (xmlChar*)"certificate", (xmlChar*)tmp), err);
+					if (buddy->cert_cache) {
+						tmp = buddy->cert_cache;
+						bufsize = strlen(tmp);
+					} else {
+						ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+						ASSERT_TRUE(PEM_write_bio_X509(bio, buddy->cert), err);
+						ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+					}
 					
-					BIO_free(bio);
-					bio = NULL;
+					//tmp[bufsize] = 0;
+					//ASSERT_TRUE(xmlNewTextChild(buddychildnode, NULL, (xmlChar*)"certificate", (xmlChar*)tmp), err);
+					ASSERT_TRUE(pkey = xmlNewTextChild(buddychildnode, NULL, (xmlChar*)"certificate", (xmlChar*)""), err);
+					xmlNodeAddContentLen(pkey, (xmlChar*)tmp, bufsize);
+					
+					if (bio) {
+						BIO_free(bio);
+						bio = NULL;
+					}
 				}
 
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
@@ -1152,14 +1208,24 @@ ident_create_ident_xml(ship_list_t *idents, ship_list_t *cas, char **text)
 		ASSERT_TRUE(node = xmlNewTextChild(tree, NULL, (xmlChar*)"ca", NULL), err);
 		ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"name", (xmlChar*)ca->name), err);
 		
-		ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
-		ASSERT_TRUE(PEM_write_bio_X509(bio, ca->cert), err);
-		ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
- 		tmp[bufsize] = 0;
-		ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"certificate", (xmlChar*)tmp), err);
+		if (ca->cert_cache) {
+			tmp = ca->cert_cache;
+			bufsize = strlen(tmp);
+		} else {
+			ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
+			ASSERT_TRUE(PEM_write_bio_X509(bio, ca->cert), err);
+			ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
+		}
 
-		BIO_free(bio);
-		bio = NULL;
+ 		//tmp[bufsize] = 0;
+		//ASSERT_TRUE(xmlNewTextChild(node, NULL, (xmlChar*)"certificate", (xmlChar*)tmp), err);
+		ASSERT_TRUE(pkey = xmlNewTextChild(node, NULL, (xmlChar*)"certificate", (xmlChar*)""), err);
+		xmlNodeAddContentLen(pkey, (xmlChar*)tmp, bufsize);
+
+		if (bio) {
+			BIO_free(bio);
+			bio = NULL;
+		}
 	}
 	
 	/* done. dump the xml */
@@ -1418,7 +1484,7 @@ ident_data_get_pkey_base64(X509 *cert)
 	ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
 	ASSERT_TRUE(PEM_write_bio_PUBKEY(bio, pkey), err);
 	ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &tmp), err);
-	tmp[bufsize] = 0;
+	//tmp[bufsize] = 0;
 
 	LOG_DEBUG("got pkey '%s'\n", tmp);
 	ret = ship_encode_base64(tmp, bufsize);

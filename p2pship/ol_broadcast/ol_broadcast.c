@@ -132,7 +132,8 @@ ol_broadcast_get(char *key, olclient_get_task_t *task)
 
 		olclient_storage_find_entries(k2, resps);
 		while ((e = ship_list_pop(resps))) {
-			task->callback(e->data, 1, task /*->lookup, g->mod*/);
+			if (task->callback)
+				task->callback(e->data, 1, task);
 			e->data = 0;
 			olclient_storage_entry_free(e);
 		}

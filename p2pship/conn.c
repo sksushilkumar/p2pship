@@ -60,6 +60,39 @@
 #endif
 #include "ui.h"
 
+
+/*
+ * data packet 
+ */
+typedef struct conn_packet_s {
+	ship_obj_t parent;
+
+	char *to;
+	char *from;
+	ident_t *ident;
+
+	int type;
+	service_type_t service;
+	char *data;
+	int data_len;
+
+	char *pkg_id;
+	int flags;
+	int is_ack;
+
+	time_t sent;
+	void *ptr;
+	conn_packet_callback callback;
+	int code;
+
+	char *return_data;
+	int return_data_len;
+
+} conn_packet_t;
+
+SHIP_INCLUDE_TYPE(conn_packet);
+static int conn_packet_serialize(conn_packet_t *p, char **retv, int *len);
+
 //#define ship_lock_conn(conn) { printf("lock conn..\n"); ship_lock(conn); ship_restrict_locks(conn, identities); ship_restrict_locks(conn, conn_all_conn); printf("conn yes..\n"); }
 
 extern ship_obj_list_t *identities;
@@ -131,7 +164,7 @@ static conn_packet_t *conn_packet_new_service(const char *to, const char *from,
 
 SHIP_DEFINE_TYPE(conn_packet);
 static ship_obj_ht_t *conn_waiting_packets = 0;
-
+static ship_obj_list_t *conn_completed_packets = 0;
 
 static void 
 ship_unlock_conn(conn_connection_t *conn) 
@@ -466,6 +499,8 @@ conn_close()
 
 	trustman_close();
 	ship_obj_ht_free(conn_waiting_packets);
+	ship_obj_list_free(conn_completed_packets);
+	conn_completed_packets = NULL;
 	conn_waiting_packets = NULL;
 }
 
@@ -535,7 +570,8 @@ conn_init(processor_config_t *config)
 	ASSERT_TRUE(conn_lis_socket_addrs = ship_list_new(), err);
 	ASSERT_ZERO(conn_rebind(), err);
 
-	ASSERT_TRUE(conn_waiting_packets = ship_obj_ht_new(), err);
+	ASSERT_TRUE(conn_waiting_packets = ship_obj_list_new(), err);
+	ASSERT_TRUE(conn_completed_packets = ship_obj_ht_new(), err);
 
 	ASSERT_ZERO(processor_tasks_add_periodic(conn_periodic, NULL, 5000), err);
 
@@ -737,7 +773,14 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
 		if (ret) {
 			LOG_WARN("processing of message type %d failed (code %d)!\n", type, ret);
 			if (type == PKG_REG) {
-				ui_popup("Dropped connection attempt from untrusted peer!");
+				if (conn->sip_aor && conn->remotely_got) 
+					ui_popup("Dropped connection attempt from %s after failed verification!", conn->sip_aor);
+				else if (conn->sip_aor && !conn->remotely_got) 
+					ui_popup("Dropped connection attempt to %s after failed verification!", conn->sip_aor);
+				else if (conn->remotely_got) 
+					ui_popup("Dropped connection attempt from unknown peer after failed verification!");
+				else
+					ui_popup("Dropped connection attempt to unknown peer after failed verification!");
 					 
 			}
 		} else {
@@ -762,6 +805,11 @@ conn_process_data_do(void *data, processor_task_t **wait, int wait_for_code)
                 conn_conn_close(conn);
 	}
 	ship_unlock_conn(conn); // unreffing is in _done!
+
+	// clear all packets that may have been completed!
+	ship_obj_list_clear(conn_completed_packets);
+	
+
         return ret;
 }
 
@@ -893,13 +941,13 @@ conn_process_pkg_reg(char *payload, int pkglen, conn_connection_t *conn)
 	import = ident_import_foreign_reg(reg);
 	reg = NULL; // it's gone either way
 	ship_lock_conn(conn);
-	
-	ASSERT_ZEROS(import, err, "The reg packet presented could not be imported!\n");
-	
+		
 	if (!conn->sip_aor) {
 		conn->sip_aor = tmp_aor;
 		tmp_aor = NULL;
 	}
+
+	ASSERT_ZEROS(import, err, "The reg packet presented could not be imported!\n");
 		
 	/* allow only updates for the same sip aor on a connection,
 	 * and mark connection as connected if we get a reg package where we haven't
@@ -1004,13 +1052,22 @@ conn_process_pkg_service(char *payload, int pkglen, service_type_t service_type,
 				s = 0;
 				ret = -2;
 			} else {
+				ident_t *ident = conn->ident;
+				
+				ship_obj_ref(ident);
+				ship_unlock_conn(conn);
+				
 				/* parse the packet, process split packets */
 				if (s->data_received(payload,
 						     pkglen,
-						     conn->ident, conn->sip_aor, service_type))
+						     ident, conn->sip_aor, service_type))
 					ret = -1;
 				else
 					ret = 0;
+
+				ship_lock(ident);
+				ship_lock_conn(conn);
+				conn->ident = ident;
 			}
 		} else {
                         LOG_ERROR("FAILING as no ident!\n");
@@ -1107,6 +1164,7 @@ conn_cb_socket_got(int s, struct sockaddr *sa, socklen_t addrlen, int ss)
 		c.sa = sa;
 		c.addrlen = addrlen;
                 if ((conn = (conn_connection_t *)ship_obj_new(TYPE_conn_connection, &c))) {
+			conn->remotely_got = 1;
 			conn->socket = s;
 			conn->state = STATE_INIT;
 			time(&conn->last_content);
@@ -1258,7 +1316,7 @@ conn_packet_process_data(char *payload, int pkglen, conn_connection_t *conn)
 				p->return_data_len = pkglen;
 			}
 			p->code = (str_startswith(payload, "ACK:")? 0: -2);
-			ship_obj_unref(p);
+			ship_list_add(conn_completed_packets, p); // steal ref // ship_obj_unref(p);
 			p = 0;
 		}
 		ret = 0;
@@ -1287,11 +1345,12 @@ conn_packet_process_data(char *payload, int pkglen, conn_connection_t *conn)
 		LOG_WARN("invalid packet!\n");
 	}
  err:
-	ship_obj_unref(p);
+	if (p)
+		ship_list_add(conn_completed_packets, p); // steal ref //ship_obj_unref(p);
 	return ret;
 }
 
-int
+static int
 conn_packet_serialize(conn_packet_t *p, char **retv, int *len)
 {
 	char *ret = 0;

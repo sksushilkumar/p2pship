@@ -56,136 +56,137 @@
 */
 #endif
 
+#define CONFIG_NOSAVE "nosave"
+#define CONFIG_LEN 6
+
 /* the default values for all the configs */
 static char* DEFAULT_CONFIGURATION[] =
  	{
- 		P2PSHIP_CONF_DAEMON, "no", "Daemon mode", "static_bool", 0,
-		P2PSHIP_CONF_WORKER_THREADS, "3", "Number of worker threads", "static_int", 0,
-		P2PSHIP_CONF_SHIP_PORT, "5566", "The initial SHIP protocol port to try", "int", 0,
-		P2PSHIP_CONF_SHIP_PORT_RANGE, "20", "The range (forward) or ship ports to try if first fails", "int", 0,
-		P2PSHIP_CONF_IFACES, "ext", "Public SHIP interface to advertise", "string", 0,
+ 		P2PSHIP_CONF_DAEMON, "no", "Daemon mode", "static_bool", 0, 0,
+		P2PSHIP_CONF_WORKER_THREADS, "3", "Number of worker threads", "static_int", 0, 0,
+		P2PSHIP_CONF_SHIP_PORT, "5566", "The initial SHIP protocol port to try", "int", 0, 0,
+		P2PSHIP_CONF_SHIP_PORT_RANGE, "20", "The range (forward) or ship ports to try if first fails", "int", 0, 0,
+		P2PSHIP_CONF_IFACES, "ext", "Public SHIP interface to advertise", "string", 0, 0,
 
-		P2PSHIP_CONF_OL_SECRET, "", "Overlay key secret", "string", 0,
+		P2PSHIP_CONF_OL_SECRET, "", "Overlay key secret", "string", 0, 0,
 
-		P2PSHIP_CONF_IDENT_TRUST_FRIENDS, "yes", "Allow untrusted peers within known by your friends", "bool", 0,
-		P2PSHIP_CONF_IDENT_ALLOW_UNKNOWN_REGISTRATIONS, "no", "Allow unknown registrations", "bool", 0,
-		P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED, "no", "Allow untrusted peers", "bool", 0,
-		P2PSHIP_CONF_IDENT_REQUIRE_AUTHENTICATION, "no", "Require SIP UA authentication", "bool", 0,
-		P2PSHIP_CONF_IDENT_IGNORE_CERT_VALIDITY, "yes", "Ignore the validity of peer certificates", "bool", 0,
-		P2PSHIP_CONF_IDENT_RENEGOTIATE_SECRET, "no", "Re-negotiate shared secret on each contact", "bool", 0,
+		P2PSHIP_CONF_IDENT_TRUST_FRIENDS, "yes", "Allow untrusted peers within known by your friends", "bool", 0, 0,
+		P2PSHIP_CONF_IDENT_ALLOW_UNKNOWN_REGISTRATIONS, "no", "Allow unknown registrations", "bool", 0, 0,
+		P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED, "no", "Allow untrusted peers", "bool", 0, 0,
+		P2PSHIP_CONF_IDENT_REQUIRE_AUTHENTICATION, "no", "Require SIP UA authentication", "bool", 0, 0,
+		P2PSHIP_CONF_IDENT_IGNORE_CERT_VALIDITY, "yes", "Ignore the validity of peer certificates", "bool", 0, 0,
+		P2PSHIP_CONF_IDENT_RENEGOTIATE_SECRET, "no", "Re-negotiate shared secret on each contact", "bool", 0, 0,
 
 #ifdef CONFIG_PYTHON_ENABLED
-		P2PSHIP_CONF_START_SHELL, "no", "Start Python shell on stdin", "bool", 0,
-		P2PSHIP_CONF_RUN_SCRIPT, "", "Run a script at startup", "string", 0,
-		P2PSHIP_CONF_STARTUP_SCRIPTS, "yes", "Start Python scripts", "bool", 0,
+		P2PSHIP_CONF_START_SHELL, "no", "Start Python shell on stdin", "bool", 0, CONFIG_NOSAVE, /* dynamic */
+		P2PSHIP_CONF_RUN_SCRIPT, "", "Run a script at startup", "string", 0, CONFIG_NOSAVE, /* dynamic */
+		P2PSHIP_CONF_STARTUP_SCRIPTS, "yes", "Start Python scripts", "bool", 0, CONFIG_NOSAVE, /* dynamic */
 #endif
 
 #ifdef CONFIG_SIP_ENABLED
-		P2PSHIP_CONF_SIPP_PROXY_IFACES, "lo", "SIP proxy interface", "string", 0,
-		P2PSHIP_CONF_SIPP_PROXY_PORT, "1234", "SIP proxy port", "int", 0,
-		P2PSHIP_CONF_SIPP_MEDIA_PROXY, "yes", "Enable media proxy", "bool", 0,
-		P2PSHIP_CONF_SIPP_MEDIA_PROXY_MOBILITY_SUPPORT, "yes", "Enable media proxy mobility hack", "bool", 0,
-		P2PSHIP_CONF_SIPP_MEDIA_PROXY_FORCE4, "yes", "Force ipv4 on media proxy proxying to a ipv4 address", "bool", 0,
-		P2PSHIP_CONF_SIPP_FORCE_PROXY, "yes", "Force use of media proxy", "bool", 0,
-		P2PSHIP_CONF_SIPP_TUNNEL_PROXY, "no", "Tunnel media proxy traffic", "bool", 0,
+		P2PSHIP_CONF_SIPP_PROXY_IFACES, "lo", "SIP proxy interface", "string", 0, 0,
+		P2PSHIP_CONF_SIPP_PROXY_PORT, "1234", "SIP proxy port", "int", 0, 0,
+		P2PSHIP_CONF_SIPP_MEDIA_PROXY, "yes", "Enable media proxy", "bool", 0, 0,
+		P2PSHIP_CONF_SIPP_MEDIA_PROXY_MOBILITY_SUPPORT, "yes", "Enable media proxy mobility hack", "bool", 0, 0,
+		P2PSHIP_CONF_SIPP_MEDIA_PROXY_FORCE4, "yes", "Force ipv4 on media proxy proxying to a ipv4 address", "bool", 0, 0,
+		P2PSHIP_CONF_SIPP_FORCE_PROXY, "yes", "Force use of media proxy", "bool", 0, 0,
+		P2PSHIP_CONF_SIPP_TUNNEL_PROXY, "no", "Tunnel media proxy traffic", "bool", 0, 0,
 
-		P2PSHIP_CONF_CALL_LOG_SHOW_PATHINFO, "yes", "Show trustpath for accepted calls", "bool", 0,
-		P2PSHIP_CONF_CALL_LOG_SHOW_DROPPED, "yes", "Show dropped calls", "bool", 0,
+		P2PSHIP_CONF_CALL_LOG_SHOW_PATHINFO, "yes", "Show trustpath for accepted calls", "bool", 0, 0,
+		P2PSHIP_CONF_CALL_LOG_SHOW_DROPPED, "yes", "Show dropped calls", "bool", 0, 0,
 
-		P2PSHIP_CONF_PDD_RESET_MODE, "no", "Reset peer connections before each call", "bool", 0,
-		P2PSHIP_CONF_PDD_LOG, "no", "Log PDD data to separate file", "bool", 0,
+		P2PSHIP_CONF_PDD_RESET_MODE, "no", "Reset peer connections before each call", "bool", 0, 0,
+		P2PSHIP_CONF_PDD_LOG, "no", "Log PDD data to separate file", "bool", 0, 0,
 #endif
 		
-		P2PSHIP_CONF_IDENT_UA_MODE, "open", "UA mode", "enum:open,relax,paranoid", 0,
-		P2PSHIP_CONF_CONN_KEEPALIVE, "30", "Keepalive interval in seconds", "int", 0,
+		P2PSHIP_CONF_IDENT_UA_MODE, "open", "UA mode", "enum:open,relax,paranoid", 0, 0,
+		P2PSHIP_CONF_CONN_KEEPALIVE, "30", "Keepalive interval in seconds", "int", 0, 0,
 
 #ifdef CONFIG_BROADCAST_ENABLED
-		P2PSHIP_CONF_BC_ADDR, "239.254.254.200:1902", "Broadcast address", "string", 0,
-		P2PSHIP_CONF_BC_IFACES, "ext", "Broadcast interfaces", "string", 0,
+		P2PSHIP_CONF_BC_ADDR, "239.254.254.200:1902", "Broadcast address", "string", 0, 0,
+		P2PSHIP_CONF_BC_IFACES, "ext", "Broadcast interfaces", "string", 0, 0,
 #endif
 
 #ifdef CONFIG_OPENDHT_ENABLED
-		P2PSHIP_CONF_OPENDHT_PROXY, "192.38.109.143:5851", "OpenDHT proxy to use", "string", 0,
+		P2PSHIP_CONF_OPENDHT_PROXY, "192.38.109.143:5851", "OpenDHT proxy to use", "string", 0, 0,
 #endif
 
 #ifdef CONFIG_P2PEXT_ENABLED
-		P2PSHIP_CONF_P2PEXT_PROXY, "p2pext.appspot.com", "P2PSHIP EXT proxy to use", "string", 0,
+		P2PSHIP_CONF_P2PEXT_PROXY, "p2pext.appspot.com", "P2PSHIP EXT proxy to use", "string", 0, 0,
 #endif
 
 #ifdef CONFIG_HIP_ENABLED
-		P2PSHIP_CONF_PROVIDE_RVS, "no", "Provide RVS for others", "bool", 0,
-		P2PSHIP_CONF_NAT_TRAVERSAL, "plain", "NAT traversal", "enum:none,plain,ice", 0,
-		//P2PSHIP_CONF_RVS, "crossroads.infrahip.net", "RVS to use", "string", 0,
-		P2PSHIP_CONF_RVS, "", "RVS to use", "string", 0,
+		P2PSHIP_CONF_PROVIDE_RVS, "no", "Provide RVS for others", "bool", 0, 0,
+		P2PSHIP_CONF_NAT_TRAVERSAL, "plain", "NAT traversal", "enum:none,plain,ice", 0, 0,
+		//P2PSHIP_CONF_RVS, "crossroads.infrahip.net", "RVS to use", "string", 0, 0,
+		P2PSHIP_CONF_RVS, "", "RVS to use", "string", 0, 0,
 
-		P2PSHIP_CONF_HIP_SHUTDOWN, "/bin/sh /etc/init.d/hipd-initd restart", "hipd shutdown command", "string", 0,
+		P2PSHIP_CONF_HIP_SHUTDOWN, "/bin/sh /etc/init.d/hipd-initd restart", "hipd shutdown command", "string", 0, 0,
 
-		P2PSHIP_CONF_ALLOW_NONHIP, "yes", "Allow non-hip control & data connections", "bool", 0,
-		P2PSHIP_CONF_AUTOSTART, "yes", "Auto-start hipd on registration", "bool", 0,
+		P2PSHIP_CONF_ALLOW_NONHIP, "yes", "Allow non-hip control & data connections", "bool", 0, 0,
+		P2PSHIP_CONF_AUTOSTART, "yes", "Auto-start hipd on registration", "bool", 0, 0,
 #endif
 
 #ifdef CONFIG_WEBCONF_ENABLED
-		P2PSHIP_CONF_WEBCONF_SS, "127.0.0.1:9080", "The webconf interface address", "string", 0,
+		P2PSHIP_CONF_WEBCONF_SS, "127.0.0.1:9080", "The webconf interface address", "string", 0, 0,
 #endif
 
 #ifdef CONFIG_EXTAPI_ENABLED
-		P2PSHIP_CONF_EXTAPI_SS, "127.0.0.1:9081", "The ext interface address", "string", 0,
+		P2PSHIP_CONF_EXTAPI_SS, "127.0.0.1:9081", "The ext interface address", "string", 0, 0,
 
 #ifdef CONFIG_HTTPPROXY_ENABLED
-		P2PSHIP_CONF_HTTPPROXY_ADDR, "127.0.0.1:9090", "The HTTP client proxy address", "string", 0,
-		P2PSHIP_CONF_HTTPPROXY_REVEAL_ORIGINAL, "yes", "Reveal original HTTP url when making proxy requests", "bool", 0,
+		P2PSHIP_CONF_HTTPPROXY_ADDR, "127.0.0.1:9090", "The HTTP client proxy address", "string", 0, 0,
+		P2PSHIP_CONF_HTTPPROXY_REVEAL_ORIGINAL, "yes", "Reveal original HTTP url when making proxy requests", "bool", 0, 0,
 #endif
 #endif
 
 #ifdef CONFIG_WEBCACHE_ENABLED
-		P2PSHIP_CONF_WEBCACHE_FILELIMIT, "2097152", "Webcache file size limit", "int", 0,
-		P2PSHIP_CONF_WEBCACHE_LIMIT, "20971520", "Webcache disk usage limit", "int", 0,
-		P2PSHIP_CONF_WEBCACHE_STRICTNESS, "all", "Webcache strictness", "enum:all,relaxed,strict", 0,
-		P2PSHIP_CONF_WEBCACHE_USE_P2P_LOOKUP, "yes", "Use P2P webcache lookups", "bool", 0,
+		P2PSHIP_CONF_WEBCACHE_FILELIMIT, "2097152", "Webcache file size limit", "int", 0, 0,
+		P2PSHIP_CONF_WEBCACHE_LIMIT, "20971520", "Webcache disk usage limit", "int", 0, 0,
+		P2PSHIP_CONF_WEBCACHE_STRICTNESS, "all", "Webcache strictness", "enum:all,relaxed,strict", 0, 0,
+		P2PSHIP_CONF_WEBCACHE_USE_P2P_LOOKUP, "yes", "Use P2P webcache lookups", "bool", 0, 0,
 #endif
 		
-		P2PSHIP_CONF_USE_PATHFINDER, "no", "Use the pathfinder", "bool", 0,
-		P2PSHIP_CONF_PATHFINDER, "193.167.187.22:7372", "The pathfinder", "string", 0,
-		P2PSHIP_CONF_AC_HTTP, "localhost:9292", "The HTTP access control module", "string", 0,
-		P2PSHIP_CONF_AC_MAX_PATH, "0", "Max path length allowed for incoming requests", "int", 0,
+		P2PSHIP_CONF_USE_PATHFINDER, "no", "Use the pathfinder", "bool", 0, 0,
+		P2PSHIP_CONF_PATHFINDER, "193.167.187.22:7372", "The pathfinder", "string", 0, 0,
+		P2PSHIP_CONF_AC_HTTP, "localhost:9292", "The HTTP access control module", "string", 0, 0,
+		P2PSHIP_CONF_AC_MAX_PATH, "0", "Max path length allowed for incoming requests", "int", 0, 0,
 #ifdef REMOTE_DEBUG
-		P2PSHIP_CONF_REMOTE_DEBUG, "193.167.187.92:9876", "The remote debug monitor", "string", 0,
+		P2PSHIP_CONF_REMOTE_DEBUG, "193.167.187.92:9876", "The remote debug monitor", "string", 0, 0,
 #endif
 
-		P2PSHIP_CONF_IDENTS_FILE, DEFAULT_IDENT_FILE, "The identity database", "file", 0,
-		P2PSHIP_CONF_AUTOREG_FILE, DEFAULT_AUTOREG_FILE, "The autoreg file location", "file", 0,
-		P2PSHIP_CONF_LOG_FILE, DEFAULT_LOG_FILE, "Log file location", "file", 0,
-		P2PSHIP_CONF_CONTACTS_FILE, DEFAULT_CONTACTS_FILE, "The contacts database", "file", 0,
-		P2PSHIP_CONF_WHITELIST_FILE, DEFAULT_WHITELIST_FILE, "The whitelist location", "file", 0,
-		P2PSHIP_CONF_BLACKLIST_FILE, DEFAULT_BLACKLIST_FILE, "The blacklist location", "file", 0,
-		P2PSHIP_CONF_RESOURCEMAN_STATE_FILE, DEFAULT_RESOURCEMAN_STATE_FILE, "The resource manager state file", "file", 0,
+		P2PSHIP_CONF_IDENTS_FILE, DEFAULT_IDENT_FILE, "The identity database", "file", 0, 0,
+		P2PSHIP_CONF_AUTOREG_FILE, DEFAULT_AUTOREG_FILE, "The autoreg file location", "file", 0, 0,
+		P2PSHIP_CONF_LOG_FILE, DEFAULT_LOG_FILE, "Log file location", "file", 0, 0,
+		P2PSHIP_CONF_CONTACTS_FILE, DEFAULT_CONTACTS_FILE, "The contacts database", "file", 0, 0,
+		P2PSHIP_CONF_WHITELIST_FILE, DEFAULT_WHITELIST_FILE, "The whitelist location", "file", 0, 0,
+		P2PSHIP_CONF_BLACKLIST_FILE, DEFAULT_BLACKLIST_FILE, "The blacklist location", "file", 0, 0,
+		P2PSHIP_CONF_RESOURCEMAN_STATE_FILE, DEFAULT_RESOURCEMAN_STATE_FILE, "The resource manager state file", "file", 0, 0,
 	
 #ifdef CONFIG_SIP_ENABLED
-		P2PSHIP_CONF_SIPP_ROUTING_FILE, DEFAULT_SIPP_ROUTING_FILE, "SIP gateway routing configuration", "file", 0,
+		P2PSHIP_CONF_SIPP_ROUTING_FILE, DEFAULT_SIPP_ROUTING_FILE, "SIP gateway routing configuration", "file", 0, 0,
 #endif
 
-		P2PSHIP_CONF_WEB_DIR, DEFAULT_WEB_DIR, "Web interface data dir", "file", 0,
+		P2PSHIP_CONF_WEB_DIR, DEFAULT_WEB_DIR, "Web interface data dir", "file", 0, 0,
 
 #ifdef CONFIG_WEBCACHE_ENABLED
-		P2PSHIP_CONF_WEBCACHE_INDEX, DEFAULT_WEBCACHE_INDEX, "Web cache index location", "file", 0,
+		P2PSHIP_CONF_WEBCACHE_INDEX, DEFAULT_WEBCACHE_INDEX, "Web cache index location", "file", 0, 0,
 #endif
 
-		P2PSHIP_CONF_DATA_DIR, DEFAULT_DATA_DIR, "Application data directory", "file", 0,
-
 #ifdef CONFIG_PYTHON_ENABLED
-		P2PSHIP_CONF_PYTHON_LIB_DIR, DEFAULT_PYTHON_LIB_DIR, "Python lib directory", "file", 0,
-		P2PSHIP_CONF_PYTHON_SCRIPTS_DIR, DEFAULT_PYTHON_SCRIPTS_DIR, "Python scripts directory", "file", 0,
-		P2PSHIP_CONF_PYTHON_DATA_DIR, DEFAULT_PYTHON_DATA_DIR, "Python script data directory", "file", 0,
+		P2PSHIP_CONF_PYTHON_LIB_DIR, DEFAULT_PYTHON_LIB_DIR, "Python lib directory", "file", 0, 0,
+		P2PSHIP_CONF_PYTHON_SCRIPTS_DIR, DEFAULT_PYTHON_SCRIPTS_DIR, "Python scripts directory", "file", 0, 0,
+		P2PSHIP_CONF_PYTHON_DATA_DIR, DEFAULT_PYTHON_DATA_DIR, "Python script data directory", "file", 0, 0,
 
 		/*
-		P2PSHIP_CONF_PYTHON_INSTANCES_DIR, DEFAULT_PYTHON_INSTANCES_DIR, "Python application instance location", "file", 0,
-		P2PSHIP_CONF_PYTHON_PACKAGES_DIR, DEFAULT_PYTHON_PACKAGES_DIR, "Python application packages location", "file", 0,
+		P2PSHIP_CONF_PYTHON_INSTANCES_DIR, DEFAULT_PYTHON_INSTANCES_DIR, "Python application instance location", "file", 0, 0,
+		P2PSHIP_CONF_PYTHON_PACKAGES_DIR, DEFAULT_PYTHON_PACKAGES_DIR, "Python application packages location", "file", 0, 0,
 		*/
 #endif
 
 #ifdef CONFIG_OP_ENABLED
-		P2PSHIP_CONF_IDENT_USE_OP_FOR_UNKNOWN, "yes", "Try to use OP identities for unkown registrations", "bool", 0,
-		P2PSHIP_CONF_IDENT_FILTERING, "none", "How to react to OP identities", "enum:block_unkown,none,allow_known", 0,
+		P2PSHIP_CONF_IDENT_USE_OP_FOR_UNKNOWN, "yes", "Try to use OP identities for unkown registrations", "bool", 0, 0,
+		P2PSHIP_CONF_IDENT_FILTERING, "none", "How to react to OP identities", "enum:block_unkown,none,allow_known", 0, 0,
 #endif
 		0, 0, 0, 0, 0
  	};
@@ -225,7 +226,7 @@ processor_config_close()
 	char **ptr = 0;
 	if (processor_config_dynamic) {
 		while ((ptr = (char**)ship_ht_pop(processor_config_dynamic))) {
-			freez_arr(ptr, 4);
+			freez_arr(ptr, CONFIG_LEN-2);
 		}
 		ship_ht_free(processor_config_dynamic);
 		processor_config_dynamic = NULL;
@@ -242,7 +243,7 @@ processor_config_create_key(processor_config_t *config, const char *key, const c
 	char **arr = NULL;
 
 	ASSERT_TRUE(processor_config_dynamic && config, err);
-	ASSERT_TRUE(arr = mallocz(sizeof(char*) * 5), err);
+	ASSERT_TRUE(arr = mallocz(sizeof(char*) * CONFIG_LEN), err);
 	ASSERT_TRUE(arr[0] = strdup(key), err);
 	ASSERT_TRUE(arr[1] = strdup(value), err);
 	ASSERT_TRUE(arr[2] = strdup(description), err);
@@ -254,7 +255,7 @@ processor_config_create_key(processor_config_t *config, const char *key, const c
 	ret = 0;
 	arr = 0;
  err:
-	freez_arr(arr, 4);
+	freez_arr(arr, CONFIG_LEN-2);
 	return ret;
 }
 
@@ -265,7 +266,7 @@ processor_config_get_keys(ship_list_t *list)
 	char **arr = DEFAULT_CONFIGURATION;
 	while (*arr) {
 		ship_list_add(list, *arr);
-		arr += 5;
+		arr += CONFIG_LEN;
 	}
 	if (processor_config_dynamic)
 		ship_ht_keys_add(processor_config_dynamic, list);
@@ -280,7 +281,7 @@ processor_config_get_default(const char *key)
 	while (*arr) {
 		if (!strcmp(*arr, key))
 			return arr;
-		arr += 5;
+		arr += CONFIG_LEN;
 	}
 	if (processor_config_dynamic)
 		return ship_ht_get_string(processor_config_dynamic, key);
@@ -295,6 +296,17 @@ processor_config_is_valid_key(char *key)
 		return 1;
 	else
 		return 0;
+}
+
+/* checks whether the config key is something saveable */
+int
+processor_config_is_nosave(char *key)
+{
+	char **ret = NULL;
+	if (!(ret = processor_config_get_default(key)) || !ret[5]) {
+		return 0;
+	} else
+		return 1;
 }
 
 /* gets the default value for some key */
@@ -390,8 +402,8 @@ processor_config_dump_json(processor_config_t *config, char **msg)
 	while ((key = ship_list_pop(list))) {
 		char **def = processor_config_get_default(key);
 		char *value = 0;
-		if (!def) continue;
-		
+		if (!def || processor_config_is_nosave(key))
+			continue;
 		value = processor_config_string(config, key);
 		ASSERT_TRUE(buf = append_str("     \"", buf, &buflen, &datalen), err);
 		ASSERT_TRUE(buf = append_str(key, buf, &buflen, &datalen), err);
@@ -484,7 +496,6 @@ processor_config_ensure_configs(processor_config_t *config)
 	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_WEBCACHE_INDEX, 
 							       "# The web cache index file\n#\n\n", config), err);
 #endif
-	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_DATA_DIR, NULL, config), err);
 
 #ifdef CONFIG_PYTHON_ENABLED
 	ASSERT_ZERO(processor_config_ensure_config_file(P2PSHIP_CONF_PYTHON_LIB_DIR, NULL, config), err);
@@ -523,7 +534,7 @@ processor_config_load_defaults(processor_config_t *config)
 			ASSERT_ZERO(processor_config_set_string(config, key, tmpstr), err);
  			freez(tmpstr);
 		}
-		arr++;
+		arr += CONFIG_LEN - 4;
 	}
 
 	ret = 0;
@@ -537,14 +548,17 @@ static void
 __processor_config_load_content_cb(void *data, int lc, char *key, char *value, char *line)
 {
 	processor_config_t *config = (processor_config_t *)data;
-	if (!processor_config_is_valid_key(key)) {
-		LOG_WARN("Invalid configuration on line %d: %s\n", lc, key);
-	}
-		
+
 	/* should we perhaps check the validity of the config
 	   key - enums especially? */
 
-	if (processor_config_set_string(config, key, value)) {
+	if (!processor_config_is_valid_key(key)) {
+		LOG_WARN("Invalid configuration on line %d: %s\n", lc, key);
+	}
+	
+	if (processor_config_is_nosave(key)) {
+		LOG_WARN("Ignoring configuration on line %d: %s\n", lc, key);
+	} else if (processor_config_set_string(config, key, value)) {
 		LOG_ERROR("Error adding configuration on line %d: %s\n", lc, key);
 	} else {
 		LOG_DEBUG("Loaded config on line %d: %s => %s\n", lc, key, value);
@@ -591,9 +605,11 @@ __processor_config_save_content_cb(void *data, int lc, char *key, char *value, c
 	
 	/* modify only those that differ & part of the default set */
 	char *newvalue = processor_config_string(config, key);
-	if (processor_config_get_default(key) && 
-	    ((!newvalue && strlen(value)) || 
-	     (newvalue && strcmp(newvalue, value)))) {
+	if (processor_config_is_nosave(key)) {
+		LOG_WARN("discarding line %d: %s..\n", lc, line);
+	} else if (processor_config_get_default(key) && 
+		   ((!newvalue && strlen(value)) || 
+		    (newvalue && strcmp(newvalue, value)))) {
 		ASSERT_TRUE((*buf) = append_str(key, *buf, size, len), err);
 		ASSERT_TRUE((*buf) = append_str(" = ", *buf, size, len), err);
 		if (newvalue)
