@@ -28,8 +28,8 @@
 #include "processor.h"
 
 
-int
-ui_maemo_query_import_contacts(ship_list_t *list)
+static int
+ui_gtk_query_import_contacts(ship_list_t *list)
 {
 	GtkDialog *diag = 0;
 	int ret = 0;
@@ -37,6 +37,7 @@ ui_maemo_query_import_contacts(ship_list_t *list)
 	int len = 0, size = 0, i;
 	char *tmp2 = 0;
 
+	gdk_threads_enter();
 	ASSERT_TRUE(str = append_str("<big>Add Contacts?</big>\n\nDo you want to add the following people to your addressbook?\n", str, &size, &len), err);
 	
 	for (i=0; i < 4 && i < ship_list_length(list); i++) {
@@ -77,17 +78,19 @@ ui_maemo_query_import_contacts(ship_list_t *list)
 	else
 		ret = 0;
  err:
+	gdk_threads_leave();
 	freez(str);
 	freez(tmp2);
 	return ret;
 }
 
-int
-ui_maemo_print_import_result(char *buf)
+static int
+ui_gtk_print_import_result(char *buf)
 {
 	GtkDialog *diag = 0;
 	char *str = 0, *tmp = 0;
 	
+	gdk_threads_enter();
 	ASSERT_TRUE(tmp = ship_pangoify(buf), err);
 	ASSERT_TRUE(str = mallocz(strlen(tmp) + 64), err);
 	sprintf(str, "<big>Import complete!</big>\n\n%s", tmp);
@@ -100,17 +103,26 @@ ui_maemo_print_import_result(char *buf)
 	gtk_dialog_run(diag);
 	gtk_widget_destroy((GtkWidget*)diag);
  err:
+	gdk_threads_leave();
+
 	freez(str);
 	freez(tmp);
 	return 0;
 }
 
+#ifdef CONFIG_MAEMOUI_ENABLED
 #include <hildon/hildon-program.h>
 #include <hildon/hildon-banner.h>
+#endif
 
-int
-ui_maemo_popup(char *buf)
+#ifdef HAVE_LIBNOTIFY
+#include <libnotify/notify.h>
+#endif
+
+static int
+ui_gtk_popup(char *buf)
 {
+#ifdef CONFIG_MAEMOUI_ENABLED
 	GtkWidget *w = NULL;
 	
 	gdk_threads_enter();
@@ -120,36 +132,57 @@ ui_maemo_popup(char *buf)
 	gdk_threads_leave();
 
  	USER_PRINT("We should print: %s\n", buf);
- 	return 0;
+#else
 
-	/*
+#ifndef HAVE_LIBNOTIFY
 	GtkDialog *diag = 0;
 	char *str = 0, *tmp = 0;
 	
+	gdk_threads_enter();
 	ASSERT_TRUE(tmp = ship_pangoify(buf), err);
 	ASSERT_TRUE(str = mallocz(strlen(tmp) + 64), err);
-	sprintf(str, "<big>Note!</big>\n\n%s", tmp);
+	sprintf(str, "<big>%s</big>", tmp);
 	ASSERT_TRUE(diag = (GtkDialog*)gtk_message_dialog_new_with_markup(NULL,
-									  GTK_DIALOG_MODAL,
+									  /* GTK_DIALOG_MODAL */0,
 									  GTK_MESSAGE_INFO,
 									  GTK_BUTTONS_OK,
-									  str,
-									  NULL), err);
+									  str), err);
 	gtk_dialog_run(diag);
 	gtk_widget_destroy((GtkWidget*)diag);
  err:
+	gdk_threads_leave();
 	freez(str);
 	freez(tmp);
+#else
+	/* new, libnotify-based notifications */
+	// thanks zenity; http://svn.gnome.org/viewvc/zenity/trunk/src/notification.c?view=markup
+
+	NotifyNotification *notif;
+
+	//notif = notify_notification_new_with_status_icon(buf, NULL /* summary */,
+	//						 icon, status_icon);
+
+	gdk_threads_enter();
+	notif = notify_notification_new("p2pship", buf,
+					GTK_STOCK_DIALOG_WARNING, 
+					//GTK_STOCK_DIALOG_INFO, 
+					NULL);
+	notify_notification_show(notif, NULL);
+	g_object_unref(notif);
+	gdk_threads_leave();
+#endif
+
+#endif
 	return 0;
-	*/
 }
 
-int
-ui_maemo_print_error(char *buf)
+static int
+ui_gtk_print_error(char *buf)
 {
 	GtkDialog *diag = 0;
 	char *str = 0, *tmp = 0;
 	
+	gdk_threads_enter();
 	ASSERT_TRUE(tmp = ship_pangoify(buf), err);
 	ASSERT_TRUE(str = mallocz(strlen(tmp) + 64), err);
 	sprintf(str, "<big>Error!</big>\n\n%s", tmp);
@@ -162,13 +195,14 @@ ui_maemo_print_error(char *buf)
 	gtk_dialog_run(diag);
 	gtk_widget_destroy((GtkWidget*)diag);
  err:
+	gdk_threads_leave();
 	freez(str);
 	freez(tmp);
 	return 0;
 }
 
-int
-ui_maemo_open_frontpage()
+static int
+ui_gtk_open_frontpage()
 {
 	/* execute the browser to open at the webconf */
 	LOG_INFO("should be opening browser now .. \n");
@@ -178,8 +212,8 @@ ui_maemo_open_frontpage()
 	return 0;
 }
 
-int
-ui_maemo_query_ca_operation(ca_t *ca, const char *operation, 
+static int
+ui_gtk_query_ca_operation(ca_t *ca, const char *operation, 
 			    const char* true_op, const char *false_op)
 {
 	const char *templ = 
@@ -189,6 +223,8 @@ ui_maemo_query_ca_operation(ca_t *ca, const char *operation,
 	GtkDialog *diag = 0;
 	char startb[64], endb[64], *issuer = 0, *cname = 0, *op2 = 0, *tmp, *uname = 0;
 	int ret = 0;
+
+	gdk_threads_enter();
 		
 	/* cert data */
 	if (!(issuer = ident_data_x509_get_cn(X509_get_issuer_name(ca->cert)))) {
@@ -236,6 +272,7 @@ ui_maemo_query_ca_operation(ca_t *ca, const char *operation,
 	ret = gtk_dialog_run(diag);
 	gtk_widget_destroy((GtkWidget*)diag);
  err:
+	gdk_threads_leave();
 	freez(op2);
 	freez(str);
 	freez(issuer);
@@ -244,8 +281,8 @@ ui_maemo_query_ca_operation(ca_t *ca, const char *operation,
 	return ret;
 }
 
-int
-ui_maemo_query_ident_operation(ident_t *ident, const char *operation, 
+static int
+ui_gtk_query_ident_operation(ident_t *ident, const char *operation, 
 			       const char* true_op, const char *false_op)
 {
 	const char *templ = 
@@ -255,6 +292,8 @@ ui_maemo_query_ident_operation(ident_t *ident, const char *operation,
 	GtkDialog *diag = 0;
 	char startb[64], endb[64], *issuer = 0, *cname = 0, *op2 = 0, *tmp, *aor = 0, *uname = 0;
 	int ret = 0;
+
+	gdk_threads_enter();
 		
 	/* cert data */
 	if (!(issuer = ident_data_x509_get_cn(X509_get_issuer_name(ident->cert)))) {
@@ -305,6 +344,8 @@ ui_maemo_query_ident_operation(ident_t *ident, const char *operation,
 	ret = gtk_dialog_run(diag);
 	gtk_widget_destroy((GtkWidget*)diag);
  err:
+	gdk_threads_leave();
+
 	freez(op2);
 	freez(str);
 	freez(issuer);
@@ -314,8 +355,8 @@ ui_maemo_query_ident_operation(ident_t *ident, const char *operation,
 	return ret;
 }
 
-int
-ui_maemo_query_simple(char *header, char *body,
+static int
+ui_gtk_query_simple(char *header, char *body,
 		      const char* true_op, const char *false_op)
 {
 	const char *templ = 
@@ -324,6 +365,7 @@ ui_maemo_query_simple(char *header, char *body,
 	GtkDialog *diag = 0;
 	int ret = 0;
 	
+	gdk_threads_enter();
 	ASSERT_TRUE(tmp = ship_pangoify(header), err);
 	ASSERT_TRUE(tmp2 = ship_pangoify(body), err);
 	ASSERT_TRUE(op1 = strdup(true_op), err);
@@ -345,6 +387,7 @@ ui_maemo_query_simple(char *header, char *body,
 	ret = gtk_dialog_run(diag);
 	gtk_widget_destroy((GtkWidget*)diag);
  err:
+	gdk_threads_leave();
 	freez(op2);
 	freez(op1);
 	freez(tmp2);
@@ -353,8 +396,8 @@ ui_maemo_query_simple(char *header, char *body,
 	return ret;
 }
 
-int
-ui_maemo_query_three(char *header, char *body,
+static int
+ui_gtk_query_three(char *header, char *body,
 		     const char* one_op, const char *two_op, const char *three_op)
 {
 	const char *templ = 
@@ -363,6 +406,7 @@ ui_maemo_query_three(char *header, char *body,
 	GtkDialog *diag = 0;
 	int ret = 0;
 	
+	gdk_threads_enter();
 	ASSERT_TRUE(tmp = ship_pangoify(header), err);
 	ASSERT_TRUE(tmp2 = ship_pangoify(body), err);
 	ASSERT_TRUE(op1 = strdup(one_op), err);
@@ -386,6 +430,7 @@ ui_maemo_query_three(char *header, char *body,
 	ret = gtk_dialog_run(diag);
 	gtk_widget_destroy((GtkWidget*)diag);
  err:
+	gdk_threads_leave();
 	freez(op3);
 	freez(op2);
 	freez(op1);
@@ -395,42 +440,96 @@ ui_maemo_query_three(char *header, char *body,
 	return ret;
 }
 
-int
-ui_maemo_init(processor_config_t *config)
+static int 
+ui_gtk_query_filechooser(const char *header, const char *title, const char *dir, ship_list_t *filetypes, char **filename)
 {
-	ui_reg_handler("ui_open_frontpage", ui_maemo_open_frontpage);
- 	ui_reg_handler("ui_query_ident_operation", ui_maemo_query_ident_operation);
-	ui_reg_handler("ui_query_ca_operation", ui_maemo_query_ca_operation);
-	ui_reg_handler("ui_print_import_result", ui_maemo_print_import_result);
-	ui_reg_handler("ui_query_import_contacts", ui_maemo_query_import_contacts);
+	GtkDialog *diag = NULL;
+	int ret =  -1;
+	GtkFileFilter *filter = NULL;
 
-	ui_reg_handler("ui_print_error", ui_maemo_print_error);
-	ui_reg_handler("ui_query_simple", ui_maemo_query_simple);
-	ui_reg_handler("ui_query_three", ui_maemo_query_three);
 
-	ui_reg_handler("ui_popup", ui_maemo_popup);
+		
+
+	gdk_threads_enter();
+	ASSERT_TRUE(diag = (GtkDialog*)gtk_file_chooser_dialog_new(header, NULL, 
+								   GTK_FILE_CHOOSER_ACTION_OPEN,
+								   GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+								   GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT,
+								   NULL), err);
+
+	if (filetypes && ship_list_length(filetypes)) {
+		void *ptr = NULL;
+		char *t = NULL;
+		
+		ASSERT_TRUE(filter = gtk_file_filter_new(), err);
+		while ((t = ship_list_next(filetypes, &ptr))) {
+			gtk_file_filter_add_pattern(filter, t);
+		}
+		gtk_file_chooser_set_filter(GTK_FILE_CHOOSER(diag), filter);
+	}
+		
+	gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(diag), dir);
+	if ((ret = gtk_dialog_run(diag)) == GTK_RESPONSE_ACCEPT) {
+		*filename = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(diag));
+		ret = 0;
+	}
+
+ err:
+	if (filter)
+		gtk_object_unref(GTK_OBJECT(filter));
+	if (diag)
+		gtk_widget_destroy((GtkWidget*)diag);
+
+	gdk_threads_leave();
+	return ret;
+}
+
+static int
+ui_gtk_query_listchooser(const char *header, const char *title, ship_list_t *options, char **ret)
+{
+	return -1;
+}
+
+
+static int
+ui_gtk_init(processor_config_t *config)
+{
+	ui_reg_handler("ui_open_frontpage", ui_gtk_open_frontpage);
+ 	ui_reg_handler("ui_query_ident_operation", ui_gtk_query_ident_operation);
+	ui_reg_handler("ui_query_ca_operation", ui_gtk_query_ca_operation);
+	ui_reg_handler("ui_print_import_result", ui_gtk_print_import_result);
+	ui_reg_handler("ui_query_import_contacts", ui_gtk_query_import_contacts);
+
+	ui_reg_handler("ui_print_error", ui_gtk_print_error);
+	ui_reg_handler("ui_query_simple", ui_gtk_query_simple);
+	ui_reg_handler("ui_query_three", ui_gtk_query_three);
+
+	ui_reg_handler("ui_popup", ui_gtk_popup);
+
+	ui_reg_handler("ui_query_filechooser", ui_gtk_query_filechooser);
+	ui_reg_handler("ui_query_listchooserx", ui_gtk_query_listchooser);
 
 	return 0;
 }
 
-void
-ui_maemo_close()
+static void
+ui_gtk_close()
 {
 
 }
 
-/* the ui_maemo register */
+/* the ui_gtk register */
 static struct processor_module_s processor_module = 
 {
-	.init = ui_maemo_init,
-	.close = ui_maemo_close,
-	.name = "ui_maemo",
+	.init = ui_gtk_init,
+	.close = ui_gtk_close,
+	.name = "ui_gtk",
 	.depends = "ui",
 };
 
 /* register func */
 void
-ui_maemo_register() 
+ui_gtk_register() 
 {
 	processor_register(&processor_module);
 }

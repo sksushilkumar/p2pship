@@ -35,8 +35,8 @@ if DBUS_ENABLED
 extra_sources += osso_dbus.c
 endif
 
-if MAEMOUI_ENABLED
-extra_sources += ui_maemo.c
+if GTKUI_ENABLED
+extra_sources += ui_gtk.c
 endif
 
 if MC_ENABLED
