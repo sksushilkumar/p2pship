@@ -142,6 +142,7 @@ typedef struct ca_s
 	char *digest;
 
 	X509 *cert;
+	char *cert_cache;
 
 	/* indicates that the ident has changed after being saved /
 	   loaded from file */
@@ -212,6 +213,8 @@ typedef struct buddy_s
 	char *sip_aor;
 	X509 *cert;
 	char *shared_secret;
+
+	char *cert_cache;
 
 	/* this defines whether we should query for a secret or not 
 	   0 - query
@@ -287,6 +290,11 @@ typedef struct ident_s
 
 	RSA *private_key;
 	X509 *cert;
+
+	/* cache of those above */
+	char *private_key_cache;
+	char *cert_cache;
+
 	ship_list_t *buddy_list;
 
 	/* the following are actually service-specific */
@@ -366,7 +374,7 @@ int ident_reg_is_valid(reg_package_t *reg);
 void ident_register();
 
 int ident_load_identities();
-int ident_save_identities();
+int ident_save_identities_now();
 void ident_save_identities_async();
 ship_list_t *ident_get_identities();
 ship_list_t *ident_get_remote_regs();

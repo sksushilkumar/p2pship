@@ -34,10 +34,10 @@ int func_name func_args\
 	}\
 }\
 
-
 void ui_reg_handler(char *func_name, void *func);
 void ui_register();
-void ui_stdin_register();
+
+/* the actual UI calls follows: */
 
 int ui_query_ident_operation(const ident_t *ident, const char *operation, 
 			     const char* true_op, const char *false_op);
@@ -46,12 +46,6 @@ int ui_query_ca_operation(const ca_t *cert, const char *operation,
 			  const char* true_op, const char *false_op);
 
 int ui_open_frontpage();
-
-int _ui_print_error(char *buf);
-
-int _ui_print_import_result(char *buf);
-
-int _ui_popup(char *buf);
 
 int ui_query_import_contacts(ship_list_t *list);
 
@@ -65,6 +59,12 @@ void ui_print_import_result(const char *template, ...);
 
 void ui_print_error(const char *template, ...);
 
-void ui_maemo_register();
+/* new ones: */
+int ui_query_filechooser(const char *header, const char *title, const char *dir, ship_list_t *filetypes, char **ret);
+int ui_query_listchooser(const char *header, const char *title, ship_list_t *options, char **ret);
+
+/* these could be in their own header files */
+void ui_gtk_register();
+void ui_stdin_register();
 
 #endif

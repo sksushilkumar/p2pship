@@ -167,6 +167,7 @@ print_usage()
 #endif
 #ifdef CONFIG_PYTHON_ENABLED
 	USER_ERROR("      --shell                Starts a new Python shell on stdin\n");
+	USER_ERROR("      --console              Usees only console-UI\n");
 	USER_ERROR("      --run [file]           Runs the given script in a Python environment\n");
 #endif
         USER_ERROR("Bug reports to %s\n", PACKAGE_BUGREPORT);
@@ -219,6 +220,7 @@ main(int argc, char **argv)
 	int load_autoreg = 0;
 	int flag_quiet = 0;
 	int log_to_file = 0;
+	int console_only = 0;
 
 	xmlInitParser();
 	xmlInitThreads();
@@ -232,6 +234,7 @@ main(int argc, char **argv)
                         {"threads", required_argument, 0, 0},
                         {"help", no_argument, 0, 0},
                         {"version", no_argument, 0, 0},
+                        {"console", no_argument, 0, 0},
 #ifdef CONFIG_PYTHON_ENABLED
                         {"shell", no_argument, 0, 0},
                         {"run", required_argument, 0, 0},
@@ -303,6 +306,8 @@ main(int argc, char **argv)
                                 c = 'v';
                         } else if (!strcmp(long_options[index].name, "iface")) {
                                 c = 'i';
+                        } else if (!strcmp(long_options[index].name, "console")) {
+				console_only = 1;
 #ifdef CONFIG_PYTHON_ENABLED
                         } else if (!strcmp(long_options[index].name, "shell")) {
 				processor_config_set_true(config, P2PSHIP_CONF_START_SHELL);
@@ -507,10 +512,13 @@ main(int argc, char **argv)
 #ifdef CONFIG_DBUS_ENABLED
 	dbus_register();
 #endif
-#ifdef CONFIG_MAEMOUI_ENABLED
-	ui_maemo_register();
-	processor_init_module("ui_maemo", config);
+
+	if (!console_only) {
+#ifdef CONFIG_GTKUI_ENABLED
+		ui_gtk_register();
+		processor_init_module("ui_gtk", config);
 #endif
+	}
 	addrbook_register();
 #ifdef CONFIG_PYTHON_ENABLED
 	pymod_register();	
@@ -565,12 +573,6 @@ main(int argc, char **argv)
 			if (ident_import_file(action_param, 1)) {
 				USER_ERROR("Error loading processing file %s\n", action_param);
 			}
-
-			/* this is done during the import */
-			/*else if (ident_save_identities()) {
-				USER_ERROR("Error while saving identities\n");
-			}
-			*/
 		}
 		break;
 	}
@@ -588,6 +590,7 @@ main(int argc, char **argv)
 	case ACTION_NONE:
 	default: {
 		struct rlimit rl;
+		int result;
 		
 #ifdef CONFIG_PYTHON_ENABLED
 		if (processor_config_is_true(config, P2PSHIP_CONF_START_SHELL))
@@ -600,9 +603,6 @@ main(int argc, char **argv)
 		}
 		
 		/* check the stack size */
-		
-		int result;
-
 		if (!(result = getrlimit(RLIMIT_STACK, &rl))) {
 			const rlim_t stacksize = 32L * 1024L * 1024L;
 			if (rl.rlim_cur < stacksize) {

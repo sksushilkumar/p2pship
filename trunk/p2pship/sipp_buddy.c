@@ -160,7 +160,7 @@ int
 sipp_buddy_handle_subscribe(ident_t *from, char *to, int expire, char *callid)
 {
 	int ret = __sipp_buddy_handle_subscribe(from, to, expire, callid);
-	processor_run_async(ident_save_identities_async);
+	ident_save_identities_async();
 	if (!ret)
 		return sipp_buddy_perform_buddylist_update(from);
 	return ret;
@@ -185,7 +185,7 @@ sipp_buddy_handle_subscribes(ident_t *from, char **to, int expire, char *callid)
 		ret = __sipp_buddy_handle_subscribe(from, to[i++], expire, callid);
 	}
 	
-	processor_run_async(ident_save_identities_async);
+	ident_save_identities_async();
 
 	if (!ret)
 		return sipp_buddy_perform_buddylist_update(from);

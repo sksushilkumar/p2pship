@@ -37,10 +37,12 @@
 /* the pp packets */
 #define PP_MSG_ACK 1
 #define PP_MSG_SUGGEST 2
+#define PP_MSG_SUGREQ 3
 
 #define IDENT_PUBLISH_INTERVAL (5*60)
 
 ship_obj_list_t *identities = 0;
+static int ident_identities_need_saving = 0;
 static ship_list_t *foreign_idents = 0;
 static ship_list_t *cas = 0;
 
@@ -281,7 +283,6 @@ ident_pp_start_negotiation(ident_t *ident, buddy_t *peer)
 			/* convert those bytes into something readable.. */
 			for (i = 0; i < 10; i++)
 				sugg[i] = crypt_arr[sugg[i] % strlen(crypt_arr)];
-			freez(peer->my_suggestion);
 			peer->my_suggestion = sugg;
 		}
 	}
@@ -335,7 +336,7 @@ ident_handle_bloombuddy_message(char *data, int data_len,
 	}
 
 	/* save these to disk */
-	processor_run_async((void (*)(void))ident_save_identities);
+	ident_save_identities_async();
  err:
 	ship_bloom_free(bloom);
 	return 0;
@@ -401,6 +402,10 @@ ident_handle_privacy_pairing_message(char *data, int data_len,
 	ASSERT_TRUE(peer = ident_buddy_find(target, source), err);
 	
 	switch (msg_type) {
+	case PP_MSG_SUGREQ:
+		ident_pp_start_negotiation(target, peer);
+		ret = 0;
+		break;
 	case PP_MSG_ACK:
 		/* acks: if I have in use the same, do nothing, else
 		   create suggest & send */
@@ -409,12 +414,13 @@ ident_handle_privacy_pairing_message(char *data, int data_len,
 		
 		if (!param || !peer->shared_secret || strcmp(peer->shared_secret, param)) {
 			//printf("got ack .. but isn't working! '%s', when param was '%s'\n", peer->shared_secret, param);
+			ident_pp_send_message(target->sip_aor, source,
+					      PP_MSG_SUGREQ, "");
 			ident_pp_start_negotiation(target, peer);
 		} else if (peer->my_suggestion) {
 			/* save & use */
 			LOG_DEBUG("got confirm for new secret for %s -> %s: %s\n",
 				  target->sip_aor, source, peer->shared_secret);
-			freez(peer->my_suggestion);
 		} else {
 			LOG_DEBUG("got confirm for old secret %s -> %s: %s\n",
 				  target->sip_aor, source, peer->shared_secret);
@@ -448,8 +454,8 @@ ident_handle_privacy_pairing_message(char *data, int data_len,
 		/* save */
 		LOG_DEBUG("using new secret for %s -> %s: %s, saving (async)\n",
 			  target->sip_aor, source, peer->shared_secret);
-		processor_run_async((void (*)(void))ident_save_identities);
-		processor_run_async((void (*)(void))ident_reregister_all);
+		ident_save_identities_async();
+		ident_reregister_all();
 		ret = 0;
 		break;
 	default:
@@ -652,11 +658,12 @@ ident_get_cas()
 void
 ident_save_identities_async()
 {
-	ident_save_identities();
+	/* we let the periodic poller take care of this one as well! */
+	ident_identities_need_saving = 1;
 }
 
 int
-ident_save_identities()
+ident_save_identities_now()
 {
 	int ret = -1;
 	char *data = NULL;
@@ -667,6 +674,8 @@ ident_save_identities()
 	void *ptr = 0, *last = 0, *tmp_file = 0;
 	
 	LOG_INFO("Saving identites & ca's\n");
+
+	TODO("implement some sort of delay here, collect the whatever we have and save. -> run this periodically with only a 'update' flag somewhere!\n");
 
 	ship_lock(identities);
 	ship_lock(cas);
@@ -712,6 +721,7 @@ ident_save_identities()
 	f = NULL;
 
 	ASSERT_TRUE(rename(tmp_file, idents_file) != -1, err);
+	ident_identities_need_saving = 0;
 	ret = 0;
  err:
 	if (f)
@@ -833,6 +843,7 @@ ident_get_issuer_ca(X509 *cert)
 	if ((key = ident_data_x509_get_issuer_digest(cert))) {
 		char *tmp = ident_data_x509_get_cn(X509_get_issuer_name(cert));
 		LOG_DEBUG("Finding CA for issuer '%s'\n", tmp);
+
 		freez(tmp);
 		ret = ident_find_ca_by_digest(key);
 	} else {
@@ -1012,7 +1023,7 @@ ident_register_new_empty_ident(char *sip_aor)
 		ship_obj_list_add(identities, ret);
  		ship_restrict_locks(ret, identities);
 
-		processor_run_async((void (*)(void))ident_save_identities);
+		ident_save_identities_async();
 	}
 	goto end;
  err:
@@ -1353,6 +1364,10 @@ ident_update_registration_periodic(void *data)
 		}
 	}
 	ship_unlock(identities);
+
+	if (ident_identities_need_saving)
+		ident_save_identities_now();
+
 	return 0;
 }
 
@@ -1439,7 +1454,7 @@ ident_ol_getsub_for_buddy_by_aor(ident_t *ident, const char *buddy_aor, const ch
 {
 	int get_open = 1;
 	buddy_t *buddy = NULL;
-	
+
 	/* check shared secrets etc */
 	buddy = ident_buddy_find(ident, buddy_aor);
 
@@ -1632,7 +1647,8 @@ ident_reregister_all()
 			/* update if it seems that we have *any* services that might be
 			   outdated or not.. */
 			if (ship_list_length(temp_ident->services)) {
-				ident_update_registration(temp_ident);
+				/* we let the periodic poller take care of it */
+				temp_ident->published = 0;
 			}
 			ship_unlock(temp_ident);
 		}
@@ -1716,7 +1732,7 @@ ident_update_buddy_cert(void *aor, processor_task_t **wait, int wait_for_code)
 		ship_unlock(ident);
 	}
 	ship_unlock(identities);
-	ident_save_identities();
+	ident_save_identities_async();
  err:
 	if (reg) 
 		ship_unlock(reg);
@@ -1776,7 +1792,7 @@ ident_cert_is_trusted(X509 *cert)
 		ship_unlock(ca);
 		if (!match) {
 			LOG_WARN("Registration package wasn't signed by the CA it claimed!\n");
-			goto err;
+			goto check2;
 		} else
 			ret = 1;
 	} else {
@@ -1787,6 +1803,7 @@ ident_cert_is_trusted(X509 *cert)
 		}
 	}
 			
+ check2:
 	if (!ret) {
 		int lev = -1;
 #ifdef CONFIG_BLOOMBUDDIES_ENABLED
@@ -1806,7 +1823,7 @@ ident_cert_is_trusted(X509 *cert)
 		ship_unlock(identities);
 #endif		
 		if (!ident_trust_friends || lev < 1) {
-			ASSERT_TRUES(ident_allow_untrusted, err, "Could not establish trust in the cert\n");
+			ASSERT_TRUES(ident_allow_untrusted, err, "We don't accept untrusted certificates\n");
 		} else
 			ret = 1;
 	}
@@ -1855,7 +1872,7 @@ ident_import_foreign_reg(reg_package_t *reg)
 		now = time(NULL);
 		
 		/* still valid? (the reg package) */
-		ASSERT_TRUE(((reg->created - TIME_APPROX) <= now) && ((reg->valid + TIME_APPROX) >= now), err);
+		ASSERT_TRUES(((reg->created - TIME_APPROX) <= now) && ((reg->valid + TIME_APPROX) >= now), err, "registration package expired.");
 	}
 	
 	ASSERT_TRUE(ident_remote_cert_is_acceptable(reg->cert), err);
@@ -1950,6 +1967,7 @@ ident_cb_lookup_registration(char *key, char *buf, char *signer, void *param, in
                 reg_package_t *reg = NULL;
 		LOG_VDEBUG("Got data: '%s'\n", buf);
 		ASSERT_ZEROS(ident_reg_xml_to_struct(&reg, buf), err, "Malformatted reg package '%s'!\n", buf);
+		//ASSERT_ZEROS(ident_reg_xml_to_struct(&reg, buf), err, "Malformatted reg package!\n");
 		ASSERT_TRUE(sip_aor = strdupz(reg->sip_aor), err);
 		
                 if (reg && !ident_import_foreign_reg(reg)) {
@@ -2104,7 +2122,7 @@ ident_remove_ca(char *name)
 		USER_ERROR("No CA found matching %s\n", name);
 	}
 
-	if (count && ident_save_identities()) {
+	if (count && ident_save_identities_now()) {
 		LOG_ERROR("Error while saving identities\n");
 		return -1;
 	}
@@ -2124,7 +2142,7 @@ ident_remove_ident(char *name)
 	if (count < 0)
 		goto err;
 
-	if (count && ident_save_identities()) {
+	if (count && ident_save_identities_now()) {
 		LOG_ERROR("Error while saving identities\n");
 	}
  err:
@@ -2213,7 +2231,7 @@ ident_import_mem(char *data, int datalen, int query, int modif)
 
 	/* create some sort of result message summarizing the imports */
 	if (ccount || icount || concount) {
-		if (ident_save_identities()) {
+		if (ident_save_identities_now()) {
 			if (query)
 				ui_print_error("Error while saving identities!\n");
 		} else {

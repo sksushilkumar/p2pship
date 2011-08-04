@@ -329,9 +329,6 @@ processor_shutdown()
 		LOG_DEBUG("interrupting all workers..\n");
 		COND_WAKEUP_ALL(processor_tasks_cond, processor_tasks_lock);
 		LOG_DEBUG("interrupted\n");
-#ifdef CONFIG_START_GTK
-		gtk_main_quit();
-#endif
 	} else {
 		LOG_WARN("forcing exit\n");
 		exit(0);
@@ -464,6 +461,24 @@ processor_get_config()
 	return pconfig;
 }
 
+#ifdef CONFIG_START_GTK
+static void
+processor_gtk_run(processor_worker_t *w)
+{
+	/* this should be in its own thread! */
+	LOG_INFO("starting gtk main loop..\n");
+	gtk_main();
+	gdk_threads_leave();
+}
+
+static void
+processor_gtk_kill(processor_worker_t* w)
+{
+	LOG_INFO("terminating gtk main loop..\n");
+	gtk_main_quit();
+}
+#endif
+
 /* Starts up the processor */
 int 
 processor_init(processor_config_t *config)
@@ -495,16 +510,17 @@ processor_init(processor_config_t *config)
 
         /* if more than 1 thread, create those */
         if (!processor_config_get_int(pconfig, P2PSHIP_CONF_WORKER_THREADS, &worker_threads)) {
-	    
-#ifdef CONFIG_START_GTK
-		/* if gtk should be started, reserve one thread for it */
-		worker_threads++;
-#elif CONFIG_PYTHON_ENABLED
+#if CONFIG_PYTHON_ENABLED
 		if (processor_config_is_true(config, P2PSHIP_CONF_START_SHELL))
 			worker_threads++;
 #endif
 	}
-	
+
+#ifdef CONFIG_START_GTK
+	LOG_INFO("Starting dedicated gtk thread..\n");
+	ASSERT_ZERO(processor_create_worker("gtk", processor_gtk_run, NULL, processor_gtk_kill), err);
+#endif
+
         processor_alive = 1;
         return 0;
  err:
@@ -857,9 +873,7 @@ int
 processor_run()
 {
         int i, ret = -1;
-#ifndef CONFIG_START_GTK
 	struct processor_worker_s main_w = { .thread = 0, .name = "main-0" };
-#endif
 
 	USER_ERROR("proxy initialized ok\n");
         
@@ -880,12 +894,7 @@ processor_run()
 	ASSERT_ZERO(pymod_start_plugins(), err);
 #endif
         
-#ifdef CONFIG_START_GTK
-	/* this should be run in another thread .. */
-        LOG_INFO("processor [%s] dedicated to gtk\n", "main-0");
-	gtk_main();
-	gdk_threads_leave();
-#elif CONFIG_PYTHON_ENABLED
+#if CONFIG_PYTHON_ENABLED
 	if (processor_config_is_true(processor_get_config(), P2PSHIP_CONF_START_SHELL))
 		pymod_shell();
 	else

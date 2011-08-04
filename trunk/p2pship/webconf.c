@@ -185,7 +185,7 @@ webconf_process_req(netio_http_conn_t *conn, void *pkg)
 				ident_import_mem(buf, strlen(buf), 0, MODIF_NEW);
 			}
 		} else if (strstr(conn->url, "/save_idents")) {
-			if (ident_save_identities()) {
+			if (ident_save_identities_now()) {
 				LOG_ERROR("Error while saving identities\n");
 				redir = 0;
 			}

@@ -43,7 +43,6 @@
 #define P2PSHIP_CONF_AUTOREG_FILE "autoreg_file"
 #define P2PSHIP_CONF_LOG_FILE "log_file"
 #define P2PSHIP_CONF_WEB_DIR "web_dir"
-#define P2PSHIP_CONF_DATA_DIR "data_dir"
 
 #define P2PSHIP_CONF_CONTACTS_FILE "contacts_log"
 #define P2PSHIP_CONF_WHITELIST_FILE "whitelist_file"
@@ -192,6 +191,7 @@ int processor_config_bool(processor_config_t *config, const char *key);
 void processor_config_remove(processor_config_t *config, const char *key);
 
 int processor_config_is_valid_key(char *key);
+int processor_config_is_nosave(char *key);
 
 /* check if we have a key .. */
 int processor_config_has_key(processor_config_t *config, const char *key);

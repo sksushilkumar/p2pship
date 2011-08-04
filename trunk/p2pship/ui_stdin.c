@@ -163,6 +163,42 @@ ui_stdin_query_three(char *header, char *body, char *one_op, char *two_op, char 
 	return len;
 }
 
+static int 
+ui_stdin_query_filechooser(const char *header, const char *title, const char *dir, ship_list_t *filetypes, char **ret)
+{
+	size_t len = 0;
+	char *buf = NULL;
+	
+	USER_PRINT("%s: %s\n", header, title);
+
+	while (1) {
+		USER_PRINT("Enter file name (empty for cancel): ");
+		
+		getline(&buf, &len, stdin);
+		trim(buf);
+		
+		if (strlen(buf) < 1) {
+			freez(buf);
+			return -1;
+		}
+		
+		if (ship_file_exists(buf)) {
+			*ret = buf;
+			break;
+		} else {
+			USER_PRINT("File '%s' does not exist!\n", buf);
+		}
+	}
+
+	return 0;
+}
+
+static int
+ui_stdin_query_listchooser(const char *header, const char *title, ship_list_t *options, char **ret)
+{
+	return -1;
+}
+
 int
 ui_stdin_init(processor_config_t *config)
 {
@@ -174,6 +210,10 @@ ui_stdin_init(processor_config_t *config)
 	ui_reg_handler("ui_query_simple", ui_stdin_query_simple);
 	ui_reg_handler("ui_query_three", ui_stdin_query_three);
 	ui_reg_handler("ui_popup", ui_stdin_print_import_result);
+
+	ui_reg_handler("ui_query_filechooser", ui_stdin_query_filechooser);
+	ui_reg_handler("ui_query_listchooser", ui_stdin_query_listchooser);
+
 	return 0;
 }
 

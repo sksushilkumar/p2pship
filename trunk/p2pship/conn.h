@@ -80,6 +80,9 @@ typedef struct conn_connection_s {
 
 	/* the last addr used. This is NOT owned by this, just used for pointer comparison! */
 	void *last_addr;
+
+	/* whether this connection was made or got */
+	int remotely_got;
 } 
 conn_connection_t;
 
@@ -215,37 +218,5 @@ int conn_send_mp_to(char *sip_aor, ident_t *ident,
 #ifdef CONFIG_HIP_ENABLED	
 int conn_connection_uses_hip(char *remote_aor, char *local_aor);
 #endif
-
-/*
- * data packet 
- */
-typedef struct conn_packet_s {
-	ship_obj_t parent;
-
-	char *to;
-	char *from;
-	ident_t *ident;
-
-	int type;
-	service_type_t service;
-	char *data;
-	int data_len;
-
-	char *pkg_id;
-	int flags;
-	int is_ack;
-
-	time_t sent;
-	void *ptr;
-	conn_packet_callback callback;
-	int code;
-
-	char *return_data;
-	int return_data_len;
-
-} conn_packet_t;
-
-SHIP_INCLUDE_TYPE(conn_packet);
-int conn_packet_serialize(conn_packet_t *p, char **retv, int *len);
 
 #endif
