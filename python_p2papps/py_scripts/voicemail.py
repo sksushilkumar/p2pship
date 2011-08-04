@@ -70,6 +70,11 @@ class Voicemail:
         self.heard = False
         self.local_id = -1
 
+        self.last_fetch = 0
+        self.fetching = False
+        self.fetch_count = 0
+        self.in_error = False
+
     def dump(self):
         return pickle.dumps((self.id, self.from_aor, self.to_aor, self.created, self.expires, self.storage))
 
@@ -100,10 +105,35 @@ class VoicemailInvite:
         self.received = time.time()
 
     def remove(self):
-        print "todo: del all the invite files i may have.."
+
+        for l in self.local_greetings:
+            os.remove(l)
+        self.local_greetings = []
+
 
     def is_valid(self):
+
+        if time.time() > self.expire:
+            return False
         return True
+
+    def is_more_valid_than(self, oldinv):
+
+        if oldinv is None or not oldinv.is_valid() and self.is_valid():
+            return True
+
+        if not self.is_valid():
+            return False
+
+        return self.created > oldinv.created
+
+    def should_update(self):
+
+        # check for updates once an hour
+        if not self.is_valid() or (time.time() - self.received) > (60*60) or len(self.local_greetings) == 0:
+            return True
+        else:
+            return False
 
     def add_accept(self, mediatype, size):
         self.accept.append((mediatype, size))
@@ -140,10 +170,13 @@ class CallHandler:
 
         (self.target, self.initiator) = invite.get_real_to_from()
 
-        self.local_aor = parse_aor(invite.sfrom)
-        self.remote_aor = parse_aor(invite.sto)
-        if self.invite.is_remote:
-            (self.local_aor, self.remote_aor) = (self.remote_aor, self.local_aor)
+        self.local_aor = invite.local_aor
+        self.remote_aor = invite.remote_aor
+
+        #self.local_aor = parse_aor(invite.sfrom)
+        #self.remote_aor = parse_aor(invite.sto)
+        #if self.invite.is_remote:
+        #    (self.local_aor, self.remote_aor) = (self.remote_aor, self.local_aor)
 
         self.man = get_voicemail_manager(self.local_aor)
 
@@ -579,8 +612,7 @@ class VoicemailPlaybackCallHandler(FilePlaybackCallHandler):
 
 
 class VoicemailRequestHandler(SipHandler):
-    """Request processor, post-processor of local messages. This
-    captures only the initial INVITEs coming from the local host as"""
+    """Request processor, post-processor of local messages."""
 
 
     # we capture responses only in the filter, as we're only
@@ -606,9 +638,13 @@ class VoicemailRequestHandler(SipHandler):
 
         h = calls.get(req.callid)
         if config.enabled() and h is None and req.msg_type == "INVITE":
-            h = UserCallHandler(req)
-            calls[req.callid] = h
-
+            try:
+                h = UserCallHandler(req)
+                calls[req.callid] = h
+            except Exception, ex:
+                warn("Could not track call for %s: %s" % (req.local_aor, str(ex)))
+                raise ex
+            
         if h is not None:
             return h.handle_request(req)
 
@@ -651,13 +687,13 @@ class VoicemailManager(SipHandler):
         self.filter_duplicates = False
         self.aor = aor
         self.presence_subscriptions = {}
-        if not load:
-            self.timeout = 0
-            self.start = time.time()
-            self.invitations = {}
-            self.own = []
-            self.announced = {}
-        else:
+        self.timeout = 0
+        self.start = time.time()
+        self.invitations = {}
+        self.own = []
+        self.own_lookup = {}
+        self.announced = {}
+        if load:
             self.load()
 
         self.my_aor = config.get("voicemail_prefix", "voicemail") + "@" + self.aor[self.aor.find("@")+1:]
@@ -666,6 +702,8 @@ class VoicemailManager(SipHandler):
         self.subscribes = {}
         self.resubscribe()
         self.reannounce()
+
+        p2pship.call_periodically(self.update, None, 60000)
 
     def is_friend(self, aor):
         buddy = self.ident.buddies.get(aor, None)
@@ -703,7 +741,7 @@ class VoicemailManager(SipHandler):
             filename = get_datadir() + "/manager_" + self.aor
             f = open(filename, "w")
 
-            data = (self.aor, self.timeout, self.start, self.invitations, self.own, self.announced, self.presence_subscriptions)
+            data = (self.aor, self.timeout, self.start, self.invitations, self.own, self.own_lookup, self.announced, self.presence_subscriptions)
             pickle.dump(data, f)
             f.close()
         except Exception, ex:
@@ -713,14 +751,29 @@ class VoicemailManager(SipHandler):
         try:
             filename = get_datadir() + "/manager_" + self.aor
             f = open(filename, "r")
-            (self.aor, self.timeout, self.start, self.invitations, self.own, self.announced, self.presence_subscriptions) = pickle.load(f)
+            (self.aor, self.timeout, self.start, self.invitations, self.own, self.own_lookup, self.announced, self.presence_subscriptions) = pickle.load(f)
             f.close()
+
+            for v in self.own:
+                if v.local is None:
+                    v.fetching = False
+                    v.last_fetch = 0
+
+                try:
+                    # for backwards compability with older voicemail.py instances..
+                    v.fetch_count
+                    v.in_error
+                except Exception:
+                    v.fetch_count = 0
+                    v.in_error = False
+
         except Exception, ex:
             warn("Couldn't read voicemail manager state! %s" % str(ex))
         
-    def update(self):
+    def update(self, data = None):
         self.register(self.start + self.timeout - time.time())
         self.resubscribe()
+        self.check_refetch()
 
     def register(self, timeout):
         """handles a registration. timeout is in seconds. -1 for
@@ -811,7 +864,8 @@ class VoicemailManager(SipHandler):
         peer. Unless a valid cached copy exists!"""
 
         inv = self.invitations.get(remote_aor)
-        if inv is not None and inv.is_valid():
+        if inv is not None and inv.is_valid() and not inv.should_update():
+            info("greeting for %s seems to be ok, keeping it." % remote_aor)
             return
         
         info("initiating fetch by %s for %s's greeting" % (self.aor, remote_aor))
@@ -821,25 +875,33 @@ class VoicemailManager(SipHandler):
 
         if from_aor != remote_aor:
             warn("Invitation for %s got from another peer (%s)" % (remote_aor, from_aor))
-
+            return
+        
         inv = VoicemailInvite()
         try:
             inv.load(data)
-            info("voicemail invitation got from %s for %s!" % (from_aor, remote_aor))
         except Exception, ex:
             warn("Invalid voicemail invitation got for %s: %s" % (remote_aor, str(ex)))
             return
 
-        if not inv.is_valid():
-            # what should we do now?
-            pass
+        oldinv = self.invitations.get(remote_aor)
+        if oldinv is None:
+            if not inv.is_valid():
+                warn("Invitation got was invalid, but using as no better exists!")
+            else:
+                info("Storing voicemail invitation for %s" % remote_aor)
+        elif inv.is_more_valid_than(oldinv):
+            info("Updating voicemail invitation for %s" % remote_aor)
+            oldinv.remove()
+        else:
+            info("Ignoring voicemail invitation for %s, as we already have a better one" % remote_aor)
+            return
 
-        
         self.invitations[remote_aor] = inv
         for g in inv.greetings:
 
             (typ, src, val) = g
-            info("got invitation type %s, src %s, value %s" % (str(typ), str(src), str(val)))
+            debug("got invitation type %s, src %s, value %s" % (str(typ), str(src), str(val)))
 
             if typ == "text/plain":
                 # do voice synthesis..
@@ -858,7 +920,7 @@ class VoicemailManager(SipHandler):
     def greeting_resource_got(self, src, data, inv):
 
         if data is not None and len(data) > 0:
-            info("We got data from %s, len %d" % (src, len(data)))
+            debug("We got data from %s, len %d" % (src, len(data)))
             fn = get_tmpfile()
             f = open(fn, "w")
             f.write(data)
@@ -876,7 +938,7 @@ class VoicemailManager(SipHandler):
         if src.startswith("p2p://"):
             addr = src[6:].split("/", 1)
             if len(addr) == 2:
-                info("fetching p2p resource %s from %s.." % (addr[1], addr[0]))
+                debug("fetching p2p resource %s from %s.." % (addr[1], addr[0]))
                 p2pship.resourcefetch_get(addr[0], addr[1], self.aor, self.resource_got, (src, callback, data))
                 return True
             else:
@@ -903,19 +965,44 @@ class VoicemailManager(SipHandler):
             else:
                 ret += 1
 
+
+    def check_refetch(self):
+
+        for v in self.own:
+            if v.local is not None or v.fetching or (time.time()-v.last_fetch < (15 * 60)):
+                continue
+            self.initiate_fetch(v)
+
+
     def add_voicemail(self, v):
         v.local_id = self.get_local_id()
         self.own.append(v)
+        oldv = self.own_lookup.get(v.from_aor)
+        if oldv is None:
+            oldv = {}
+            self.own_lookup[v.from_aor] = {}
+        oldv[v.id] = True
+
         self.update_presence()
 
         if v.local is not None:
-            self.send_im("New voicemail [%d] from %s!" % (v.local_id, v.from_aor))
+            self.notify_user("New voicemail [%d] from %s!" % (v.local_id, v.from_aor))
+
+    def notify_user(self, msg):
+
+        t = config.get("voicemail_notify", "both")
+        if t == "popup" or t == "both":
+            p2pship.ui_popup(msg)
+        if t == "im" or t == "both":
+            self.send_im(msg)
 
 
     def voicemail_resource_got(self, src, data, v):
 
         if data is None or len(data) == 0:
-            self.send_im("Couldn't get voicemail from %s!" % v.from_aor)
+            if not v.in_error:
+                self.notify_user("Couldn't get voicemail from %s!" % v.from_aor)
+            v.in_error = True
         else:
             filename = get_tmpfile()
             f = open(filename, "w")
@@ -923,8 +1010,10 @@ class VoicemailManager(SipHandler):
             f.close()
 
             v.local = filename
-            self.send_im("New voicemail [%d] from %s!" % (v.local_id, v.from_aor))
+            v.in_error = False
+            self.notify_user("New voicemail [%d] from %s!" % (v.local_id, v.from_aor))
             self.update_presence()
+        v.fetching = False
 
         self.save()
 
@@ -944,25 +1033,27 @@ class VoicemailManager(SipHandler):
         if v.to_aor != self.aor:
             warn("Voicemail was not intended for us (for %s)" % v.to_aor)
         
-        for ov in self.own:
-            if ov.id == v.id:
-                info("Skipping voicemail %s as we already have it!" % v.id)
-                v = None
-                break
-
+        oldv = self.own_lookup.get(from_aor)
+        if oldv is not None and oldv.has_key(v.id):
+            info("Skipping voicemail %s as we already have it!" % v.id)
+            v = None
+        
         if v is None:
             return
 
-        # .. this needs to be updated ..
-        fetched = False
+        self.initiate_fetch(v)
+        self.add_voicemail(v)
+
+    def initiate_fetch(self, v):
+
+        v.fetching = False
         for sub in v.storage:            
             if self.fetch_resource(sub['src'], self.voicemail_resource_got, v):
-                fetched = True
+                v.fetch_count += 1
+                v.fetching = True
+                v.last_fetch = time.time()
             else:
                 warn("Couldn't fetch url: %s" % sub['src'])
-
-        if fetched:
-            self.add_voicemail(v)
 
 
     #
@@ -1026,7 +1117,7 @@ class VoicemailManager(SipHandler):
         m = self.context.create_message(self.aor, note)
         if from_aor is not None:
             m.set_sfrom_aor(from_aor)
-        m.send(as_remote = True)
+        m.send(as_remote = True, filter = False)
 
     def handle_im(self, msg, remote_aor):
 
@@ -1038,8 +1129,12 @@ class VoicemailManager(SipHandler):
             for v in self.own:
                 if not v.heard:
                     ret += "[%d] From %s, recorded %s" % (v.local_id, v.from_aor, str(v.created))
-                    if v.local is None:
+                    if v.in_error:
+                        ret += " (error fetching recording after %d tries)\n" % v.fetch_count
+                    elif v.fetching:
                         ret += " (fetching data..)\n"
+                    elif v.local is None:
+                        ret += " (no recording yet..)\n"
                     else:
                         ret += "\n"
             if len(ret) == 0:
@@ -1200,6 +1295,8 @@ class VoicemailConfigHandler(ConfigHandler):
         self.create("voicemail_busy", "Enable incoming (busy) voicemail", "bool", "yes")
         self.create("voicemail_rejected", "Enable offline voicemail when call is rejected", "bool", "yes")
         self.create("voicemail_type", "Type of voicemail: for local caller only, remote caller only or both.", "enum:local,remote,both", "both")
+
+        self.create("voicemail_notify", "Notifications through IM, popups or both.", "enum:none,im,popup,both", "both")
 
         self.create("voicemail_greeting", "Voicemail greeting string", "string", "Hello and please leave a message.")
         self.create("voicemail_greeting_file", "Voicemail greeting audio", "file", "")
