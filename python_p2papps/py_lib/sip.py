@@ -471,7 +471,6 @@ class SipContext:
             msg.set_context(self)
             if self.handler.filter_duplicates and self.handler.is_seen(msg):
                 if self.verbose():
-                    print "self: %s" % str(self.handler)
                     info("skipping already seen message..")
                 return None
             
@@ -687,7 +686,6 @@ class SipFilter(SipHandler):
     AC_VERDICT_UNSUPP = 5
 
     def __init__(self):
-        print "*********** adding"
         info("Adding a SIP filter, class %s" % self.__class__.__name__)
         p2pship.ac_add_filter(self.ac_msg_got)
         self.contexts = {}
