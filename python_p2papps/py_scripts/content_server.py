@@ -4,7 +4,6 @@
 import p2pship
 import md5
 
-appid = "42f09180-a39a-11df-aeee-001c259d03e9"
 # get the default identity for this
 ident = Ident()
 #aor = "@"
@@ -18,19 +17,11 @@ class ContentServer(FileServerHandler):
         if len(message) > 30:
             message = message[0:30]
         if popup:
-            try:
-                import pynotify
-                if pynotify.init("OP Server"):
-                    n = pynotify.Notification(title, message)
-                    n.set_timeout(1000)
-                    n.show()
-            except Exception, ex:
-                pass
-        print title + ": " + message
+            p2pship.ui_popup(title + ":\n" + message)
+        info(title + ": " + message)
 
     def post(self, request):
         self.get(request)
-
 
     def share_cb(res, request):
         if res:
@@ -39,20 +30,21 @@ class ContentServer(FileServerHandler):
             request.respond(400, "fail", "")
         
     def get(self, request):
-        print "Got a content request for " + request.url
+        info("Got a content request for " + request.url)
         requester = request.headers['X-P2P-From']
         if request.url == "/addcontent":
 
             file_type = request.get_param("type")
-            suff = None
+            suff = ("*.*", )
             if file_type == "image":
-                suff = [ ["*.jpg", "*.jpeg", "*.png", "*.gif", "Image files"] ]
+                suff = ( "*.jpg", "*.jpeg", "*.png", "*.gif" )
                 
             name = None
             title = "Request to share"
             msg = request.headers['X-P2P-From'] + " is requesting you to share content of type "+str(file_type)+ ". Do you want to do that?"
-            if ccbox(msg, title):
-                name = fileopenbox(msg="Choose file", title="Choose a file to share", default='~/*', filetypes=suff)
+
+            if p2pship.ui_query_simple(title, msg, "Yes", "No") != 0:
+                name = p2pship.ui_query_filechooser("Choose a file to share", "Choose file", "~/", suff)
 
             if name is not None:
                 cid = md5.new(name).hexdigest()
@@ -63,10 +55,13 @@ class ContentServer(FileServerHandler):
                 buddies = []
                 for b in ident.buddies.values():
                     buddies.append( b.aor )
+
+                # easygui multchoicebox
+                """
                 sel = multchoicebox("Please select the peers with which you want to share this content",
                                     "Select peers", buddies);
                 self.access_map[cid] = sel
-
+                """
                 # todo: publish the data to the overlay?
                 
             else:
@@ -82,8 +77,8 @@ class ContentServer(FileServerHandler):
                 allow = True
             except Exception, ex:
                 pass
-            
-            if self.key_map.has_key(cid) and (allow or ccbox(request.headers['X-P2P-From'] + " wants to have a look at your stuff. allow?", "Allow access?")):
+
+            if self.key_map.has_key(cid) and (allow or (p2pship.ui_query_simple("Allow access?", request.headers['X-P2P-From'] + " wants to have a look at your stuff. allow?", "Allow", "Reject") != 0)):
                 if not allow:
                     ac.append(request.headers['X-P2P-From'])
                     self.access_map[cid] = ac
@@ -95,7 +90,7 @@ class ContentServer(FileServerHandler):
             # small info popup
             msg = request.get_param("msg", "")
             if msg != "":
-                buttonbox(msg, "Message from " + requester, ("Ok", ))
+                p2pship.ui_popup("Message from " + requester + ": " + msg)
                 request.respond(200, "Ok", "Ok")
             else:
                 request.respond(400, "Error", "Error")
@@ -106,7 +101,11 @@ class ContentServer(FileServerHandler):
             yes = request.get_param("yes", "Yes")
             no = request.get_param("no", "No")
             if msg != "":
-                ret = buttonbox(msg, "Query from " + requester, (yes, no))
+                ret = p2pship.ui_query_simple("Query from " + requester, msg, yes, no)
+                if ret != 0:
+                    ret = yes
+                else:
+                    ret = no
                 request.respond(200, "Ok", ret)
             else:
                 request.respond(400, "Error", "Error")
@@ -116,6 +115,7 @@ class ContentServer(FileServerHandler):
         else:
             request.respond(404, "not found", "")
 
+    appid = "42f09180-a39a-11df-aeee-001c259d03e9"
     key_map = PersistentDict(appid, "files")
     access_map = PersistentDict(appid, "access")
 
@@ -136,4 +136,3 @@ try:
 except Exception, ex:
     warn("Error while starting content server at %s: %s" % (str(http_address), str(ex)))
          
-#ship_start_ui()
