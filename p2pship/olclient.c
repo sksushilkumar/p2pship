@@ -520,7 +520,10 @@ olclient_subscribe_poll_cb(char *val, int status, olclient_get_task_t *task)
 	if (!val || status < 0 || strlen(val) < 1)
 		return;
 
-	olclient_cb_get(val, 1, task);
+	if (task->old_callback)
+		task->old_callback(val, 1, task);
+	else
+		olclient_cb_get(val, 1, task);
 }
 
 static int 
@@ -534,8 +537,15 @@ olclient_subscribe_poll(void* data)
 
 	//ship_lock(pollers);
 	while ((task = ship_list_next(pollers, &ptr))) {
+
 		task->callback = olclient_subscribe_poll_cb;
-		task->mod->get(task->lookup->key, task);
+		//if ((task->lookup->extra->verify_flags & VERIFY_SIGNER) && 
+		//    task->lookup->extra->signer && task->mod->get_signed) {
+		if (!task->old_callback) {
+			task->mod->get_signed(task->lookup->key, task->lookup->extra->signer, task);
+		} else {
+			task->mod->get(task->lookup->key, task);
+		}
 	}
 	//ship_unlock(pollers);
 	return 0;
@@ -547,8 +557,21 @@ olclient_subscribe_bypoll(char *key, olclient_get_task_t *task)
 	ship_obj_list_add(pollers, task);
 	
 	/* do one immediately */
+	task->old_callback = task->callback;
 	task->callback = olclient_subscribe_poll_cb;
 	task->mod->get(task->lookup->key, task);
+	return 0;
+}
+
+static int
+olclient_subscribe_signed_bypoll(char *key, olclient_signer_t *signer, olclient_get_task_t *task)
+{
+	ship_obj_list_add(pollers, task);
+	
+	/* do one immediately */
+	task->old_callback = NULL;
+	task->callback = olclient_subscribe_poll_cb;
+	task->mod->get_signed(task->lookup->key, signer, task);
 	return 0;
 }
 
@@ -556,7 +579,8 @@ static int
 olclient_unsubscribe_bypoll(olclient_get_task_t *task)
 {
        	if (ship_obj_list_remove(pollers, task)) {
-		task->callback(NULL, 0, task);
+		//task->callback(NULL, 0, task);
+		olclient_cb_get(NULL, 0, task);
 	}
 	return 0;
 }
@@ -588,6 +612,10 @@ olclient_get_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 				fetch = olclient_subscribe_bypoll;
 				LOG_DEBUG("using polling to simulate subscribe for %s..\n", mod->name);
 			}
+			if (!fetch_signed && mod->get_signed) {
+				fetch_signed = olclient_subscribe_signed_bypoll;
+				LOG_DEBUG("using polling to simulate signed subscribe for %s..\n", mod->name);
+			}
 		}
 
 		ship_obj_list_add(l->tasks, task);		
@@ -595,6 +623,7 @@ olclient_get_entry_do(void *data, processor_task_t **wait, int wait_for_code)
 		if (l->extra->verify_flags & VERIFY_SIGNER) {
 			if (l->extra->signer && fetch_signed && 
 			    !fetch_signed(l->key, l->extra->signer, task)) {
+
 				ret = 0;
 			} else {
 				/* if no signer, then fetch whatever and check in olclient 
@@ -887,6 +916,7 @@ olclient_put_entry(const char *key, const char *data, ident_t *signer, const int
 		   const int timeout, const char *secret, const int cached)
 {
 	struct olclient_put_entry_s *e = 0;
+
 	ASSERT_TRUE(e = mallocz(sizeof(*e)), err);
 	ASSERT_TRUE(e->key = strdupz(key), err);
 	ASSERT_TRUE(e->data = strdupz(data), err);
@@ -1172,6 +1202,8 @@ olclient_parse_signed_xml_record(const char *data, X509 **cert, char **signature
 	*data2 = 0;
 	*cert = 0;
 
+	ASSERT_TRUE(strlen(data), err);
+	ASSERT_TRUE(data[0] == '<', err, "Data is not XML!\n");
 	ASSERT_TRUE(doc = xmlParseMemory(data, strlen(data)), err);
 	ASSERT_TRUE(cur = xmlDocGetRootElement(doc), err);
 	ASSERT_ZERO(xmlStrcmp(cur->name, (xmlChar*)OLCLIENT_PKG), err);
@@ -1218,7 +1250,7 @@ olclient_verify_data_sig(olclient_signer_t *cert, const char *data, char **signe
 	int len;
 
 	/* remove the wrapper */
-	ASSERT_ZERO(olclient_parse_signed_xml_record(data, &cert2, &signature, &algo, &data2), err);
+	ASSERT_ZEROS(olclient_parse_signed_xml_record(data, &cert2, &signature, &algo, &data2), err, "Record not XML or in right format!\n");
 	if (!cert) {
 		/* check that the signer is trusted */
 		ASSERT_TRUE(cert = cert2, err);
@@ -1234,7 +1266,7 @@ olclient_verify_data_sig(olclient_signer_t *cert, const char *data, char **signe
 	ASSERT_TRUE(algo = (char *)mallocz(SHA_DIGEST_LENGTH), err);
 	ASSERT_TRUE(SHA1((unsigned char*)data2, strlen(data2), (unsigned char*)algo), err);
 	ASSERT_TRUE(data3 = ship_decode_base64(signature, strlen(signature), &len), err);
-	ASSERT_TRUE(RSA_verify(NID_sha1, (unsigned char*)algo, SHA_DIGEST_LENGTH, (unsigned char*)data3, len, pu_key), err);
+	ASSERT_TRUE(RSA_verify(NID_sha1, (unsigned char*)algo, SHA_DIGEST_LENGTH, (unsigned char*)data3, len, pu_key), err, "signature mis-match!\n");
 	
 	/* store the signer into the signer_aor field */
 	freez(data3);
@@ -1403,8 +1435,10 @@ olclient_sign_xml_record(const char *data, ident_t *ident, const int addcert)
 		ASSERT_TRUE(bio = BIO_new(BIO_s_mem()), err);
 		ASSERT_TRUE(PEM_write_bio_X509(bio, ident->cert), err);
 		ASSERT_TRUE(bufsize = BIO_get_mem_data(bio, &cert), err);
-		cert[bufsize] = 0;
-		ASSERT_TRUE(xmlNewTextChild(doc->children, NULL, (const xmlChar *)"certificate", (const xmlChar *)cert), err);
+		//cert[bufsize] = 0;
+		//ASSERT_TRUE(xmlNewTextChild(doc->children, NULL, (const xmlChar *)"certificate", (const xmlChar *)cert), err);
+		ASSERT_TRUE(tree = xmlNewTextChild(doc->children, NULL, (const xmlChar *)"certificate", (const xmlChar *)""), err);
+		xmlNodeAddContentLen(tree, (xmlChar*)cert, bufsize);
 	}
 
 	xmlDocDumpFormatMemory(doc, &xmlbuf, &bufsize, 1);

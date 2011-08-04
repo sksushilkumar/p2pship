@@ -97,8 +97,10 @@ struct olclient_get_task_s {
 	ship_obj_t parent;
 
 	void (*callback) (char *val, int status, olclient_get_task_t *task);
+	void (*old_callback) (char *val, int status, olclient_get_task_t *task);
 	olclient_lookup_t *lookup;
 	struct olclient_module* mod;
+
 	char *id;
 };
 
