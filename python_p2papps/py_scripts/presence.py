@@ -13,16 +13,25 @@ class SubscriptionHandler:
         self.pdif_id = "uhpbb"
         self.local_aor = local_aor
         self.last = None
+
+        self.subscribe_key = None
         info("New subscription handler for %s of %s" % (local_aor, target))
         
-    def subscribe(self, key, callback):
+    def subscribe(self):
+
+        if self.subscribe_key is not None:
+            return
+        
         try:
-            p2pship.ol_ident_subscribe(self.local_aor, key, key, self.publish_got, key)
+            key = sip_real_aor(self.target)
+            self.subscribe_key = p2pship.ol_ident_subscribe(self.local_aor, key, key, self.publish_got, key)
         except Exception, ex:
             warn("subscribe of %s (for %s) failed" % (key, self.local_aor))
 
-    def cancel_subscribe(self, key, callback):
-        pass
+    def cancel_subscribe(self):
+        if self.subscribe_key is not None:
+            p2pship.ol_cancel(self.subscribe_key)
+            self.subscribe_key = None
         
     def create_pdif_simple(self, basic_status):
         return create_pdif(self.target, self.pdif_id, basic_status)
@@ -77,6 +86,7 @@ class SubscriptionHandler:
             self.notify(self.create_pdif_simple("closed"))
 
     def subscribe_got(self, msg):
+
         self.last_resp = msg.respond(202, as_remote = True)
         self.last = None # force to re-report
         self.remote_contact = msg.param("Contact")
@@ -84,13 +94,16 @@ class SubscriptionHandler:
         self.expire = int(msg.param('Expires', 0))
         self.time = time.time()
 
-        key = sip_real_aor(self.target)
+        self.check_subscribe()
+
+    def check_subscribe(self):
+        
         if self.get_expire() > 0:
-            self.subscribe(key, self.publish_got)
+            self.subscribe()
         else:
-            self.cancel_subscribe(key, self.publish_got)
+            self.cancel_subscribe()
         self.update_presence()
-        return 0
+
 
     def get_expire(self):
         """Returns the time left of the subscription"""
@@ -120,16 +133,27 @@ class SubscriptionHandler:
     def response_got(self, req, resp):
 
         debug("Got a response!")
-        return 0
 
-class PresenceHandler(SipHandler):
-    """Handler for presence subscriptions"""
+#
+#
+#
 
-    def __init__(self):
+class PresenceManager:
+    """Manager for one local user's all presence subscriptions. Uses
+    the PresenceHandlers to actually do the maintanaince."""
+
+    def __init__(self, aor, load = False):
+
         self.handlers = {}
+        self.local_aor = aor
+        if load:
+            self.load()
+            for sh in self.handlers.values():
+                sh.subscribe_key = None
+                sh.check_subscribe()
+
         # we need a periodic poller to check the validity of the reg packets!
         p2pship.call_periodically(self.check_handlers, None, 60000)
-        self.local_aor = None
         
     def get_subscribe_handler(self, aor, callid):
         """Each PresenceHandler is tied to one source aor"""
@@ -146,7 +170,9 @@ class PresenceHandler(SipHandler):
         self.local_aor = parse_aor(msg.sfrom)
         if msg.msg_type == "SUBSCRIBE":
             handler = self.get_subscribe_handler(parse_aor(msg.sto), msg.callid)
-            return handler.subscribe_got(msg)
+            handler.subscribe_got(msg)
+            self.save()
+            return 0
         
         if msg.msg_type == "PUBLISH":
             debug("publish got " + str(msg))
@@ -154,14 +180,9 @@ class PresenceHandler(SipHandler):
             return None
 
         if msg.msg_type == "OPTIONS":
-            print "we got options: %s" % str(msg)
-            print "resp code would be ..%s" % str(msg.hook_data)
-
             m = msg.create_response(200)
             m.as_remote = True
             m.add_param("Allow", "INVITE, ACK, CANCEL, MESSAGE. OPTIONS, BYE, PUBLISH, SUBSCRIBE")
-
-            print "sending message %s" % str(m)
 
             m.send(filter = False)
             return 0
@@ -177,7 +198,8 @@ class PresenceHandler(SipHandler):
         if req.msg_type == "NOTIFY" and req is not None:
             # todo: why is req.callid == None??
             handler = self.get_subscribe_handler(parse_aor(req.sfrom), resp.callid)
-            return handler.response_got(req, resp)
+            handler.response_got(req, resp)
+            return 0
 
     def check_handlers(self, data):
         """Called periodically to report on the presence state"""
@@ -185,7 +207,94 @@ class PresenceHandler(SipHandler):
         debug("checking handlers for %s" % self.local_aor)
         for sh in self.handlers.values():
             sh.update_presence()
+        self.save()
 
+    def save(self):
+        try:
+            filename = get_datadir() + "/manager_" + self.local_aor
+            f = open(filename, "w")
+            pickle.dump(self.handlers, f)
+            f.close()
+        except Exception, ex:
+            warn("Couldn't write presence manager state! %s" % str(ex))
+
+    def load(self):
+        try:
+            filename = get_datadir() + "/manager_" + self.local_aor
+            f = open(filename, "r")
+            self.handlers = pickle.load(f)
+            f.close()
+        except Exception, ex:
+            warn("Couldn't read presence manager state! %s" % str(ex))
+
+presence_managers = {}
+def presence_get_manager(aor):
+
+    ret = None
+    ret = presence_managers.get(aor, None)
+    if ret is None:
+        ret = PresenceManager(aor, False)
+        presence_managers[aor] = ret
+        presence_save_managers()
+    return ret
+
+def presence_load_managers():
+
+    try:
+        filename = get_datadir() + "/managers"
+        f = open(filename, "r")
+        keys = pickle.load(f)
+        f.close()
+
+        for aor in keys:
+            man = PresenceManager(aor, True)
+            man.check_handlers(None)
+            presence_managers[aor] = man
+            
+    except Exception, ex:
+        warn("Couldn't read presence managers' state! %s" % str(ex))
+
+def presence_save_managers():
+
+    try:
+        filename = get_datadir() + "/managers"
+        f = open(filename, "w")
+        pickle.dump(presence_managers.keys(), f)
+        f.close()
+    except Exception, ex:
+        warn("Couldn't write presence managers' state! %s" % str(ex))
+
+
+class PresenceHandler(SipHandler):
+    """Handler for presence subscriptions. One instance for each
+    *local* aor is created (handling multiple remote aors). As these
+    are instatiated and managed by the sip library, we use them just
+    to forward the messages to our own-managed ones, which are
+    persistent!"""
+
+    def __init__(self):
+        pass
+        
+    def request_got(self, msg):
+        """Called by the post processor"""
+        
+        if not msg.is_internal and msg.msg_type in [ "SUBSCRIBE", "PUBLISH", "OPTIONS" ]:
+            man = presence_get_manager(parse_aor(msg.sfrom))
+            return man.request_got(msg)
+        
+    def response_got(self, req, resp):
+        """Called by the post processor. If a response has an
+        associated request, then it has been sent by us (and we should
+        capture it!)"""
+
+        if req is None:
+            return None
+
+        man = presence_get_manager(parse_aor(req.sto))
+        return man.response_got(req, resp)
+
+
+presence_load_managers()
 if install_sip_request_handler(".*", ".*", PresenceHandler):
     info("Presence handler is installed!")
 else:
