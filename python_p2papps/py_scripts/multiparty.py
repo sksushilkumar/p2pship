@@ -15,10 +15,10 @@ class Mixer:
             p2pship.media_pipeline_destroy(self.pl)
             self.pl = None
         for aor in self.aors.keys():
-            (sock, saddr, addr) = self.aors[aor]
+            (sock, saddr, addr, active) = self.aors[aor]
             if sock is not None:
                 sock.close()
-                self.aors[aor] = (None, saddr, addr)
+                self.aors[aor] = (None, saddr, addr, active)
 
     def create_sock(self, addr = '127.0.0.1', port = 0):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -26,11 +26,11 @@ class Mixer:
         sock.bind((addr, port))
         return (sock, sock.getsockname())
     
-    def add(self, aor, addr, sport = 0):
+    def add(self, aor, addr, sport = 0, activate = True):
 
         # re-use old if one exists
         if self.aors.has_key(aor):
-            (sock, saddr, oldaddr) = self.aors[aor]
+            (sock, saddr, oldaddr, active) = self.aors[aor]
         elif sport != 0:
             (sock, saddr) = (None, ('127.0.0.1', sport))
         else:
@@ -38,10 +38,22 @@ class Mixer:
 
         info("Should add an audio-mixing channel for %s receiving at %s, sending to %s" % (aor, str(saddr), str(addr)))
 
-        self.aors[aor] = (sock, saddr, addr)
+        self.aors[aor] = (sock, saddr, addr, activate)
         self.reinit_player()
         return saddr
-        
+
+    def activate(self, aor):
+        if self.aors.has_key(aor):
+            (sock, saddr, addr, activate) = self.aors[aor]
+            self.aors[aor] = (sock, saddr, addr, True)
+            self.reinit_player()
+
+    def deactivate(self, aor):
+        if self.aors.has_key(aor):
+            (sock, saddr, addr, activate) = self.aors[aor]
+            self.aors[aor] = (sock, saddr, addr, False)
+            self.reinit_player()
+
     def reinit_player(self):
         self.stop()
         if len(self.aors) < 2:
@@ -55,10 +67,13 @@ class Mixer:
         line = ''
 
         for aor in self.aors.keys():
-            (sock, saddr, addr) = self.aors[aor]
+            (sock, saddr, addr, active) = self.aors[aor]
+            if not active:
+                continue
+
             if sock is None:
                 (sock, saddr) = self.create_sock(saddr[0], saddr[1])
-                self.aors[aor] = (sock, saddr, addr)
+                self.aors[aor] = (sock, saddr, addr, active)
 
             name = str(saddr[1])
             # mixer & source
@@ -83,7 +98,7 @@ class Mixer:
     def remove(self, aor):
         info("removing mixers for %s" % aor)
         if self.aors.has_key(aor):
-            (sock, saddr, addr) = self.aors[aor]
+            (sock, saddr, addr, active) = self.aors[aor]
 
             # todo: remove the mixer for this
             # remove all sources for this.
@@ -104,7 +119,6 @@ class MultipartyHandler(SipHandler):
         self.members = []
         self.title = "anon session"
         self.mixer = Mixer()
-        #self.port = 6700
         
     def send_msg(self, msg, user = None, omit = None):
         if user is not None:
@@ -150,16 +164,14 @@ class MultipartyHandler(SipHandler):
     def ack_got(self, message):
         debug("**** ack got")
 
+        # we should start the audiomixer only now..
+        
+
     def add_audio_mixer(self, aor, addr):
         return self.mixer.add(aor, addr)
-        #self.port += 1
-        #print "should add mixer for %s, streaming to %s" % (str(aor), str(addr))
-        #print "\n\n** sport: %d, destport: %d **\n" % (self.port, addr[1])
-        #return ("127.0.0.1", self.port)
 
     def remove_mixers(self, aor):
         self.mixer.remove(aor)
-        #print "should remove mixer for %s" % str(aor)
 
     def cancel_got(self, message):
         info("got cancel...")
@@ -201,12 +213,13 @@ class MultipartyHandler(SipHandler):
             return
 
         debug("response " + str(resp.resp_code) + " got to my " + req.msg_type + " request")
+
         if int(resp.resp_code) >= 200 and req.msg_type == "INVITE":
             m = resp.create_follow_up("ACK")
             m.cseq = str(resp.cseq) + " " + m.msg_type
             m.send()
 
-            # check if we got the video tags. if so, start streaming!
+            """
             if resp.call.remote_medias is not None:
                 if resp.call.remote_medias.has_key('audio') and resp.call.remote_medias.has_key('video'):
                     debug("** audio streaming to " + str(resp.call.remote_medias['audio'][0]) + " port " + str(resp.call.remote_medias['audio'][1]))
@@ -214,7 +227,7 @@ class MultipartyHandler(SipHandler):
                     self.streamer.stream(resp.call.remote_medias['video'][0], resp.call.remote_medias['audio'][1], resp.call.remote_medias['video'][1], 15, self.streaming_done, resp)
                 else:
                     debug("Heck, either audio or video was missing1!")
-
+            """
 
         
 if install_sip_handler(".*", "[^+]+[+][a-z0-9]*@.+", MultipartyHandler):
