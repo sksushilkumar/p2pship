@@ -1764,6 +1764,16 @@ ship_get_homedir_file(char *filename, char **target)
 }
 
 int
+ship_file_exists(const char *filename)
+{
+	struct stat sdata;
+	if (stat(filename, &sdata))
+		return 0;
+	else
+		return 1;
+}
+
+int
 ship_ensure_file(char *filename, char *initial_data)
 {
 	struct stat sdata;

@@ -720,6 +720,7 @@ int ship_read_mem(char *buf, int buflen, void *data,
 		  void (*cb_ignore_line) (void *data, int lc, char *content, char *line));
 int ship_load_file(const char* file, char **rbuf, int *len);
 int ship_move(const char *from, const char *to);
+int ship_file_exists(const char *filename);
 
 /**
  * Cryto functions 
