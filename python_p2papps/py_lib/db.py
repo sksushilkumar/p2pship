@@ -29,7 +29,7 @@ class PersistentDict(UserDict.DictMixin):
         #assert solution == Solutions.Sqlite3
         solution = Solutions.Sqlite3
 
-        self.filename = p2pship.get_data_dir() + "/" + appid + ".db"
+        self.filename = get_datadir() + "/" + appid + ".db"
         self.__conn = sqlite3.connect(self.filename)
         self.__tablename = table
         self._nocommit = False
