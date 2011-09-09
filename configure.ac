@@ -360,6 +360,9 @@ if test x"$ac_cv_use_gtkui" = x"yes"; then
 
 	PKG_CHECK_MODULES([LIBNOTIFY],[libnotify >= 0.4.1],
  			  [HAVE_LIBNOTIFY="yes"],[HAVE_LIBNOTIFY="no"])
+	if pkg-config --atleast-version=0.7.0 libnotify; then
+	   AC_DEFINE([HAVE_LIBNOTIFY_NEW], [1], [You seem to have a newer version of libnotify.])
+	fi
  	AC_SUBST([LIBNOTIFY_CFLAGS])
  	AC_SUBST([LIBNOTIFY_LIBS])
 	CFLAGS="$CFLAGS $LIBNOTIFY_CFLAGS"

@@ -159,14 +159,18 @@ ui_gtk_popup(char *buf)
 
 	NotifyNotification *notif;
 
-	//notif = notify_notification_new_with_status_icon(buf, NULL /* summary */,
-	//						 icon, status_icon);
-
 	gdk_threads_enter();
+
+	/* this has changed with version 0.7xx */
+#ifdef HAVE_LIBNOTIFY_NEW
 	notif = notify_notification_new("p2pship", buf,
-					GTK_STOCK_DIALOG_WARNING, 
+					GTK_STOCK_DIALOG_WARNING);
+#else
+	notif = notify_notification_new("p2pship", buf,
+					GTK_STOCK_DIALOG_WARNING,
 					//GTK_STOCK_DIALOG_INFO, 
 					NULL);
+#endif
 	notify_notification_show(notif, NULL);
 	g_object_unref(notif);
 	gdk_threads_leave();
@@ -509,13 +513,18 @@ ui_gtk_init(processor_config_t *config)
 	ui_reg_handler("ui_query_filechooser", ui_gtk_query_filechooser);
 	ui_reg_handler("ui_query_listchooserx", ui_gtk_query_listchooser);
 
+#ifdef HAVE_LIBNOTIFY_NEW
+	notify_init("p2pship");
+#endif
 	return 0;
 }
 
 static void
 ui_gtk_close()
 {
-
+#ifdef HAVE_LIBNOTIFY
+	notify_uninit();
+#endif
 }
 
 /* the ui_gtk register */
