@@ -31,13 +31,9 @@ _todo: how to limit participants. In general, and how to translate that into SIP
 
 == Conferencing API ==
 
-_todo: describe how to implement additional features to the conferencing system. Bots, offloading and other things_
-
-=== Plug-ins / implemented extensions ===
-
-_todo: Describe a couple of additional plug-in features that can serve as examples for developers interested in extending the system_
-
 The plan is to build an easy-to-use interface to the conference manager which would allow it to be extended with new functionality dynamically. This system would be based on the [PRE PRE] and would only affect (naturally) the local conference manager in hybrid conferencing topologies.
+
+Thinking in a more generic manner, the "Conferencing API" is actually a "Communications management API", as it would affect communications (calls, chats) whether or not there are more than two (or even one) persons present.  The multiparty conferencing should actually be just one of its features, and other (such as call recording, desktop sharing) should be available for all calls.
 
 The system would be based on the IPC calls of the PRE which would allow external (to the conference manager) scripts to create hooks into the conferencing system. These would run in their own Python shell, creating a bit of protection / isolation.
 
@@ -52,7 +48,9 @@ The API would allow extensions to:
 
 _note:_ These could actually work on a higher level, above the multiparty conferencing feature also, as it could be interesting to be able to record all phone calls, or insert messages in any chat. Actually, as the multiparty thing is on the way of becoming part of standard calls (any call we make would actually be a conference with 2 participants), the extensions could be multiparty-specific, but the nature of the multiparty plugin would be more of a 'tap into calls'- plugin. Which, out-of-the-box, happens to support multiparty conferencing.
 
-==== Plug-ins in planning ====
+=== Plug-ins / extensions ===
+
+The following are implemented in the current multiparty extension:
 
 *audioplay*: The ability to insert audio files into the conference. For instance, typing '/play song1.mp3' into the group chat would cause the p2pship conference manager to insert (play) that audio file just as if it was an additional participant.
 
@@ -60,13 +58,21 @@ _note:_ These could actually work on a higher level, above the multiparty confer
 
 *deskshare*: Desktop sharing. The recipients would see this also as if you would have made a video call to them. Excellent for collaboration.
 
+*audiorecord*: Call recording.
+
+*videoout / audioout*: Simple 'taps' on the streams from the mixer. Can be used by the conference mixer to check what is happening in the cenference.
+
+=== Planning ===
+
+The following contains other examples of what could be implemented:
+
 *taskmanager*: Bot that reacts on certain strings entered in the group chat to automatically form task lists, bug reports, or anything else. Use case: A work-related remote meeting. While discussing matters, todos and tasks are identified. The chair of the meeting enters into the group chat strings like '/task John Check the current sale figures' or '/task Mona Design a new logo for the project by friday'. These would end up in a task manager (which ever you're using) or somewhere else as a task for John, and another for Mona (with a deadline on Friday).
 
 *mediaforward*: Forward media streams from the conference to other sinks. UPNP projectors, external screens, sound systems etc.
 
 *misc bots*: As seen on _IRC_; '/magic8ball should i do this-or-that?`
 
-==== Social / web integration ====
+=== Social / web integration ===
 
 _Investigate if there's any synergy in tapping into social networks. This might be also something that affects the system more profoundly, not only the multiparty functionality_
 
@@ -105,10 +111,14 @@ SIP support for basic centralized conferencing on a P2P network:
 *Milestone 2 is complete*
 
 == Milestone 3 ==
-
- * Advanced access control and session management
-   * Basically being able to expel users, invite others, find out who's participating
+ 
+ * ~~Video conferencing support~~(1)
+ * ~~Advanced access control and session management~~(2)
+   * ~~Basically being able to expel users, invite others, find out who's participating~~
  * Default conferences (creating one ad-hoc from an ongoing call)
+
+(1) Video support requires various video codecs.  Works fine on normal debian distributions, but has still issues on the N810 tablet.
+(2) Controls are available for the host.  Invite still pending.
 
 == Milestone 4 ==
 
