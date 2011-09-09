@@ -1999,6 +1999,40 @@ p2pship_sip_get_local_contact(PyObject *self, PyObject *args)
 	return ret;
 }
 
+/**
+ * returns the contact address for the local user as seen by external
+ * entities. this address is used to receive data from others.
+ */
+static PyObject *
+p2pship_sip_get_remote_contact(PyObject *self, PyObject *args)
+{
+	char *aor = 0, *str = 0;
+	addr_t addr;
+	ident_t *ident = 0;
+	PyObject *ret = 0;
+
+	if (!PyArg_ParseTuple(args, "|s:sip_get_remote_contact", &aor)) {
+		goto end;
+	}
+
+	if (aor && strlen(aor)) {
+		ASSERT_TRUE(ident = ident_find_by_aor(aor), err);
+	}
+
+	bzero(&addr, sizeof(addr));
+	sipp_get_default_media_proxy_interface(&addr, 0);
+	ASSERT_ZERO(ident_addr_addr_to_str(&addr, &str), err);
+	ASSERT_TRUE(ret = Py_BuildValue("s", str), err);
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "System error");
+ end:
+	ship_obj_unlockref(ident);
+	freez(str);
+	Py_XINCREF(ret);
+	return ret;
+}
+
 #include "access_control.h"
 
 static int
@@ -2815,6 +2849,34 @@ p2pship_media_pipeline_start(PyObject *self, PyObject *args)
 }	
 
 static PyObject *
+p2pship_media_pipeline_stop(PyObject *self, PyObject *args)
+{
+	PyObject *ret = NULL;
+	int handle = -1;
+	PyThreadState *tstate = NULL;
+	
+	if (!PyArg_ParseTuple(args, "i", &handle))
+		goto end;
+
+	ASSERT_TRUE(tstate = PyThreadState_Get(), end);
+	pymod_tstate_return();
+
+	handle = media_pipeline_stop(handle);
+	ship_check_restricts();
+	pymod_tstate_ok(tstate);
+
+	ASSERT_ZERO(handle, err);
+
+	ret = Py_None;
+	Py_INCREF(ret);
+	goto end;
+ err:
+	PyErr_SetString(PyExc_StandardError, "Error stopping pipeline");
+ end:
+	return ret;
+}	
+
+static PyObject *
 p2pship_media_pipeline_destroy(PyObject *self, PyObject *args)
 {
 	PyObject *ret = NULL;
@@ -3130,6 +3192,7 @@ static PyMethodDef p2pshipMethods[] = {
     {"sip_route_as_local",  p2pship_sip_route_as_local, METH_VARARGS, "Routes a SIP message as if originated from local."},
     {"sip_route_as_remote",  p2pship_sip_route_as_remote, METH_VARARGS, "Routes a SIP message as if originated from remote."},
     {"sip_get_local_contact",  p2pship_sip_get_local_contact, METH_VARARGS, "Returns the local proxy address, as seen by the user."},
+    {"sip_get_remote_contact",  p2pship_sip_get_remote_contact, METH_VARARGS, "Returns the remote proxy address, as seen by peers."},
 
     {"ac_add_filter",  p2pship_ac_add_filter, METH_VARARGS, "Adds a message filter."},
     // {"ac_remove_filter",  p2pship_ac_remove_filter, METH_VARARGS, "Removes a message filter."},
@@ -3139,6 +3202,7 @@ static PyMethodDef p2pshipMethods[] = {
 #ifdef CONFIG_MEDIA_ENABLED
     {"media_pipeline_parse",  p2pship_media_pipeline_parse, METH_VARARGS, "Creates a media pipeline from the given gstreamer text line."},
     {"media_pipeline_start",  p2pship_media_pipeline_start, METH_VARARGS, "Starts the given media object."},
+    {"media_pipeline_stop",  p2pship_media_pipeline_stop, METH_VARARGS, "Stops the given media object."},
     {"media_pipeline_destroy",  p2pship_media_pipeline_destroy, METH_VARARGS, "Destroys the given media object."},
     {"media_check_element",  p2pship_media_check_element, METH_VARARGS, "Checks support for a media element."},
 #endif
