@@ -60,9 +60,6 @@ def parse_name(pa):
     p = pa.find("<")
     if p > -1:
         pa = pa[0:p]
-    p = pa.find("sip:")
-    if p > -1:
-        pa = pa[p+4:]
     
     return pa.strip('"\' ')
 
@@ -576,6 +573,7 @@ class SipCall:
                         pn, pv = aa[0].split(":")
                         current_formats[pv][pn] = aa[1]
                     else:
+                        current_formats[v] = True
                         ret["attributes"].append(v)
                 elif self.verbose():
                     info("unrecognized line: " + line)
