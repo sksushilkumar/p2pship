@@ -410,7 +410,7 @@ extapi_data_received_httpresponse(char *data, int data_len, ident_t *ident,
 		/* if the last packet was zero, take it as a que to close */
 		if (len < 1) {
 			/* this is hackish. simulate that it 'just went down' & look innocent */
-			close(oldconn->socket);
+			//close(oldconn->socket);
 			netio_http_conn_close(oldconn);
 		} else {
 			ship_unlock(oldconn);
