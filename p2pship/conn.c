@@ -2116,6 +2116,9 @@ conn_get_next_conn_addr(conn_connection_t *conn, reg_package_t *pkg)
 				addr = NULL;
 			}
 		}
+
+		/* reset the last_addr if we aren't using HITs */
+		conn->last_addr = addr;
 	}
 			
 	if (!addr && conn_allow_nonhip) {
