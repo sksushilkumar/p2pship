@@ -166,6 +166,7 @@ void sipp_unregister_client_handler(sipp_client_handler handler,
 int sipp_inject_local_message(char *msg, int len, const int filter);
 int sipp_inject_remote_message(char *msg, int msglen, ident_t *ident, char *remote_aor, const int filter);
 void sipp_get_addr_to_ua_or_default(ident_t *ident, addr_t *addr);
+int sipp_get_default_media_proxy_interface(addr_t *newaddr, int forlocal);
 int sipp_sip_to_str(osip_message_t *sip, char **buf, size_t *len);
 
 #endif
