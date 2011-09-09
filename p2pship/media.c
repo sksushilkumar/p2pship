@@ -240,11 +240,14 @@ media_parse_pipeline(const char *pipeline, media_observer_cb callback, void *use
 	/* add observer */
 	if (!callback)
 		s = NULL;
-	ASSERT_TRUE(bus = gst_element_get_bus(e), err);
-	gst_bus_add_signal_watch(bus);
-	g_signal_connect(G_OBJECT(bus), "message", 
-			 G_CALLBACK(media_bus_message_cb), s);
-	gst_object_unref(GST_OBJECT(bus));
+
+	if (callback) {
+		ASSERT_TRUE(bus = gst_element_get_bus(e), err);
+		gst_bus_add_signal_watch(bus);
+		g_signal_connect(G_OBJECT(bus), "message", 
+				 G_CALLBACK(media_bus_message_cb), s);
+		gst_object_unref(GST_OBJECT(bus));
+	}
  err:
 	return ret;
 }
