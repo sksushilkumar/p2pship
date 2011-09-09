@@ -91,6 +91,7 @@ static char* DEFAULT_CONFIGURATION[] =
 		P2PSHIP_CONF_SIPP_MEDIA_PROXY_FORCE4, "yes", "Force ipv4 on media proxy proxying to a ipv4 address", "bool", 0, 0,
 		P2PSHIP_CONF_SIPP_FORCE_PROXY, "yes", "Force use of media proxy", "bool", 0, 0,
 		P2PSHIP_CONF_SIPP_TUNNEL_PROXY, "no", "Tunnel media proxy traffic", "bool", 0, 0,
+		P2PSHIP_CONF_SIPP_MEDIA_PROXY_FRAGMENTATION, "yes", "Enable media proxy fragmentation", "bool", 0, 0,
 
 		P2PSHIP_CONF_CALL_LOG_SHOW_PATHINFO, "yes", "Show trustpath for accepted calls", "bool", 0, 0,
 		P2PSHIP_CONF_CALL_LOG_SHOW_DROPPED, "yes", "Show dropped calls", "bool", 0, 0,
