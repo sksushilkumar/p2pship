@@ -675,8 +675,6 @@ ident_save_identities_now()
 	
 	LOG_INFO("Saving identites & ca's\n");
 
-	TODO("implement some sort of delay here, collect the whatever we have and save. -> run this periodically with only a 'update' flag somewhere!\n");
-
 	ship_lock(identities);
 	ship_lock(cas);
 
