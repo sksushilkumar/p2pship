@@ -340,7 +340,7 @@ sipp_get_gateway_ident(char *local_sip, char *remote_sip)
  *        (clients that have registered to the proxy with REGISTER)
  *        or either remote or gateway'd clients
  */
-static int
+int
 sipp_get_default_media_proxy_interface(addr_t *newaddr, int forlocal)
 {
 	/* todo gw: */
