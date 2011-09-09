@@ -79,7 +79,8 @@ static struct service_s sipp_mp_info_service =
 int 
 sipp_mp_init()
 {
-	ident_register_default_service(SERVICE_TYPE_MP_INFO, &sipp_mp_info_service);
+	if (processor_config_is_true(processor_get_config(), P2PSHIP_CONF_SIPP_MEDIA_PROXY_FRAGMENTATION))
+		ident_register_default_service(SERVICE_TYPE_MP_INFO, &sipp_mp_info_service);
 	ASSERT_TRUE(mp_infos = ship_list_new(), err);
 	
 	return 0;
@@ -339,8 +340,11 @@ sipp_mp_notify_fragmentation_support(sipp_media_proxy_t *mp)
 {
 	char *buf = 0;
 	int ret = -1;
-	if ((buf = sipp_mp_create_mp_info_str(mp->sip_aor, &mp->local_addr))) {
+
+	if (processor_config_is_true(processor_get_config(), P2PSHIP_CONF_SIPP_MEDIA_PROXY_FRAGMENTATION) &&
+	    (buf = sipp_mp_create_mp_info_str(mp->sip_aor, &mp->local_addr))) {
 		LOG_DEBUG("sending mp support on %s (from %s to %s)\n", buf, mp->sip_aor, mp->remote_aor);
+
 		ret = conn_send_simple(mp->remote_aor, mp->sip_aor,
 				       SERVICE_TYPE_MP_INFO,
 				       buf, strlen(buf)+1);
