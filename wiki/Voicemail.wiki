@@ -82,7 +82,15 @@ Acknoledgements are not currently used, as we do not yet support external (of th
 
 = Implementation =
 
-The voicemail system is implemented as a PRE plugin.
+The voicemail system is implemented as a PRE plugin. When making a call, the voicemail manager immediately starts a search for the voicemail invite for the remote peer. If the peer is not found, or rejects the call (either through a timeout or just by rejecting), the voicemail manager 'captures' the call. It simulates the remote peer answering the call, playing the greeting of the remote peer and recording whatever the local user says.
+
+This recording is stored and advertised as a new voice mail in the overlay. Note that this is done (by default; configurable) only for remote peers for whom a voicemail invite is found (or cached). Both the local and remote peer has to support voicemail in this sense.
+
+The description above is called _local_ voice mail, as the voice mail is recorded on the caller's local device. Voicemail can also be _remote_, recorded on the receiver's device.
+
+The remote voice mails can be used, for instance, when the remote peer is in the middle of another call, and cannot answer. The voicemail manager of the remote peer will capture the call after the SIP UA signals busy (or rejected), playing the greeting and recording the respose. Remote voicemail requires thus voicemail support only from the remote peer, as it will seem (to the caller) is if the remote user actually answered the call.
+
+Note that remote voicemail is not enabled by default (configurable).
 
 
 == Configuration ==
@@ -95,6 +103,11 @@ _Type of voicemail: for local caller only, remote caller only or both_ - Whether
 
 _Codec to use_ - How the voicemails will be encoded. If the option is available, we recommend MP3 (if available).
 
+_Default greeting file for both local and remote_: The location of the default greeting, see below for details.
+
+_Enable xxx voicemail_: Enable voicemail for different types of 'unavailable' codes: busy (user is in another call), offline (user not found), rejected (user rejects the call).
+
+_Leave voicemail even though no voicemail invite is found_: Whether the voicemail manager should leave "blind" voice mails; voice mails for users that may not support the whole scheme. This is not recommended (and disabled by default).
 
 == User interface ==
 
