@@ -93,12 +93,14 @@ _Voicemail identityprefix_ - The prefix of the special voicemail contact that is
 
 _Type of voicemail: for local caller only, remote caller only or both_ - Whether the local user should be able to leave voicemails for remote peers (local), or viceversa (local) or both.
 
-_Codec to use_ - How the voicemails will be encoded. If the option is available, we recommend MP3.
+_Codec to use_ - How the voicemails will be encoded. If the option is available, we recommend MP3 (if available).
 
 
-== User experience ==
+== User interface ==
 
-Currently the voicemail system uses only standard SIP signalling. Messages are announced to the user using SIP IM, and the user is able to listen to them by calling specially prefixed SIP AORs, which are intercepted by the voicemail system.  This special SIP AOR, or AOR prefix actually, can be set in the configuration.
+Currently the voicemail system uses only standard SIP signalling to provide an interface for standard, legacy, apps. Messages are announced to the user using SIP IM, and the user is able to listen to them by calling specially prefixed SIP AORs, which are intercepted by the voicemail system.  This special SIP AOR, or AOR prefix actually, can be set in the configuration.
+
+=== Managing voice mail ===
 
 When a voicemail has been received, the presence status of this voicemail contact will turn into 'online'. By calling this contact, the oldest un-heard voicemail will always play.
 
@@ -107,7 +109,7 @@ Each voicemail will be assigned a non-overlapping number, starting from 1.  When
 The IM interface accepts commands to query and modify the voicemail database.  The commands accepted are:
 {{{
 /list     - lists all unheard voicemails
-/all      - lists all stored voicemails (also old ones)
+/all      - lists all stored voicemails (also old, heard, ones)
 /remove # - deletes voicemail number #
 }}}
 
@@ -117,7 +119,7 @@ For instance, when the voicemail manager discovers a new voicemail, its presence
 New voicemail [8] from alice@p2psip.hiit.fi!
 }}}
 
-The number assigned to the voicemail is here 8.  By calling the voicemail controller (`voicemail@localhost`), this message will be played.  As there are no other unheard voicemails, a call to the number again will be terminated.
+The number assigned to the voicemail is here 8.  By calling the voicemail controller (which is, by default `voicemail@localhost`, where the domain `localhost` may actually be anything as only the user name of the AOR is checked for), this message will be played.  As there are no other unheard voicemails, a call to the number again will be terminated.
 
 By adding the voicemail number to the voicemail controller's AOR, the voicemail can be heard again.  In this example that would be done by calling the AOR `voicemail8@localhost`.
 
@@ -127,6 +129,15 @@ By sending the instant message
 }}}
 
 to the voicemail controller, the message will be deleted.
+
+=== Managing greetings ===
+
+The default greeting for all users is a pretty dull, computer-synthetized, "hello" message. The same greeting is provided to remote peers (as your greeting), as well as used as the greeting _for_ remote peers when their greetings are not available. 
+
+The greeting used for yourself (heard by remote peers when leaving a voice mail)  can be changed by calling the AOR `voicemail+record@localhost` (assuming `voicemail` is the configured voicemail management prefix).
+
+The current greeting can be heard by calling `voicemail+greeting@localhost`.
+
 
 == Notes and caveats ==
 
