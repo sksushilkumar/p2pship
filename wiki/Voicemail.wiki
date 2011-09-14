@@ -154,4 +154,6 @@ The current greeting can be heard by calling `voicemail+greeting@localhost`.
 
 == Notes and caveats ==
 
-We have noticed that some systems (or versions of GStreamer) has difficulties streaming WAV data over RTP.  For this reason (as well as obvious other ones) we therefore recommend that you use mp3 encoding for all audio.  The gstreamer plug-in needed for this is the lame gstreamer encoder. This can be found in many distributions within the gstreamer-plugins-ugly package. For Maemo4, the HIIT repository maintains pre-compiled packages of both lame itself as well as the lame gstreamer plugin.
+We have noticed that some systems (or versions of GStreamer) has difficulties streaming WAV data over RTP.  For this reason (as well as obvious other ones) we therefore recommend that you use mp3 encoding for all audio.  The gstreamer plug-in needed for this is the lame gstreamer encoder. This can be found in many distributions within the gstreamer-plugins-ugly package. For Maemo 4.0/4.1, the HIIT repository maintains pre-compiled packages of both lame itself as well as the lame gstreamer plugin.
+
+In addition to the mp3 encoder, the Maemo 4.0 platform need a mp3 _de_coder plugin for GStreamer, as one is not provided by default (Maemo 4.1 does have one). The HIIT repository contains a pre-compiled version of the MAD GStreamer plugin, along with the id3tag library it depends on.
