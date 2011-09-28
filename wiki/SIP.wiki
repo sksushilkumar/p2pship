@@ -31,13 +31,17 @@ The core SIP system requires few settings; the local port on which the SIP proxy
 
 See [Configuration#SIP SIP-related configuration values]
 
+The most important are:
+ 
+ * `sip_proxy_ifaces` - The interface on which the SIP proxy resides (`lo` is a good choice, `ext` is a wildcard for all externally-facing interfaces).
+ * `sip_proxy_port` - The port on which the SIP proxy listens to
+
+
 = Use =
 
-_todo_
+Configure your SIP UA to use the p2pship proxy for all SIP traffic. By default this is on the localhost interface, port 1234.
 
 = Access control =
-
-_todo_
 
 See [Configuration#Access_Control Access control- related configuration values]
 
@@ -45,10 +49,9 @@ See [Configuration#Access_Control Access control- related configuration values]
 
 See the [SIPGateway page about the gateway] feature as well as [Configuration#Gateway SIP gateway- related configuration values]
 
-
 = Hooks =
 
-Brief overview of how _hooks_ can be planted into the SIP subsystem.
+Brief overview of how _hooks_ can be planted into the SIP subsystem. This is for developers of the system or of extensions only!
 
 == Client handlers ==
 
