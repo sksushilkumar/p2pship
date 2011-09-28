@@ -1,8 +1,14 @@
 #summary List of configuration values
 
-
 <wiki:toc max_depth="3" />
 
+= Overview =
+
+The system uses a key-value- based configuration. This is stored, by default, in the file `~/.p2pship/settings.conf` of the user running p2pship. Furthermore, the proxy supports a number of command-line options (including changing the default configuration file), and has a web-based configuration interface.
+
+The format of the configuration file is simple; a normal ascii-encoded text file with key=value pairs, one per line. Empty lines and lines starting in `#` are ignored.
+
+Values not set in the configuration file (or through command line switches) are set to a default value.
 
 = Command line options =
 
