@@ -36,6 +36,7 @@ The most important are:
  * `sip_proxy_ifaces` - The interface on which the SIP proxy resides (`lo` is a good choice, `ext` is a wildcard for all externally-facing interfaces).
  * `sip_proxy_port` - The port on which the SIP proxy listens to
 
+By default, the proxy listens to both TCP and UDP SIP traffic. UDP has been in use the most (and might therefore be a bit stabler), but TCP should work fine. TCP may also be needed for certain types of traffic, such as large image IM messages.
 
 = Use =
 
