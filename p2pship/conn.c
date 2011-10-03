@@ -2107,7 +2107,8 @@ conn_get_next_conn_addr(conn_connection_t *conn, reg_package_t *pkg)
 	addr_t *addr = 0;
 #ifdef CONFIG_HIP_ENABLED
 	/* don't try HIP if we aren't running it */
-	if (hipapi_hip_running()) {
+	if (hipapi_hip_running() &&
+	    !ship_list_find(pkg->ip_addr_list, conn->last_addr)) {
 		LOG_DEBUG("trying to find HIT..\n");
 		addr = conn_find_first_with_port(pkg->hit_addr_list, conn->last_addr);
 		if (addr && !hipapi_has_linkto(addr)) {
@@ -2451,7 +2452,7 @@ conn_getips_af(ship_list_t *ips, char **ifaces, int ifaces_len, int port, const 
 	int i;
         int s = -1;
 	
-	s = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+	s = netio_socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 	ASSERT_TRUE(s != -1, err);
 	
 	memset(&req, 0, sizeof(req));

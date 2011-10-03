@@ -102,6 +102,7 @@ print_usage()
         USER_ERROR("  -c [FILE]                  read configuration from [FILE]\n");
 	USER_ERROR("                             (%s)\n", 
 		   processor_config_string(config, P2PSHIP_CONF_CONF_FILE));
+        USER_ERROR("  -k                         kill existing p2pship\n");
         USER_ERROR("  -R                         autoregister previous UAs\n");
         USER_ERROR("  -r [FILE]                  use [FILE] as the autoregister cache\n");
 	USER_ERROR("                             (%s)\n", 
@@ -293,7 +294,7 @@ main(int argc, char **argv)
 	processor_config_get_string(config2, P2PSHIP_CONF_CONF_FILE, &conf_file);
 
         opterr = 0;
-        while ((c = getopt_long(argc, argv, "LqvhDVs:c:p:i:Rr:", long_options, &index)) != -1) {
+        while ((c = getopt_long(argc, argv, "LqvhDVs:c:p:i:Rr:k", long_options, &index)) != -1) {
                 
                 if (!c) {
                         if (!strcmp(long_options[index].name, "threads")) {
@@ -427,6 +428,9 @@ main(int argc, char **argv)
 			break;
 		case 'L':
 			log_to_file = 1;
+			break;
+                case 'k':
+			processor_kill_existing_pid();
 			break;
                 case 'h':
                 case '?':
@@ -652,5 +656,7 @@ main(int argc, char **argv)
 	xmlCleanupThreads();
         if (!ret && !flag_quiet)
                 USER_ERROR("ending ok\n");
+
+	processor_cleanup_pid();
         return ret;
 }

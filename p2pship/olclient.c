@@ -1202,7 +1202,7 @@ olclient_parse_signed_xml_record(const char *data, X509 **cert, char **signature
 	*data2 = 0;
 	*cert = 0;
 
-	ASSERT_TRUE(strlen(data), err);
+	ASSERT_TRUE(strlen(data), err, "Empty data record!\n");
 	ASSERT_TRUE(data[0] == '<', err, "Data is not XML!\n");
 	ASSERT_TRUE(doc = xmlParseMemory(data, strlen(data)), err);
 	ASSERT_TRUE(cur = xmlDocGetRootElement(doc), err);

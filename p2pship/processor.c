@@ -86,6 +86,98 @@ static void processor_to_free(void *data);
 static int processor_to_cleanup_dead(void *data, processor_task_t **wait, int wait_for_code);
 void processor_kill_me();
 
+/* the lockfile .. */
+#define P2PSHIP_LOCK_FILE "/tmp/p2pship.lock-"
+static char lock_file_buf[64];
+static char *lock_file = NULL;
+
+/* pid handling */
+static char *
+processor_get_lock_file()
+{
+	if (!lock_file) {
+		sprintf(lock_file_buf, "%s%d", P2PSHIP_LOCK_FILE, getuid());
+		lock_file = &lock_file_buf[0];
+	}
+	return lock_file;
+}
+
+static int
+processor_read_pid()
+{
+	FILE *f = NULL;
+	char *lf = processor_get_lock_file();
+	int pid = -1;
+	
+	if (ship_file_exists(lf) && (f = fopen(lf, "r"))) {
+		char buf[64];
+		int r;
+		
+		r = fread(buf, sizeof(char), sizeof(buf)-1, f);
+		pid = atoi(buf);
+		fclose(f);
+	}
+	return pid;
+
+}
+
+int
+processor_kill_existing_pid()
+{
+	char *lf = processor_get_lock_file();
+	int pid = -1;
+
+	if (!ship_file_exists(lf)) {
+		LOG_WARN("Could not kill existing p2phip instance: no instance found.\n");
+		return 0;
+	}
+	
+	if ((pid = processor_read_pid()) != -1) {
+		if ((kill(pid, SIGKILL) != 0)) {
+			LOG_ERROR("Could not kill existing p2phip instance: %s.\n", strerror(errno));
+			return -1;
+		} else {
+			LOG_INFO("Killed existing p2pship instance pid %d\n", pid);
+		}
+	} else {
+		LOG_ERROR("Could not kill existing p2phip instance: instance pid could not be read.\n");
+	}
+	return 0;
+}
+
+int
+processor_record_pid()
+{
+	FILE *f = NULL;
+	char *lf = processor_get_lock_file();
+
+	if ((f = fopen(lf, "w"))) {
+		char buf[64];
+		int pid = getpid();
+		
+		sprintf(buf, "%d", pid);
+		fwrite(buf, sizeof(char), strlen(buf), f);
+		fclose(f);
+		
+		LOG_INFO("pid %d recorded as the active p2pship instance..\n", pid);
+		return 0;
+	} else {
+		LOG_ERROR("Could not record the active p2pship instance pid!\n");
+		return -1;
+	}
+}
+
+int
+processor_cleanup_pid()
+{
+	char *lf = processor_get_lock_file();
+	
+	if ((processor_read_pid() == getpid())) {
+		unlink(lf);
+	}
+	return 0;
+}
+
 
 static void
 processor_event_free(processor_event_receiver_t* ret)
@@ -876,6 +968,8 @@ processor_run()
 	struct processor_worker_s main_w = { .thread = 0, .name = "main-0" };
 
 	USER_ERROR("proxy initialized ok\n");
+
+	processor_record_pid();
         
         /* set up signal blocking */
         signal(SIGHUP, processor_signal_handler);
