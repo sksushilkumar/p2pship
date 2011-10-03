@@ -84,6 +84,7 @@ int netio_man_connto(struct sockaddr *sa, socklen_t sa_len,
 		     void (*conn_cb) (int s, void *obj),
 		     void (*data_cb) (int s, void *obj, char *data, int datalen));
 
+int netio_socket(int namespace, int style, int protocol);
 void netio_close_socket(int s);
 int netio_ff_add(int rec_socket, addr_t *addr, int *counter, int fragment_output);
 void netio_ff_remove(int rec_socket);

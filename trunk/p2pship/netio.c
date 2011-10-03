@@ -100,6 +100,17 @@ SET_SOCK_TO(int s, int secs)
 	return ret;
 }
 
+int
+netio_socket(int namespace, int style, int protocol)
+{
+	int fd = -1;
+	if ((fd = socket(namespace, style, protocol)) != -1) {
+		/* make this non-inheritable */
+		fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
+	}
+	return fd;
+}
+
 static void
 netio_sock_free(netio_sock_t *s)
 {
@@ -304,10 +315,10 @@ netio_new_packet_socket(struct sockaddr *sa, socklen_t size)
 	
 	switch (sa->sa_family) {
 	case AF_INET:
-		ret = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		ret = netio_socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 		break;
 	case AF_INET6:
-		ret = socket(PF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+		ret = netio_socket(PF_INET6, SOCK_DGRAM, IPPROTO_UDP);
 		break;
 	default:
 		ret = -1;
@@ -397,7 +408,7 @@ netio_new_multicast_reader(char *mc_addr,
 	if (sa->sa_family != AF_INET)
 		return -1;
 
-        ASSERT_TRUE((ret = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) != -1, err);
+        ASSERT_TRUE((ret = netio_socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) != -1, err);
 
 	/* join the multicast group.. */
 	ASSERT_TRUE(inet_aton(mc_addr, &mreq.imr_multiaddr), err);
@@ -451,10 +462,10 @@ netio_new_listener(struct sockaddr *sa, socklen_t size,
 
 	switch (sa->sa_family) {
 	case AF_INET:
-		ret = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+		ret = netio_socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 		break;
 	case AF_INET6:
-		ret = socket(PF_INET6, SOCK_STREAM, IPPROTO_TCP);
+		ret = netio_socket(PF_INET6, SOCK_STREAM, IPPROTO_TCP);
 		break;
 	}
         if (ret == -1)
@@ -496,7 +507,7 @@ netio_new_unix_socket(char *unix_socket, mode_t mode,
         netio_sock_t *e = NULL;
         int option;
 
-	ret = socket(AF_UNIX, SOCK_STREAM, 0);
+	ret = netio_socket(AF_UNIX, SOCK_STREAM, 0);
         if (ret == -1)
                 goto err;
 
@@ -541,7 +552,7 @@ netio_connto(struct sockaddr *sa, socklen_t size,
 	switch (sa->sa_family) {
 	case AF_INET6: {
 		LOG_INFO("connecting to %s, port %d\n", addr.addr, addr.port);
-		ret = socket(PF_INET6, SOCK_STREAM, IPPROTO_TCP);
+		ret = netio_socket(PF_INET6, SOCK_STREAM, IPPROTO_TCP);
 
 #ifdef CONFIG_HIP_ENABLED
 #ifdef BIND_HIP_TO_DEFAULT_HIT
@@ -559,7 +570,7 @@ netio_connto(struct sockaddr *sa, socklen_t size,
 	}
 	case AF_INET: {
 		LOG_INFO("connecting to %s, port %d\n", addr.addr, addr.port);
-		ret = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+		ret = netio_socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 		break;
 	}
 	default:
@@ -600,12 +611,12 @@ netio_packet_connto(struct sockaddr *sa, socklen_t size)
 	switch (sa->sa_family) {
 	case AF_INET6: {
 		LOG_INFO("connecting to %s, port %d\n", addr.addr, addr.port);
-		ret = socket(PF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+		ret = netio_socket(PF_INET6, SOCK_DGRAM, IPPROTO_UDP);
 		break;
 	}
 	case AF_INET: {
 		LOG_INFO("connecting to %s, port %d\n", addr.addr, addr.port);
-		ret = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+		ret = netio_socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 		break;
 	}
 	default:
@@ -705,7 +716,7 @@ netio_get_generic_packet_socket(struct sockaddr *sa, int cache)
 	switch (sa->sa_family) {
 	case AF_INET:
 		if (!cache || generic_ipv4_socket == -1) {
-			s = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+			s = netio_socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 			MAKE_NONBLOCK(s);
 			if (cache)
 				generic_ipv4_socket = s;
@@ -714,7 +725,7 @@ netio_get_generic_packet_socket(struct sockaddr *sa, int cache)
 		break;
 	case AF_INET6:
 		if (!cache || generic_ipv6_socket == -1) {
-			s = socket(PF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+			s = netio_socket(PF_INET6, SOCK_DGRAM, IPPROTO_UDP);
 			ASSERT_TRUE(s != -1, err);
 			
 			/* get hit & bind the socket to that .. */

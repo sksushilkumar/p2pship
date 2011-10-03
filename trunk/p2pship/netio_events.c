@@ -35,7 +35,7 @@ netio_events_open(unsigned proto, unsigned group)
         int s = -1;
         struct sockaddr_nl addr;
 	
-	ASSERT_TRUE(((s = socket(AF_NETLINK, SOCK_RAW, proto)) != -1), err);
+	ASSERT_TRUE(((s = netio_socket(AF_NETLINK, SOCK_RAW, proto)) != -1), err);
         memset((void *)&addr, 0, sizeof(addr));
         addr.nl_family = AF_NETLINK;
         addr.nl_pid = getpid();
