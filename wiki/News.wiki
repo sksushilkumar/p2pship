@@ -1,5 +1,11 @@
 #summary News
 
+*30 September 2011 / jookos*
+
+After a good amount of testing, we are confident enough to release version 3.0 of the p2pship package.  This includes the system updates made since 2.0, complete with the extensions (voicemail, multiparty and presence), which forms together a nice, complete, package for peer-to-peer communication.
+
+The final update pre-3.0 was a re-examination of the way HIPD is executed and how sockets are created (to prevent child processes from hogging them in case of a restart).  This version will be the base for future features, including a better IPC interface and communication channel handling.
+
 *30 June 2011 / jookos*
 
 The [Voicemail] plugin / support has now officially been released! Pre-compiled packages are available in the HIIT repository, and the source can be found right here on Google Code.  The feature allows you to both leave messages for friends that are currently offline or unavailable, as well as have friends leave messages for you locally when away. 
