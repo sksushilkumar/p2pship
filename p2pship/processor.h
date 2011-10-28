@@ -187,6 +187,7 @@ int processor_create_worker(const char *type, void (*func)(processor_worker_t*),
 			    void (*kill_func)(processor_worker_t*));
 
 int processor_kill_existing_pid();
+int processor_kill_all_existing();
 int processor_record_pid();
 int processor_cleanup_pid();
 

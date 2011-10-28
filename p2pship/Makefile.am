@@ -32,7 +32,7 @@ extra_sources += media.c
 endif
 
 if DBUS_ENABLED
-extra_sources += osso_dbus.c
+extra_sources += dbus_server.c
 endif
 
 if GTKUI_ENABLED

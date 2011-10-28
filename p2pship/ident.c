@@ -86,6 +86,10 @@ static ship_ht_t *default_services = 0;
 /* whether to ignore all validities for peer certs */
 static int ignore_cert_validity = 0;
 
+/* the openssl locks */
+static SHIP_LOCK **lock_cs = 0;
+
+
 #ifdef CONFIG_OP_ENABLED
 /* whether we should use op identities for previously unknown identities */
 static int use_op_for_unknown = 0;
@@ -194,16 +198,44 @@ ident_cb_events(char *event, void *data, ship_pack_t *eventdata)
 	}
 }
 
+static void
+ident_locking_callback(int mode, int type, char *file, int line)
+{
+	if (mode & CRYPTO_LOCK) {
+		LOCK_ACQ(lock_cs[type]);
+	} else {
+		LOCK_RELEASE(lock_cs[type]);
+	}
+}
+
+static unsigned long
+ident_thread_id(void)
+{
+	unsigned long ret;
+	ret=(unsigned long)pthread_self();
+	return(ret);
+}
+
 /* inits the identity manager */
 int
 ident_module_init(processor_config_t *config)
 {
-	int ret = -1;
+	int ret = -1, i;
 	
         LOG_INFO("Initing the identity module\n");
 
 	OpenSSL_add_all_digests();
 	OpenSSL_add_all_ciphers();
+
+	/* init the multithreading support in openssl, adapted from
+	   the openssl example into ship-speak */
+	ASSERT_TRUE(lock_cs = (SHIP_LOCK**)mallocz(CRYPTO_num_locks() * sizeof(SHIP_LOCK*)), err);
+	for (i=0; i < CRYPTO_num_locks(); i++) {
+		LOCK_INIT(lock_cs[i]);
+		ASSERT_TRUE(lock_cs[i], err);
+	}
+	CRYPTO_set_id_callback((unsigned long (*)())ident_thread_id);
+	CRYPTO_set_locking_callback((void (*)())ident_locking_callback);
 
 	ASSERT_TRUE(default_services = ship_ht_new(), err);
 	ident_cb_config_update(config, NULL, NULL);
@@ -735,6 +767,8 @@ ident_save_identities_now()
 void 
 ident_module_close()
 {
+	int i;
+
         LOG_INFO("closing the identity module\n");
 	ident_clear_idents();
 	ship_list_empty_with(foreign_idents, ident_reg_free);
@@ -745,6 +779,14 @@ ident_module_close()
 	ship_ht_free(ident_service_handlers);
 	ship_ht_free(default_services);
 	EVP_cleanup();
+
+	CRYPTO_set_locking_callback(NULL);
+	if (lock_cs) {
+		for (i=0; i < CRYPTO_num_locks(); i++) {
+			LOCK_FREE(lock_cs[i]);
+		}
+		freez(lock_cs);
+	}
 }
 
 /* clears the idents & cas */

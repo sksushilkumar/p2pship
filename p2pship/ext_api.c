@@ -847,6 +847,7 @@ static int
 extapi_handle_forward_with_auth(netio_http_conn_t *conn, char *to, int port)
 {
 	char *auth = 0;
+	unsigned char *decauth = NULL;
 	int ret = -1;
 
 	if ((auth = netio_http_get_header(conn, "Proxy-Authorization"))) {
@@ -856,21 +857,21 @@ extapi_handle_forward_with_auth(netio_http_conn_t *conn, char *to, int port)
 		auth = strchr(auth, ' ');
 		if (auth) auth++;
 					
-		auth = ship_decode_base64(auth, strlen(auth), &len);
-		if (auth && len > 0) {
+		decauth = ship_decode_base64(auth, strlen(auth), &len);
+		if (decauth && len > 0) {
 			char *passwd = 0;
 						
-			auth[len] = 0;
-			if ((passwd = strchr(auth, ':'))) {
+			decauth[len] = 0;
+			if ((passwd = strchr((char*)decauth, ':'))) {
 				passwd[0] = 0;
 				passwd++;
 			}
 					
-			if (!strlen(auth) || ident_has_ident(auth, passwd)) {
-				ret = extapi_handle_forward(conn, to, port, auth, passwd);
+			if (!strlen((char*)decauth) || ident_has_ident((char*)decauth, passwd)) {
+				ret = extapi_handle_forward(conn, to, port, (char*)decauth, passwd);
 			}
 		}
-		freez(auth);
+		freez(decauth);
 	}
 				
 	if (ret < 0) {

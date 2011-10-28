@@ -35,11 +35,13 @@
 #include "netio_events.h"
 #include "netio_http.h"
 #include "addrbook.h"
-#include "osso_dbus.h"
+#include "dbus_server.h"
 #include "resourceman.h"
 
-#ifdef CONFIG_START_GTK
+#ifdef CONFIG_START_GLIB_MAIN_LOOP
 #include <glib.h>
+#endif
+#ifdef CONFIG_START_GTK
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
 #endif
@@ -102,7 +104,8 @@ print_usage()
         USER_ERROR("  -c [FILE]                  read configuration from [FILE]\n");
 	USER_ERROR("                             (%s)\n", 
 		   processor_config_string(config, P2PSHIP_CONF_CONF_FILE));
-        USER_ERROR("  -k                         kill existing p2pship\n");
+        USER_ERROR("  -k                         kill existing p2pship for user\n");
+        USER_ERROR("  -K                         kill (or try to) ALL existing p2pship instances\n");
         USER_ERROR("  -R                         autoregister previous UAs\n");
         USER_ERROR("  -r [FILE]                  use [FILE] as the autoregister cache\n");
 	USER_ERROR("                             (%s)\n", 
@@ -222,6 +225,7 @@ main(int argc, char **argv)
 	int flag_quiet = 0;
 	int log_to_file = 0;
 	int console_only = 0;
+	int do_test = 0; // do whatever the test of the day is
 
 	xmlInitParser();
 	xmlInitThreads();
@@ -294,7 +298,7 @@ main(int argc, char **argv)
 	processor_config_get_string(config2, P2PSHIP_CONF_CONF_FILE, &conf_file);
 
         opterr = 0;
-        while ((c = getopt_long(argc, argv, "LqvhDVs:c:p:i:Rr:k", long_options, &index)) != -1) {
+        while ((c = getopt_long(argc, argv, "LqvhDVs:c:p:i:Rr:kKt", long_options, &index)) != -1) {
                 
                 if (!c) {
                         if (!strcmp(long_options[index].name, "threads")) {
@@ -432,6 +436,12 @@ main(int argc, char **argv)
                 case 'k':
 			processor_kill_existing_pid();
 			break;
+                case 'K':
+			processor_kill_all_existing();
+			break;
+                case 't':
+			do_test = 1;
+			break;
                 case 'h':
                 case '?':
                 default:
@@ -468,9 +478,11 @@ main(int argc, char **argv)
 		p2pship_log_file = processor_config_string(config, P2PSHIP_CONF_LOG_FILE);
 	}
 
-#ifdef CONFIG_START_GTK
+#ifdef CONFIG_START_GLIB_MAIN_LOOP
 	if (!g_thread_supported())
 		g_thread_init(NULL);
+#endif
+#ifdef CONFIG_START_GTK
 	gdk_threads_init();
 	gdk_threads_enter();
 	gtk_init(&argc, &argv);
@@ -631,6 +643,7 @@ main(int argc, char **argv)
 #ifdef REF_DEBUG2
 			//			processor_tasks_add_periodic(ship_debug_reportref, 10000);
 #endif
+
 			processor_run();
 		}
 	}
