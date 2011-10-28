@@ -26,6 +26,11 @@ AC_SUBST(hipl_common_include_paths, "-I ../opendht")
 # the command-line flags
 #
 
+AC_ARG_ENABLE(glib,
+             AC_HELP_STRING([--enable-glib],
+                            [Enable GLib mainloop (default is NO)]),
+             [ac_cv_use_glib=$enableval], [ac_cv_use_glib=no])
+
 AC_ARG_ENABLE(gtk,
              AC_HELP_STRING([--enable-gtk],
                             [Enable GTK mainloop (default is NO)]),
@@ -178,7 +183,7 @@ AC_CACHE_CHECK([whether to use maemo configuration],
 if test x"$ac_cv_use_maemo" = x"yes"; then
 	      ac_cv_use_dbus="yes"
 	      ac_cv_use_maemoui="yes"
-	      ac_cv_use_libebook="yes"
+	      ac_cv_use_libebook="no"
 	      ac_cv_use_mc="yes"
 	      ac_cv_use_abs="yes"
 	      ac_cv_use_maemoexts="yes"
@@ -206,7 +211,7 @@ if test x"$ac_cv_use_media" = x"yes"; then
 	AC_SUBST(MEDIA_LIBS)
 	CFLAGS="$CFLAGS $MEDIA_CFLAGS"
 	LIBS="$LIBS $MEDIA_LIBS"
-        ac_cv_use_gtk="yes"
+        ac_cv_use_glib="yes"
 fi
 AM_CONDITIONAL(MEDIA_ENABLED, test x"$ac_cv_use_media" = x"yes")
 
@@ -215,9 +220,19 @@ AC_CACHE_CHECK([whether to enable python extensions],
                [ac_cv_use_python], [ac_cv_use_python=yes])
 if test x"$ac_cv_use_python" = x"yes"; then
         AC_DEFINE(CONFIG_PYTHON_ENABLED, [1], [Use Python extensions])
-	AC_CHECK_LIB([python2.5],[Py_Initialize],,AC_MSG_ERROR([This application needs the python2.5 library]),[-lpython2.5])
-	CFLAGS="$CFLAGS -I/usr/include/python2.5"
-fi
+	PY_POTENTIAL_VERSIONS="2.7 2.6 2.5 2.4"
+	PY_VERSION=""
+	for v in $PY_POTENTIAL_VERSIONS; do	    
+	    AC_CHECK_FILE(/usr/include/python$v/Python.h, [PY_VERSION="$v"], continue)	    
+	    AC_CHECK_LIB([python$v],[Py_Initialize],,continue,[-lpython$v])
+	    CFLAGS="$CFLAGS -I/usr/include/python$v"
+	    break
+	done
+
+	if test "x$PY_VERSION" = "x"; then
+	   AC_MSG_ERROR([This application needs a Python ($PY_POTENTIAL_VERSIONS) library])
+        fi
+fi	   		      	
 AM_CONDITIONAL(PYTHON_ENABLED, test x"$ac_cv_use_python" = x"yes")
 
 # op
@@ -326,13 +341,18 @@ AC_CACHE_CHECK([whether to use dbus],
                [ac_cv_use_dbus], [ac_cv_use_dbus=no])
 if test x"$ac_cv_use_dbus" = x"yes"; then
         AC_DEFINE(CONFIG_DBUS_ENABLED, [1], [Enable dbus interface])
-	PKG_CHECK_MODULES(OSSO, libosso >= 2.0)
 
-	AC_SUBST(OSSO_CFLAGS)
-	AC_SUBST(OSSO_LIBS)
-	CFLAGS="$CFLAGS $OSSO_CFLAGS"
-	LIBS="$LIBS $OSSO_LIBS"
-        ac_cv_use_gtk="yes"
+	if test x"$ac_cv_use_maemoexts" = x"yes"; then
+		PKG_CHECK_MODULES(DBUS, libosso >= 2.0)
+	else
+		PKG_CHECK_MODULES(DBUS, dbus-1)
+	fi
+	AC_SUBST(DBUS_CFLAGS)
+	AC_SUBST(DBUS_LIBS)
+	CFLAGS="$CFLAGS $DBUS_CFLAGS"
+	LIBS="$LIBS $DBUS_LIBS"
+
+        ac_cv_use_glib="yes"
 fi
 AM_CONDITIONAL(DBUS_ENABLED, test x"$ac_cv_use_dbus" = x"yes")
 
@@ -385,7 +405,7 @@ if test x"$ac_cv_use_libebook" = x"yes"; then
 	AC_SUBST(LIBEBOOK_LIBS)
 	CFLAGS="$CFLAGS $LIBEBOOK_CFLAGS"
 	LIBS="$LIBS $LIBEBOOK_LIBS"
-        ac_cv_use_gtk="yes"
+        ac_cv_use_glib="yes"
 fi
 AM_CONDITIONAL(LIBEBOOK_ENABLED, test x"$ac_cv_use_libebook" = x"yes")
 
@@ -400,7 +420,7 @@ if test x"$ac_cv_use_mc" = x"yes"; then
 	AC_SUBST(MC_LIBS)
 	CFLAGS="$CFLAGS $MC_CFLAGS"
 	LIBS="$LIBS $MC_LIBS"
-        ac_cv_use_gtk="yes"
+        ac_cv_use_glib="yes"
 fi
 AM_CONDITIONAL(MC_ENABLED, test x"$ac_cv_use_mc" = x"yes")
 
@@ -430,9 +450,23 @@ AS_IF([test x"$ac_cv_use_gtk" = "xyes"], [
 	AC_SUBST(GTL_LIBS)
 	CFLAGS="$CFLAGS $GTK_CFLAGS"
 	LIBS="$LIBS $GTK_LIBS"
+        ac_cv_use_glib="yes"
 ])
 AM_CONDITIONAL(GTK_ENABLED, test x"$ac_cv_use_gtk" = x"yes")
 
+# the glib mainloop. activated by default in certain other ones..
+AC_CACHE_CHECK([whether to enable glib mainloop],
+               [ac_cv_use_glib], [ac_cv_use_gtk=glib])
+AS_IF([test x"$ac_cv_use_glib" = "xyes"], [
+        AC_DEFINE(CONFIG_START_GLIB_MAIN_LOOP, [1], [Startup the GLib main loop])
+	PKG_CHECK_MODULES(GLIB, glib-2.0)
+
+	AC_SUBST(GLIB_CFLAGS)
+	AC_SUBST(GTL_LIBS)
+	CFLAGS="$CFLAGS $GLIB_CFLAGS"
+	LIBS="$LIBS $GLIB_LIBS"
+])
+AM_CONDITIONAL(GLIB_ENABLED, test x"$ac_cv_use_glib" = x"yes")
 
 
 # headers
