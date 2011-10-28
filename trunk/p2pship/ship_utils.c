@@ -1510,7 +1510,7 @@ ship_get_random_base64(const int bytes)
 	ASSERT_ZERO(ship_get_random(tmp, bytes), err);
 
 	/* hmac key and shared secret */
-	ret = ship_encode_base64((char*)tmp, bytes);
+	ret = ship_encode_base64(tmp, bytes);
  err:
 	freez(tmp);
 	return ret;

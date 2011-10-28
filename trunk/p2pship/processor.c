@@ -36,8 +36,13 @@
 #include "pymod.h"
 #endif
 
-#ifdef CONFIG_START_GTK
+#ifdef CONFIG_START_GLIB_MAIN_LOOP
 #include <glib.h>
+
+GMainLoop *mainloop = NULL;
+
+#endif
+#ifdef CONFIG_START_GTK
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
 #endif
@@ -111,14 +116,23 @@ processor_read_pid()
 	
 	if (ship_file_exists(lf) && (f = fopen(lf, "r"))) {
 		char buf[64];
-		int r;
 		
-		r = fread(buf, sizeof(char), sizeof(buf)-1, f);
-		pid = atoi(buf);
+		if (fread(buf, sizeof(char), sizeof(buf)-1, f) > 0)
+			pid = atoi(buf);
 		fclose(f);
 	}
 	return pid;
 
+}
+
+/* kills all applications (or tries to) that have been started from
+   this executable. This seemed necessary for the meamo system as it  */
+int
+processor_kill_all_existing()
+{
+	TODO("native kill-all instances\n");
+	/* on second thought: this is easier done via the init script */
+	return 0;
 }
 
 int
@@ -553,21 +567,33 @@ processor_get_config()
 	return pconfig;
 }
 
-#ifdef CONFIG_START_GTK
+#ifdef CONFIG_START_GLIB_MAIN_LOOP
+
 static void
 processor_gtk_run(processor_worker_t *w)
 {
-	/* this should be in its own thread! */
-	LOG_INFO("starting gtk main loop..\n");
+	LOG_INFO("starting glib/gtk main loop..\n");
+#ifdef CONFIG_START_GTK
 	gtk_main();
 	gdk_threads_leave();
+#else
+	mainloop = g_main_loop_new(g_main_context_default(), FALSE);
+	g_main_loop_run(mainloop);
+#endif
 }
 
 static void
 processor_gtk_kill(processor_worker_t* w)
 {
-	LOG_INFO("terminating gtk main loop..\n");
+	LOG_INFO("terminating glib/gtk main loop..\n");
+#ifdef CONFIG_START_GTK
 	gtk_main_quit();
+#else
+	if (mainloop) {
+		g_main_loop_quit(mainloop);
+		g_main_loop_unref(mainloop);
+	}
+#endif	
 }
 #endif
 
@@ -608,8 +634,8 @@ processor_init(processor_config_t *config)
 #endif
 	}
 
-#ifdef CONFIG_START_GTK
-	LOG_INFO("Starting dedicated gtk thread..\n");
+#ifdef CONFIG_START_GLIB_MAIN_LOOP
+	LOG_INFO("Starting dedicated glib/gtk thread..\n");
 	ASSERT_ZERO(processor_create_worker("gtk", processor_gtk_run, NULL, processor_gtk_kill), err);
 #endif
 

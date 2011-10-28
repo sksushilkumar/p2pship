@@ -62,7 +62,7 @@ ship_decode_base64(char *input, int length, int* outlen)
 
 /* Encode something to base-64 */
 char *
-ship_encode_base64(char *input, int length)
+ship_encode_base64(unsigned char *input, int length)
 {
 	char *ret = NULL;
 	unsigned char in[48];
@@ -90,15 +90,15 @@ err:
 }
 
 /* Decode base-64 */
-char *
+unsigned char *
 ship_decode_base64(char *input, int length, int* outlen)
 {
-	char *ret = NULL;
+	unsigned char *ret = NULL;
 	unsigned char in[64];
 	int blen, len=0, i=0, ilen, olen=0;
 	
 	blen = (((length + 3) / 4) * 3);
-	ASSERT_TRUE(ret = (char *)mallocz(blen), err); 
+	ASSERT_TRUE(ret = (unsigned char *)mallocz(blen), err); 
 	
 	while(i<length){
 		
@@ -126,10 +126,10 @@ err:
 char *
 ship_hash_sha1_base64(char *data, int datalen)
 {
-	char *digest = 0;
+	unsigned char *digest = 0;
 	char *ret = 0;
 	
-	ASSERT_TRUE(digest = (char *)mallocz(SHA_DIGEST_LENGTH), err);
+	ASSERT_TRUE(digest = mallocz(SHA_DIGEST_LENGTH), err);
 	ASSERT_TRUE(SHA1((unsigned char*)data, datalen, (unsigned char*)digest), err);
 	
 	ASSERT_TRUE(ret = ship_encode_base64(digest, SHA_DIGEST_LENGTH), err);
@@ -182,7 +182,7 @@ ship_hmac_sha1_base64(const char *key, const char* secret)
 	/* hmac key and shared secret */
 	ASSERT_TRUE((hmac_key = mallocz(SHA_DIGEST_LENGTH * sizeof(unsigned char) + 1)), err);
 	ASSERT_TRUE(HMAC(EVP_sha1(), secret, strlen(secret), (unsigned char*)key, strlen(key), hmac_key, (unsigned int*)&klen), err);
-	hmac_key64 = ship_encode_base64((char*)hmac_key, klen);
+	hmac_key64 = ship_encode_base64(hmac_key, klen);
  err:
 	freez(hmac_key);
 	return hmac_key64;
@@ -302,7 +302,7 @@ ship_encrypt64 (const char *algo, unsigned char *key, unsigned char *iv, unsigne
 	int clen = 0;
 	
 	ASSERT_TRUE(tmp = ship_encrypt(algo, key, iv, text, &clen), err);
-	cipher64 = (unsigned char *)ship_encode_base64((char*)tmp, clen);
+	cipher64 = (unsigned char *)ship_encode_base64(tmp, clen);
 err:
 	freez(tmp);
 	return cipher64;

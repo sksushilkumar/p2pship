@@ -248,7 +248,7 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 			olclient_storage_entry_t* e = NULL;
 			
 			/* find the resource(s), submit */
-			LOG_DEBUG("got request for '%s'\n", key);
+			LOG_VDEBUG("got request for '%s'\n", key);
 			olclient_storage_find_entries(key, resps);
 			while ((e = ship_list_pop(resps))) {
 				/* create response */
@@ -259,7 +259,7 @@ ol_broadcast_packet_cb(int s, char *data, size_t len,
 					strl = strlen(resp);
 					memcpy(resp + strl, e->data, e->data_len);
 					resp[strl + e->data_len] = 0;
-					LOG_DEBUG("sending response!\n", resp);
+					LOG_DEBUG("sending response for key %s\n", key);
 					LOG_VDEBUG("the response: '%s'\n", resp);
 					netio_packet_send(s, resp, strl+e->data_len, sa, addrlen);
 					free(resp);

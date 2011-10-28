@@ -249,6 +249,7 @@ media_parse_pipeline(const char *pipeline, media_observer_cb callback, void *use
 		gst_object_unref(GST_OBJECT(bus));
 	}
  err:
+	LOG_DEBUG("pipeline launched with code %d\n", ret);
 	return ret;
 }
 

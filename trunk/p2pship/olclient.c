@@ -400,8 +400,8 @@ olclient_cb_get(char *value, int status,
 			ship_hash("sha256", (unsigned char *)l->extra->cipher_secret, &cipher_key);
 			
 			if (cipher_key && iv) {
-				cipher_key64 = (unsigned char *)ship_encode_base64((char*)cipher_key, 32);
-				iv64 = (unsigned char *)ship_encode_base64((char*)iv, 16);
+				cipher_key64 = (unsigned char *)ship_encode_base64(cipher_key, 32);
+				iv64 = (unsigned char *)ship_encode_base64(iv, 16);
 				if (!(res_value = (char*)ship_decrypt64(CRYPT_ALGO, cipher_key, iv, (unsigned char*)value)))
 					LOG_WARN("Cannot decrypt the data with the cipher_secret %s\n", cipher_key);
 			}
@@ -1202,8 +1202,8 @@ olclient_parse_signed_xml_record(const char *data, X509 **cert, char **signature
 	*data2 = 0;
 	*cert = 0;
 
-	ASSERT_TRUE(strlen(data), err, "Empty data record!\n");
-	ASSERT_TRUE(data[0] == '<', err, "Data is not XML!\n");
+	ASSERT_TRUES(strlen(data), err, "Empty data record!\n");
+	ASSERT_TRUES(data[0] == '<', err, "Data is not XML!\n");
 	ASSERT_TRUE(doc = xmlParseMemory(data, strlen(data)), err);
 	ASSERT_TRUE(cur = xmlDocGetRootElement(doc), err);
 	ASSERT_ZERO(xmlStrcmp(cur->name, (xmlChar*)OLCLIENT_PKG), err);
@@ -1246,6 +1246,7 @@ olclient_verify_data_sig(olclient_signer_t *cert, const char *data, char **signe
 	char *res = NULL, *key = 0;
 	time_t expires;
 	char *data2 = 0, *data3 = 0, *signature = 0, *algo = 0;
+	unsigned char *b64dec = 0;
 	X509 *cert2 = 0;
 	int len;
 
@@ -1265,11 +1266,10 @@ olclient_verify_data_sig(olclient_signer_t *cert, const char *data, char **signe
 	ASSERT_TRUE(pu_key = EVP_PKEY_get1_RSA(pkey), err);
 	ASSERT_TRUE(algo = (char *)mallocz(SHA_DIGEST_LENGTH), err);
 	ASSERT_TRUE(SHA1((unsigned char*)data2, strlen(data2), (unsigned char*)algo), err);
-	ASSERT_TRUE(data3 = ship_decode_base64(signature, strlen(signature), &len), err);
-	ASSERT_TRUE(RSA_verify(NID_sha1, (unsigned char*)algo, SHA_DIGEST_LENGTH, (unsigned char*)data3, len, pu_key), err, "signature mis-match!\n");
+	ASSERT_TRUE(b64dec = ship_decode_base64(signature, strlen(signature), &len), err);
+	ASSERT_TRUE(RSA_verify(NID_sha1, (unsigned char*)algo, SHA_DIGEST_LENGTH, b64dec, len, pu_key), err, "signature mis-match!\n");
 	
 	/* store the signer into the signer_aor field */
-	freez(data3);
 	ASSERT_TRUE(data3 = ident_data_x509_get_cn(X509_get_subject_name(cert)), err);
 	ASSERT_ZERO(ident_set_aor(signer, data3), err);
 	
@@ -1279,6 +1279,7 @@ olclient_verify_data_sig(olclient_signer_t *cert, const char *data, char **signe
 	/* should we check expires / key ?? */
 	
  err:
+	freez(b64dec);
 	freez(data2);
 	freez(data3);
 	freez(signature);
@@ -1391,7 +1392,7 @@ olclient_sign_xml_record(const char *data, ident_t *ident, const int addcert)
 	xmlChar *xmlbuf = NULL;
 	xmlNodePtr tree = NULL;
 	char *digest = NULL;
-	char *sign = NULL;
+	unsigned char *sign = NULL;
 	char *sign_64e = NULL;
 	char *cert = NULL;
 	int bufsize;
@@ -1420,7 +1421,7 @@ olclient_sign_xml_record(const char *data, ident_t *ident, const int addcert)
 #endif
 			ASSERT_TRUE(digest = (char *)mallocz(SHA_DIGEST_LENGTH), err);
 			ASSERT_TRUE(SHA1((unsigned char *)data, strlen(data), (unsigned char *)digest), err);
-			ASSERT_TRUE(sign = (char *)mallocz(1024), err);	
+			ASSERT_TRUE(sign = (unsigned char *)mallocz(1024), err);	
 			ASSERT_TRUE(RSA_sign(NID_sha1, (unsigned char *)digest, SHA_DIGEST_LENGTH, (unsigned char *)sign, &siglen, ident->private_key), err);
 			ASSERT_TRUE(sign_64e = ship_encode_base64(sign, siglen), err);
 #ifdef CONFIG_OP_ENABLED
@@ -1512,7 +1513,7 @@ olclient_encrypt_for_someone(const char *data, buddy_t *receiver)
 	
 	/* encrypt the key and iv using a receiver's public key */
 	ASSERT_TRUE((len=ship_rsa_public_encrypt(pu_key, key_and_iv, (EVP_MAX_KEY_LENGTH + EVP_MAX_IV_LENGTH), &encrypted_key_and_iv))>0, err);
-	ASSERT_TRUE(encrypted_key_and_iv64 = (unsigned char*)ship_encode_base64((char *)encrypted_key_and_iv, len), err);
+	ASSERT_TRUE(encrypted_key_and_iv64 = (unsigned char*)ship_encode_base64(encrypted_key_and_iv, len), err);
 	
 	/* concatenate encryped key + encrypted data */
 	total_len = strlen((char*)encrypted_key_and_iv64) + strlen((char*)encrypted_data64) + 1;
@@ -1652,7 +1653,7 @@ olclient_storage_find_entries(char *key, ship_list_t *list)
 		last = ptr;
 	}
 	ship_unlock(entries);
-	LOG_DEBUG("found %d entries for key '%s'\n", ret, key);
+	LOG_VDEBUG("found %d entries for key '%s'\n", ret, key);
 	
 	return ret;
 }

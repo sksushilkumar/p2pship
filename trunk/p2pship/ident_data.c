@@ -625,8 +625,8 @@ ident_create_reg_xml(reg_package_t *reg, ident_t *ident, char **text)
 	xmlChar *xmlbuf = NULL;
 	xmlNodePtr tree = NULL;
 	char *reg_data = NULL;
-	char *digest = NULL;
-	char *sign = NULL;
+	unsigned char *digest = NULL;
+	unsigned char *sign = NULL;
 	char *sign_64e = NULL;
 	char *cert = NULL;
 	int bufsize, ret = -1;
@@ -655,11 +655,11 @@ ident_create_reg_xml(reg_package_t *reg, ident_t *ident, char **text)
 		} else {
 #endif
 			/* signature value */
-			ASSERT_TRUE(digest = (char *)mallocz(SHA_DIGEST_LENGTH), err);
-			ASSERT_TRUE(SHA1((unsigned char*)reg_data, strlen(reg_data), (unsigned char*)digest), err);
+			ASSERT_TRUE(digest = mallocz(SHA_DIGEST_LENGTH), err);
+			ASSERT_TRUE(SHA1((unsigned char*)reg_data, strlen(reg_data), digest), err);
 			
-			ASSERT_TRUE(sign = (char *)mallocz(1024), err);	
-			ASSERT_TRUE(RSA_sign(NID_sha1, (unsigned char*)digest, SHA_DIGEST_LENGTH, (unsigned char*)sign, &siglen, ident->private_key), err);			
+			ASSERT_TRUE(sign = mallocz(1024), err);	
+			ASSERT_TRUE(RSA_sign(NID_sha1, digest, SHA_DIGEST_LENGTH, sign, &siglen, ident->private_key), err);			
 			ASSERT_TRUE(sign_64e = ship_encode_base64(sign, siglen), err);
 #ifdef CONFIG_OP_ENABLED
 		}
@@ -718,9 +718,9 @@ int
 ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 {
 	int ret = -1, len;
-	char *digest = NULL;
-	char *cdata = NULL;
-	char *sign = NULL;
+	unsigned char *digest = NULL;
+	char *cdata = NULL, *sub = NULL;
+	unsigned char *sign = NULL;
 	char *sign_64e = NULL;
 	char *sign_algo = NULL;
 	EVP_PKEY *pkey = NULL;
@@ -751,8 +751,8 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	
 	/* compute digest of reg-package cdata & verify the base encoded signature */
 	ASSERT_TRUE(cdata = ship_xml_get_child_field(cur, "data"), err);
-	ASSERT_TRUE(digest = (char *)mallocz(SHA_DIGEST_LENGTH), err);
-	ASSERT_TRUE(SHA1((unsigned char*)cdata, strlen(cdata), (unsigned char*)digest), err);
+	ASSERT_TRUE(digest = mallocz(SHA_DIGEST_LENGTH), err);
+	ASSERT_TRUE(SHA1((unsigned char*)cdata, strlen(cdata), digest), err);
 	
 	/* verify (we support only one algo..) */
 	ASSERT_TRUE(cur = ship_xml_get_child(cur, "signature"), err);
@@ -764,7 +764,7 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	}
 
 	ASSERT_TRUE(sign = ship_decode_base64(sign_64e, strlen(sign_64e), &len), err);
-	if (!RSA_verify(NID_sha1, (unsigned char*)digest, SHA_DIGEST_LENGTH, (unsigned char*)sign, len, public_key)) {
+	if (!RSA_verify(NID_sha1, digest, SHA_DIGEST_LENGTH, sign, len, public_key)) {
 		LOG_WARN("Signature not verified\n");
 		goto err;
 	}
@@ -780,16 +780,16 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 
 	/* read sip aor from cert, compare & require them to be the same */
 	freez(sign);
-	ASSERT_TRUE(sign = ident_data_x509_get_cn(X509_get_subject_name(reg->cert)), err);
-	ASSERT_ZERO(ident_set_aor(&(reg->sip_aor), sign), err);
-	ASSERT_ZERO(ident_set_name(&(reg->name), sign), err);
+	ASSERT_TRUE(sub = ident_data_x509_get_cn(X509_get_subject_name(reg->cert)), err);
+	ASSERT_ZERO(ident_set_aor(&(reg->sip_aor), sub), err);
+	ASSERT_ZERO(ident_set_name(&(reg->name), sub), err);
 	
-	freez(sign);
+	freez(sub);
 	xmlFree(result); result = NULL;		
 	ASSERT_TRUE(result = ship_xml_get_child_field(cur, "sip-aor"), err);
-	ASSERT_ZERO(ident_set_aor(&sign, result), err);	
+	ASSERT_ZERO(ident_set_aor(&sub, result), err);	
 
-	ASSERT_ZERO(strcmp(sign, reg->sip_aor), err);
+	ASSERT_ZERO(strcmp(sub, reg->sip_aor), err);
 
 	/* status, if present */
 	xmlFree(result); result = NULL;		
@@ -823,6 +823,7 @@ ident_reg_xml_to_struct(reg_package_t **__reg, const char *data)
 	ret = 0;
  err:
 	if (datadoc) xmlFreeDoc(datadoc);
+	freez(sub);
 	freez(sign);
 	freez(cdata);
 	freez(digest);
@@ -1474,7 +1475,8 @@ ident_data_get_pkey_base64(X509 *cert)
 {
 	EVP_PKEY *pkey = NULL;
 	BIO *bio = NULL;
-	char *ret = 0, *tmp = 0;
+	char *ret = 0;
+	unsigned char *tmp = 0;
 	int bufsize = 0;
 	
 	/* get key into public_key */
@@ -1491,6 +1493,7 @@ ident_data_get_pkey_base64(X509 *cert)
  err:
 	if (bio) BIO_free(bio);
 	if (pkey) EVP_PKEY_free(pkey);
+	freez(tmp);
 	return ret;
 }
 
@@ -1803,7 +1806,7 @@ int
 ident_data_bb_dump_ascii(ship_bloom_t *friends[], char **buf) 
 {
 	int ret = -1;
-	char *tmp = 0;
+	unsigned char *tmp = 0;
 	int len = 0, i, p = 0;
 	
 	/* format:
@@ -1819,7 +1822,7 @@ ident_data_bb_dump_ascii(ship_bloom_t *friends[], char **buf)
 		int s = ship_bloom_dump_size(friends[i]);
 		ship_inroll(i, &(tmp[p]), 1);
 		ship_inroll(s, &(tmp[p+1]), 2);
-		ship_bloom_dump(friends[i], &(tmp[p+3]));
+		ship_bloom_dump(friends[i], (char*)&(tmp[p+3]));
 		p += 3 + s;
 	}
 
@@ -1835,21 +1838,21 @@ int
 ident_data_bb_load_ascii(char *buf, ship_bloom_t *friends[])
 {
 	int ret = -1;
-	char *tmp = 0;
+	unsigned char *tmp = 0;
 	int len = 0, p = 0;
 	
 	ASSERT_TRUE(tmp = ship_decode_base64(buf, strlen(buf), &len), err);
 	while (p+3 < len) {
 		int level, size;
-		ship_unroll(level, &(buf[p]), 1);
-		ship_unroll(size, &(buf[p+1]), 2);
+		ship_unroll(level, &(tmp[p]), 1);
+		ship_unroll(size, &(tmp[p+1]), 2);
 
 		len -= 3;
 		if (level >= BLOOMBUDDY_MAX_LEVEL || size > len) {
 			ASSERT_TRUE(0, err);
 		} else {
 			ship_bloom_free(friends[level]);
-			ASSERT_TRUE(friends[level] = ship_bloom_load(&(buf[p+3]), size), err);
+			ASSERT_TRUE(friends[level] = ship_bloom_load((char*)&(tmp[p+3]), size), err);
 			len -= size;
 		}
 	}

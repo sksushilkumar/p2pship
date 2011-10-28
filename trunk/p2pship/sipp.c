@@ -1815,9 +1815,14 @@ sipp_handle_local_message_do(sipp_request_t *req)
  end:	
 
 	/* and finally, run the post processors */
+	expire = ret;
 	sipp_run_postprocessors(req, remote_ident_aor, &ret);
 	sip = req->evt->sip; // might have changed.
 	
+	if (expire != ret) {
+		LOG_DEBUG("post processor(s) changed the return action from code %d to %d\n", expire, ret);
+	}
+
 	/* .. and then we could run the remote client handlers .. */
 
 	/* and final-final, forward the message if that was the plan */

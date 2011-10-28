@@ -116,6 +116,8 @@ unsigned long ship_systemtimemillis();
 /**
  * lock / condition variables handling 
  */
+#define SHIP_LOCK pthread_mutex_t
+
 #define LOCK_DECL(name) \
     pthread_mutex_t *name
 
@@ -694,8 +696,8 @@ char *ship_urlencode(char *str);
 char *ship_addparam_urlencode(char *key, char *val, char *buf, int *size, int *len);
 char *ship_pangoify(char *str);
 
-char *ship_encode_base64(char *input, int length);
-char *ship_decode_base64(char *input, int length, int* outlen);
+char *ship_encode_base64(unsigned char *input, int length);
+unsigned char *ship_decode_base64(char *input, int length, int* outlen);
 char *ship_hash_sha1_base64(char *data, int datalen);
 
 time_t ship_parse_time(char *str);
