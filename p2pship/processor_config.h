@@ -27,6 +27,7 @@
 #define P2PSHIP_CONF_SHIP_PORT "ship_port"
 #define P2PSHIP_CONF_SHIP_PORT_RANGE "ship_port_range"
 #define P2PSHIP_CONF_IFACES "ship_ifaces"
+#define P2PSHIP_CONF_IFACES_PRIVATE "ship_iface_private"
 
 #define P2PSHIP_CONF_OL_SECRET "ol_secret"
 
