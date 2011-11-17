@@ -30,8 +30,8 @@
 /* the RVS's we are registered to */
 static ship_list_t *rvs_arr = NULL;
 
-/* how often the rvs registration should be updated */
-#define RVS_UPDATE_PERIOD 600
+/* how often the rvs registration should be updated, in seconds */
+#define RVS_UPDATE_PERIOD 60
 
 static int hipapi_update_rvs_registration();
 
@@ -102,6 +102,14 @@ hipapi_check_hipd()
 	}
 }
 
+static void
+hipapi_cb_events(char *event, void *data, ship_pack_t *eventdata)
+{
+	if (str_startswith(event, "net_")) {
+		hipapi_update_rvs_registration();
+	}
+}
+
 /* inits the hipapi */
 int 
 hipapi_init(processor_config_t *config)
@@ -131,6 +139,8 @@ hipapi_init(processor_config_t *config)
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_NAT_TRAVERSAL, hipapi_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_RVS, hipapi_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_AUTOSTART, hipapi_cb_config_update);
+
+ 	ASSERT_ZERO(processor_event_receive("net_*", 0, hipapi_cb_events), err);
 	
 	ret = 0;
 err:

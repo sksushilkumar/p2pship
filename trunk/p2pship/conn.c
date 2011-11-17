@@ -120,6 +120,7 @@ static int conn_allow_nonhip = 0;
 /* the keepalive counter / time */
 static int keepalive_sent = 0;
 static int conn_keepalive = 0;
+static int conn_ifaces_private = 0;
 
 static char** conn_ifaces = 0;
 static int conn_ifaces_count = 0;
@@ -520,12 +521,29 @@ conn_cb_events(char *event, void *data, ship_pack_t *eventdata)
 static void
 conn_cb_config_update(processor_config_t *config, char *k, char *v)
 {
+	char *inifs;
+
 #ifdef CONFIG_HIP_ENABLED	
 	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_ALLOW_NONHIP,
 					      &conn_allow_nonhip), err);
 #endif
 	ASSERT_ZERO(processor_config_get_int(config, P2PSHIP_CONF_CONN_KEEPALIVE,
 					     &conn_keepalive), err);
+	ASSERT_ZERO(processor_config_get_bool(config, P2PSHIP_CONF_IFACES_PRIVATE,
+					      &conn_ifaces_private), err);
+
+        ASSERT_ZERO(processor_config_get_int(config, P2PSHIP_CONF_SHIP_PORT, &original_conn_ship_port), err);
+        ASSERT_ZERO(processor_config_get_int(config, P2PSHIP_CONF_SHIP_PORT_RANGE, &conn_ship_port_range), err);
+
+        /* check that ifaces are valid */
+	ship_tokens_free(conn_ifaces, conn_ifaces_count);
+	ASSERT_ZERO(processor_config_get_string(config, P2PSHIP_CONF_IFACES, &inifs), err);
+	ASSERT_ZERO(ship_tokenize_trim(inifs, strlen(inifs), &conn_ifaces, &conn_ifaces_count, ','), err);
+	ASSERT_ZERO(conn_validate_ifaces(conn_ifaces, conn_ifaces_count), err);
+	ASSERT_ZERO(conn_rebind(), err);
+	
+	if (k)
+		processor_event_generate_pack("net_ip_changed", NULL);
 	return;
  err:
 	PANIC("Error getting configuration values");
@@ -536,16 +554,25 @@ conn_cb_config_update(processor_config_t *config, char *k, char *v)
 int
 conn_init(processor_config_t *config)
 {
-	char *inifs;
-
         LOG_INFO("initing the conn module\n");
 
 	ASSERT_ZERO(ship_get_random(conn_instance_id, sizeof(conn_instance_id)), err);
+        ASSERT_TRUE(conn_all_conn = ship_obj_list_new(), err);
+
+	ASSERT_TRUE(conn_lis_sockets = ship_list_new(), err);
+	ASSERT_TRUE(conn_lis_socket_addrs = ship_list_new(), err);
+
+	ASSERT_TRUE(conn_waiting_packets = ship_obj_list_new(), err);
+	ASSERT_TRUE(conn_completed_packets = ship_obj_ht_new(), err);
 
 #ifdef CONFIG_HIP_ENABLED	
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_ALLOW_NONHIP, conn_cb_config_update);
 #endif
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_CONN_KEEPALIVE, conn_cb_config_update);
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IFACES_PRIVATE, conn_cb_config_update);
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IFACES, conn_cb_config_update);
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SHIP_PORT, conn_cb_config_update);
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_SHIP_PORT_RANGE, conn_cb_config_update);
 	conn_cb_config_update(config, NULL, NULL);
 
 	/* capture net events so we can rebind to hits as hipd goes up & down */
@@ -556,23 +583,7 @@ conn_init(processor_config_t *config)
 
 	/* init trust manager */
 	ASSERT_ZERO(trustman_init(config), err);
-
-        /* check that ifaces are valid */
-	ASSERT_ZERO(processor_config_get_string(config, P2PSHIP_CONF_IFACES, &inifs), err);
-	ASSERT_ZERO(ship_tokenize_trim(inifs, strlen(inifs), &conn_ifaces, &conn_ifaces_count, ','), err);
-	ASSERT_ZERO(conn_validate_ifaces(conn_ifaces, conn_ifaces_count), err);
 	
-        ASSERT_TRUE(conn_all_conn = ship_obj_list_new(), err);
-        ASSERT_ZERO(processor_config_get_int(config, P2PSHIP_CONF_SHIP_PORT, &original_conn_ship_port), err);
-        ASSERT_ZERO(processor_config_get_int(config, P2PSHIP_CONF_SHIP_PORT_RANGE, &conn_ship_port_range), err);
-
-	ASSERT_TRUE(conn_lis_sockets = ship_list_new(), err);
-	ASSERT_TRUE(conn_lis_socket_addrs = ship_list_new(), err);
-	ASSERT_ZERO(conn_rebind(), err);
-
-	ASSERT_TRUE(conn_waiting_packets = ship_obj_list_new(), err);
-	ASSERT_TRUE(conn_completed_packets = ship_obj_ht_new(), err);
-
 	ASSERT_ZERO(processor_tasks_add_periodic(conn_periodic, NULL, 5000), err);
 
         LOG_INFO("Started ship listener\n");
@@ -2330,6 +2341,49 @@ conn_cb_conn_opened(int s, struct sockaddr *sa, socklen_t addrlen)
  ** some misc. utility functions **
  **********************************/
 
+int 
+conn_addr_is_private(addr_t *addr)
+{
+	if (!addr)
+		return 0;
+	
+	if (((addr->family == AF_INET) && (str_startswith(addr->addr, "10.") ||
+					   str_startswith(addr->addr, "192.168.") ||
+					   str_startswith(addr->addr, "172.16.") ||
+					   str_startswith(addr->addr, "172.17.") ||
+					   str_startswith(addr->addr, "172.18.") ||
+					   str_startswith(addr->addr, "172.19.") ||
+					   str_startswith(addr->addr, "172.20.") ||
+					   str_startswith(addr->addr, "172.21.") ||
+					   str_startswith(addr->addr, "172.22.") ||
+					   str_startswith(addr->addr, "172.23.") ||
+					   str_startswith(addr->addr, "172.24.") ||
+					   str_startswith(addr->addr, "172.25.") ||
+					   str_startswith(addr->addr, "172.26.") ||
+					   str_startswith(addr->addr, "172.27.") ||
+					   str_startswith(addr->addr, "172.28.") ||
+					   str_startswith(addr->addr, "172.29.") ||
+					   str_startswith(addr->addr, "172.20.") ||
+					   str_startswith(addr->addr, "172.31."))))
+		return 1;
+	else
+		return 0;
+}
+
+int 
+conn_addr_is_local(addr_t *addr)
+{
+	if (!addr)
+		return 0;
+
+	if (((addr->family == AF_INET6) && str_startswith("0000:0000:0000:0000:0000:0000:0000:0001", addr->addr)) ||
+	    ((addr->family == AF_INET) && (str_startswith(addr->addr, "1.") ||
+					   str_startswith(addr->addr, "127."))))
+		return 1;
+	else
+		return 0;
+}
+
 
 /* Fills the connectivity-related values of the given reg package */
 int
@@ -2365,7 +2419,12 @@ conn_fill_reg_package(ident_t *ident, reg_package_t *pkg)
 	ptr = 0;
 	last = 0;
 	while ((addr = ship_list_next(pkg->ip_addr_list, &ptr))) {
-		if (hipapi_addr_is_hit(addr)) {
+		if (conn_addr_is_local(addr) ||
+		    (!conn_ifaces_private && conn_addr_is_private(addr))) {
+			ptr = last;
+			ship_list_remove(pkg->ip_addr_list, addr);
+			freez(addr);
+		} else if (hipapi_addr_is_hit(addr)) {
 			ptr = last;
 			ship_list_remove(pkg->ip_addr_list, addr);
 			ship_list_add(pkg->hit_addr_list, addr);

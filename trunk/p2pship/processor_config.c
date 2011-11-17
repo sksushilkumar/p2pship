@@ -67,6 +67,7 @@ static char* DEFAULT_CONFIGURATION[] =
 		P2PSHIP_CONF_SHIP_PORT, "5566", "The initial SHIP protocol port to try", "int", 0, 0,
 		P2PSHIP_CONF_SHIP_PORT_RANGE, "20", "The range (forward) or ship ports to try if first fails", "int", 0, 0,
 		P2PSHIP_CONF_IFACES, "ext", "Public SHIP interface to advertise", "string", 0, 0,
+		P2PSHIP_CONF_IFACES_PRIVATE, "yes", "Advertize private (RFC1918) addresses", "bool", 0, 0,
 
 		P2PSHIP_CONF_OL_SECRET, "", "Overlay key secret", "string", 0, 0,
 
