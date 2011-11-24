@@ -644,6 +644,10 @@ main(int argc, char **argv)
 			//			processor_tasks_add_periodic(ship_debug_reportref, 10000);
 #endif
 
+			if (do_test) {
+				LOG_DEBUG("Run tests..\n");
+			}
+
 			processor_run();
 		}
 	}
