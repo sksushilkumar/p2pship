@@ -16,20 +16,23 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 */
-#include <libosso.h>
-#include "osso_dbus.h"
+#include "dbus_server.h"
 #include "processor.h"
 #include "processor_config.h"
 
 #include "ship_utils.h"
+
+#ifdef CONFIG_MAEMOEXTS_ENABLED
+#include <libosso.h>
+static osso_context_t *osso_context = 0;
+#endif
 
 #undef LOG_DEBUG
 #undef LOG_INFO
 #include "ship_debug.h"
 #include "ui.h"
 
-static osso_context_t *osso_context = 0;
-
+#ifdef CONFIG_MAEMOEXTS_ENABLED
 /* callback for the dbus calls */
 static gint 
 dbus_req_handler(const gchar *interface, const gchar *method,
@@ -69,16 +72,17 @@ dbus_req_handler(const gchar *interface, const gchar *method,
 	
 	return OSSO_OK;
 }
-
+#endif
 
 int 
 dbus_init(processor_config_t *config)
 {
 	int ret = -1;
-	osso_return_t result;
 
 	LOG_DEBUG("Initing dbus..\n");
 	
+#ifdef CONFIG_MAEMOEXTS_ENABLED
+	osso_return_t result;
 	ASSERT_TRUE(osso_context = osso_initialize("org.p2pship.p2pship_libosso",
 						   "0.0.1", TRUE, NULL), err);
 	
@@ -90,7 +94,8 @@ dbus_init(processor_config_t *config)
 				   dbus_req_handler, osso_context);
 	
 	ASSERT_TRUE(result == OSSO_OK, err);
-
+#endif
+	ASSERT_TRUE(1, err);
 	ret = 0;
  err:
 	return ret;
