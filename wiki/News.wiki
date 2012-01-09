@@ -1,5 +1,11 @@
 #summary News
 
+*9 January 2012 / jookos*
+
+We'd like to announce that p2pship has now officially been used in withing the realms of Internet-based Virtual Worlds as a backend for the [http://www.realxtend.org realXtend] framework. Check out the [http://www.youtube.com/watch?v=g3EJ71dd8sY youtube video] as it's being used for communicating with fellow virtual characters!
+
+The integration was implemented as a SIP mobule by the realXtend people. Please visit their web site or the [http://p2psip.info/virtual.html SPEAR project site] for more info. Excellent work!
+
 *30 September 2011 / jookos*
 
 After a good amount of testing, we are confident enough to release version 3.0 of the p2pship package.  This includes the system updates made since 2.0, complete with the extensions (voicemail, multiparty and presence), which forms together a nice, complete, package for peer-to-peer communication.
