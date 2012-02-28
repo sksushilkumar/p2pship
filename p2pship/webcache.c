@@ -20,12 +20,12 @@
 #include "ship_debug.h"
 #include "processor_config.h"
 #include "processor.h"
-#include "netio_http.h"
 #include "ident.h"
 #include "webcache.h"
 #include "conn.h"
 #include "olclient.h"
 #include "resourceman.h"
+#include "netio_http.h"
 
 /* the currently in-progree dls */
 static ship_ht_t *all_dls = 0;

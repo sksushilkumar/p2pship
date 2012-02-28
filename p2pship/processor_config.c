@@ -119,6 +119,8 @@ static char* DEFAULT_CONFIGURATION[] =
 
 #ifdef CONFIG_HIP_ENABLED
 		P2PSHIP_CONF_PROVIDE_RVS, "no", "Provide RVS for others", "bool", 0, 0,
+		P2PSHIP_CONF_RVS_IFACES, "ext", "Interfaces on which to provide RVS", "string", 0, 0,
+
 		P2PSHIP_CONF_NAT_TRAVERSAL, "plain", "NAT traversal", "enum:none,plain,ice", 0, 0,
 		//P2PSHIP_CONF_RVS, "crossroads.infrahip.net", "RVS to use", "string", 0, 0,
 		P2PSHIP_CONF_RVS, "", "RVS to use", "string", 0, 0,
@@ -127,6 +129,8 @@ static char* DEFAULT_CONFIGURATION[] =
 
 		P2PSHIP_CONF_ALLOW_NONHIP, "yes", "Allow non-hip control & data connections", "bool", 0, 0,
 		P2PSHIP_CONF_AUTOSTART, "yes", "Auto-start hipd on registration", "bool", 0, 0,
+
+		P2PSHIP_CONF_HIP_SHOTGUN, "yes", "Use HIP shotgun-style connection establishment", "bool", 0, 0,
 #endif
 
 #ifdef CONFIG_WEBCONF_ENABLED

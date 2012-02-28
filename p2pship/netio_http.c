@@ -29,6 +29,7 @@
 #ifdef CONFIG_WEBCACHE_ENABLED
 #include "webcache.h"
 #endif
+#include "conn.h"
 
 /* the list of servers */
 static ship_ht_t *http_servers = 0;
@@ -204,6 +205,9 @@ netio_http_conn_close(netio_http_conn_t *conn)
 			conn->func(conn->fullurl, -1, NULL, -1, conn->pkg);
 			conn->func = 0;
 		}
+
+		freez(conn->service_forward_to);
+		freez(conn->service_forward_from);
 
 		netio_conn_reset(conn);
 		ship_ht_free(conn->params);
@@ -399,6 +403,26 @@ netio_http_serialize(netio_http_conn_t* conn, char **ret, int *retlen)
  err:
 	ship_list_empty_free(list);
 	ship_list_free(list);
+	freez(buf);
+	return -1;
+}
+
+/* serializes the payload data only */
+int
+netio_http_serialize_payload(netio_http_conn_t* conn, char **ret, int *retlen)
+{
+	int len = 0;
+	char *buf = 0;
+	
+	/* add data */
+	len = conn->data_len - conn->header_len;
+	ASSERT_TRUE(buf = mallocz(len + 1), err);
+	memcpy(buf, conn->buf + conn->header_len, len);
+	buf[len] = 0;
+	*ret = buf;
+	*retlen = len;
+	return 0;
+ err:
 	freez(buf);
 	return -1;
 }
@@ -1090,17 +1114,38 @@ __netio_http_conn_read_cb(int s, char *data, ssize_t datalen)
 {
 	netio_http_conn_t *conn = 0;
 	int ret = -1;
+	char *newbuf = NULL;
 
 	ASSERT_TRUE(conn = netio_http_get_conn_by_socket(s, 1), err);
 	if (datalen < 1) {
 		goto err;
 	}
 
-	if (conn->forward_socket == -1) {
-		ret = __netio_http_parse_data(conn, data, datalen);
-	} else if (datalen > 0) {
-		netio_send(conn->forward_socket, data, datalen);
+
+	// todo: some sort of half- ready handling #connect
+	// forward-tunnel also!!
+	if (conn->forward_socket != -1) {
+		if (datalen > 0) {
+			netio_send(conn->forward_socket, data, datalen);
+			ret = 1;
+		}
+	} else if (conn->service_forward_service) {
+		int l2;
+
+		/* add tracking id to buffer */
+		l2 = datalen + strlen(conn->tracking_id) + 1;
+		ASSERT_TRUE(newbuf = mallocz(l2+1), err);
+		strcpy(newbuf, conn->tracking_id);
+		strcat(newbuf, "\n");
+			
+		memcpy(newbuf+strlen(newbuf), data, datalen);
+		ASSERT_ZERO(conn_send_slow(conn->service_forward_to, conn->service_forward_from, 
+					   conn->service_forward_service,
+					   newbuf, l2, NULL, NULL), 
+			    err);
 		ret = 1;
+	} else if (datalen > 0) {
+		ret = __netio_http_parse_data(conn, data, datalen);
 	}
 
 	/* process.. */

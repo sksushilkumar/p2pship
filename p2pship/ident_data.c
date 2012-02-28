@@ -31,6 +31,7 @@
 #include "conn.h"
 #include "ui.h"
 
+extern ship_ht_t *global_service_params;
 static void ident_free(ident_t *ident);
 static int ident_init(ident_t *ret, char *sip_aor);
 
@@ -365,21 +366,30 @@ ident_service_get_param(ident_service_t *s, const char *key)
 	return ship_ht_get_string(s->params, key);
 }
 
-
 int
 ident_set_service_param(ident_t *ident, const service_type_t service_type, const char *key, const char *data)
 {
 	ident_service_t *s;
 	int ret = -1;
+	ship_ht_t *services = NULL;
 
-	s = ship_ht_get_int(ident->services, service_type);
+	if (ident)
+		services = ident->services;
+	else
+		services = global_service_params;
+			
+	s = ship_ht_get_int(services, service_type);
 	if (!s) {
 		ASSERT_TRUE(s = ident_service_new(), err);
-		ship_ht_put_int(ident->services, service_type, s);
+		s->service_type = service_type;
+		ship_ht_put_int(services, service_type, s);		
 	}
 	
 	ASSERT_ZERO(ret = ident_service_set_param(s, key, data), err);
-	ident_update_registration(ident);
+	if (ident)
+		ident_update_registration(ident);
+	else
+		ident_reregister_all();
  err:
 	return ret;
 }

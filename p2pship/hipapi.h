@@ -73,4 +73,7 @@ int conn_connection_uses_hip(char *remote_aor, char *local_aor);
 
 void hipapi_check_hipd();
 
+int hipapi_init_shotgun(int on);
+
+
 #endif

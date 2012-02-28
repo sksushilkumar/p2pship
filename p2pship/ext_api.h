@@ -35,6 +35,9 @@ typedef struct extapi_http_req_s {
 	char *buf;
 	int buf_len;
 	int data_len;
+	int is_connect;
+	
+	int s;
 } extapi_http_req_t;
 
 #ifdef CONFIG_HTTPPROXY_ENABLED

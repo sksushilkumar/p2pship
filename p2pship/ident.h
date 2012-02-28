@@ -388,6 +388,10 @@ int ident_process_register(char *aor, service_type_t service_type, service_t *se
 			   addr_t *addr, int expire, void *pkg);
 ident_service_t *ident_service_new();
 void ident_service_close(ident_service_t *s, ident_t *ident);
+
+static inline void ident_service_close_anon(void *s) {
+	ident_service_close((ident_service_t *)s, NULL);
+}
 int ident_service_register(service_t *service);
 
 /* returns own reg package for AOR */
@@ -411,6 +415,7 @@ int ident_lookup_registration(ident_t *ident, char *remote_aor,
 			      reg_package_t **pkg, processor_task_t **wait);
 time_t ident_registration_timeleft(ident_t *ident);
 
+int ident_find_foreign_reg_service_params(const service_type_t service_type, const char *key, ship_list_t *list);
 reg_package_t *ident_find_foreign_reg(char *sip_aor);
 void ident_reset_foreign_regs();
 int ident_import_foreign_reg(reg_package_t *reg);
@@ -523,6 +528,10 @@ int ident_ol_getsub_open(ident_t *ident, const char *key,
 int ident_set_service_param(ident_t *ident, const service_type_t service_type, const char *key, const char *data);
 const char *ident_get_service_param(ident_t *ident, const service_type_t service_type, const char *key);
 
-int ident_update_registration(ident_t *ident);
+#define ident_set_global_service_param(s, k, v) ident_set_service_param(NULL, s, k, v);
+#define ident_remove_global_service_param(s, k) ident_set_service_param(NULL, s, k, NULL);
+#define ident_get_global_service_param(s, k) ident_get_service_param(NULL, s, k);
 
+int ident_update_registration(ident_t *ident);
+int ident_reregister_all();
 #endif

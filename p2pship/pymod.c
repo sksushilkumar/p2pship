@@ -3473,7 +3473,7 @@ pymod_run_file(const char *file)
 	ASSERT_ZERO(ship_tokenize_trim(file, strlen(file), &tokens, &len, ','), err);
 	for (i=0; i < len; i++) {
 		LOG_DEBUG("running python file %s..\n", tokens[i]);
-		ASSERT_ZERO(processor_create_worker(PYTHON_WORKER_TYPE, pymod_run_file_thread, tokens[i], pymod_thread_kill), err);
+		ASSERT_TRUE(processor_create_worker(PYTHON_WORKER_TYPE, pymod_run_file_thread, tokens[i], pymod_thread_kill), err);
 		tokens[i] = NULL;
 	}
 	ret = 0;
