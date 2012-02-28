@@ -227,6 +227,7 @@ ship_lock_free(ship_lock_t *lock)
 {
 	LOCK_FREE(lock->lock);
 	LOCK_FREE(lock->ulock);
+	COND_FREE(lock->cond);
 }
 
 /* creates a lock */
@@ -235,6 +236,7 @@ ship_lock_new(ship_lock_t *lock)
 {
 	LOCK_INIT(lock->lock);
 	LOCK_INIT(lock->ulock);
+	COND_INIT(lock->cond);
 	lock->lc = 0;
 	if (!lock->lock || !lock->ulock) {
 		return -1;
@@ -242,6 +244,59 @@ ship_lock_new(ship_lock_t *lock)
 		return 0;
 	}
 }
+
+void
+ship_lock_wait_until(void *obj, int ms)
+{
+	ship_lock_t *lock = obj;
+	int lc = 0;
+	if (!lock)
+		return;
+
+	ship_lock(lock);
+	lc = lock->lc;
+
+	COND_WAITUNTIL_MS(lock->cond, lock->lock, ms);
+
+	LOCK_ACQ(lock->ulock);
+	lock->lc = lc;
+	lock->owner = pthread_self();
+	LOCK_RELEASE(lock->ulock);
+
+	ship_unlock(lock);
+}
+
+void
+ship_lock_wait(void *obj)
+{
+	ship_lock_t *lock = obj;
+	int lc;
+	if (!lock)
+		return;
+	ship_lock(lock);
+	lc = lock->lc;
+
+	COND_WAIT(lock->cond, lock->lock);
+
+	LOCK_ACQ(lock->ulock);
+	lock->lc = lc;
+	lock->owner = pthread_self();
+	LOCK_RELEASE(lock->ulock);
+
+	ship_unlock(lock);
+}
+
+void
+ship_lock_signal(void *obj)
+{
+	ship_lock_t *lock = obj;
+	if (!lock)
+		return;
+	ship_lock(lock);
+	COND_SIGNAL(lock->cond);
+	ship_unlock(lock);
+}
+
 
 /*********** The list functions ***********/
 
@@ -1069,6 +1124,15 @@ ship_ht_get_int(ship_ht_t *ht, const int key)
 	char buf[64];
 	sprintf(buf, "int:%d", key);
 	return ship_ht_get_string(ht, buf);
+}
+
+int
+ship_ht_get_int_key(const char *key)
+{
+	if (zstrlen(key) > 4)
+		return atoi(&key[4]);
+	else
+		return -1;
 }
 
 void * 

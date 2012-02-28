@@ -52,7 +52,6 @@ static ship_ht_t *ident_service_handlers = 0;
 static void ident_clear_idents();
 time_t ident_registration_timeleft(ident_t *ident);
 static void ident_mark_foreign_regs_for_update();
-static int ident_reregister_all();
 static int ident_autoreg_save();
 static void ident_cb_conn_events(char *event, void *data, ship_pack_t *eventdata);
 
@@ -82,6 +81,7 @@ static int ident_handle_privacy_pairing_message(char *data, int data_len,
 
 /* the default services */
 static ship_ht_t *default_services = 0;
+ship_ht_t *global_service_params = NULL;
 
 /* whether to ignore all validities for peer certs */
 static int ignore_cert_validity = 0;
@@ -237,7 +237,10 @@ ident_module_init(processor_config_t *config)
 	CRYPTO_set_id_callback((unsigned long (*)())ident_thread_id);
 	CRYPTO_set_locking_callback((void (*)())ident_locking_callback);
 
+	/* this is silly having these both separate. they should be merged somehow */
 	ASSERT_TRUE(default_services = ship_ht_new(), err);
+	ASSERT_TRUE(global_service_params = ship_ht_new(), err);
+
 	ident_cb_config_update(config, NULL, NULL);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_TRUST_FRIENDS, ident_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_IDENT_ALLOW_UNTRUSTED, ident_cb_config_update);
@@ -778,6 +781,8 @@ ident_module_close()
 	ship_list_free(foreign_idents);
 	ship_ht_free(ident_service_handlers);
 	ship_ht_free(default_services);
+	ship_ht_empty_free_with(global_service_params, ident_service_close_anon);
+
 	EVP_cleanup();
 
 	CRYPTO_set_locking_callback(NULL);
@@ -1265,6 +1270,21 @@ ident_create_new_reg(ident_t *ident)
 			}
 		}
 	}
+	
+	ptr = NULL;
+	while ((s = ship_ht_next(global_service_params, &ptr))) {
+		char *key, *val;
+		void *ptr2 = NULL;
+		while ((val = ship_ht_next_with_key(s->params, &ptr2, &key))) {
+			ASSERT_TRUE(nkey = mallocz(strlen(key) + 10), err);
+			ASSERT_TRUE(nval = strdup(val), err);
+			sprintf(nkey, "s%d_%s", s->service_type, key);
+			ship_ht_put_string(reg->app_data, nkey, nval);
+			freez(nkey);
+			nval = NULL;
+			nkey = NULL;
+		}
+	}
 
 	return reg;
  err:
@@ -1674,7 +1694,7 @@ ident_update_registration(ident_t *ident)
 /* this one is called when a new connection to a dht etc has been
    made. this should re-register all identities (put into dht
    again) */
-static int 
+int 
 ident_reregister_all()
 {
 	void *ptr = 0;
@@ -1981,6 +2001,29 @@ ident_find_foreign_reg(char *sip_aor)
 	}
 	ship_unlock(foreign_idents);
         return ret;
+}
+
+int
+ident_find_foreign_reg_service_params(const service_type_t service_type, const char *key, ship_list_t *list)
+{
+	int ret = -1;
+	char *nkey;
+	void *ptr = NULL;
+	reg_package_t *r;
+
+        ship_lock(foreign_idents);
+
+	ASSERT_TRUE(nkey = mallocz(strlen(key) + 10), err);
+	sprintf(nkey, "s%d_%s", service_type, key);
+	
+	while ((r = (reg_package_t *)ship_list_next(foreign_idents, &ptr))) {
+		char *val = ship_ht_get_string(r->app_data, nkey);
+		ship_list_add(list, strdupz(val));
+	}
+	ret = 0;
+ err:
+	ship_unlock(foreign_idents);
+	return ret;
 }
 
 

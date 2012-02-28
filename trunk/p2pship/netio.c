@@ -26,12 +26,17 @@
 #include "ident.h"
 #include <netinet/in.h>
 #include "hipapi.h"
+#include "ui.h"
 
 /* whether to bind the outbound hip sockets to our default hip */
 #define BIND_HIP_TO_DEFAULT_HIT 1
 
-static ship_list_t *netio_sock_list;
-//static ship_list_t *netio_sock_remove_list;
+/* default timeout for stuck hip sockets */
+#define NETIO_STUCK_TIMEOUT 10
+
+static ship_list_t *netio_sock_list = NULL;
+static ship_list_t *netio_stuck_watcher_list = NULL;
+static processor_worker_t *netio_stuck_watcher_worker = NULL;
 static int netio_alive;
 
 STATIC_THREAD_DECL(netio_thread);
@@ -43,6 +48,7 @@ static int netio_ff_l_pipe[2];
 
 /* some prototypes */
 static void *netio_loop(void *data);
+static void netio_sock_add(netio_sock_t *s);
 void netio_ff_close();
 int netio_ff_init();
 
@@ -133,6 +139,12 @@ netio_sock_free(netio_sock_t *s)
         }
 }
 
+static void
+netio_stop_stuck_watcher(processor_worker_t *w)
+{
+	w->data = NULL;
+	ship_lock_signal(netio_stuck_watcher_list);		
+}
 
 static netio_sock_t *
 netio_sock_new(int type, struct sockaddr *sa, socklen_t salen)
@@ -180,7 +192,10 @@ netio_close()
                 } ship_unlock(netio_sock_list);
         }
         
+	if (netio_stuck_watcher_worker)
+		netio_stop_stuck_watcher(netio_stuck_watcher_worker);
         ship_list_free(netio_sock_list);
+	ship_list_free(netio_stuck_watcher_list);
 
 	if (generic_ipv4_socket != -1)
 		close(generic_ipv4_socket);
@@ -188,14 +203,75 @@ netio_close()
 		close(generic_ipv6_socket);
 }
 
+static void
+netio_run_connector(processor_worker_t *worker)
+{
+	netio_sock_t *e = worker->data;
+	int ret = -1;
+
+	LOG_INFO("Trying to connect with %d..\n", e->s);
+	ret = connect(e->s, e->sa, e->addrlen);
+	LOG_DEBUG("Connector connected with %d\n", ret);
+        netio_sock_add(e);
+	worker->data = NULL;
+}
+
+static void
+netio_stop_connector(processor_worker_t *worker)
+{
+	THREAD_ABORT(worker->thread);
+}
+
+static void
+netio_run_stuck_watcher(processor_worker_t *worker)
+{
+	while (netio_stuck_watcher_list && worker->data) {
+		processor_worker_t *w;
+		netio_sock_t *e = NULL;
+		void *ptr = NULL, *last = NULL;
+		time_t now;
+		
+		LOG_VDEBUG("Checking for stuck sockets .. %d in queue..\n", ship_list_length(netio_stuck_watcher_list));
+		time(&now);
+		
+		while ((w = ship_list_next(netio_stuck_watcher_list, &ptr))) {
+			e = w->data;
+
+			if (e == NULL) {
+				LOG_DEBUG("Removing a completed connector..\n");
+				ship_list_remove(netio_stuck_watcher_list, w);
+				processor_kill_worker(w);
+				ptr = last;
+				continue;
+			}
+			
+			if ((now-e->last_heard) > NETIO_STUCK_TIMEOUT) {
+				LOG_INFO("Stuck socket %d: %d (now %d): %d secs..\n", e->s, e->last_heard, now, now-e->last_heard);
+				LOG_WARN("  Killing it!\n");
+				ui_popup("Could not establish HIP connection!");
+				ship_list_remove(netio_stuck_watcher_list, w);
+				processor_kill_worker(w);
+
+				close(e->s);
+				netio_close_socket(e->s);
+				/* netio_sock_free(e); */
+				ptr = last;				
+			}
+			last = ptr;
+		}
+
+		ship_lock_wait_until(netio_stuck_watcher_list, 5 * 1000);
+	}
+	LOG_INFO("Ending stuck watcher!\n");
+}
+
 int 
 netio_init(processor_config_t *config)
 {
-        if (!(netio_sock_list = ship_list_new()))
-                goto err;
-
-        if (pipe(netio_l_pipe))
-                goto err;
+        ASSERT_TRUE(netio_sock_list = ship_list_new(), err);
+	ASSERT_TRUE(netio_stuck_watcher_list = ship_list_new(), err);
+		    
+        ASSERT_ZERO(pipe(netio_l_pipe), err);
 
         MAKE_NONBLOCK(netio_l_pipe[0]);
         MAKE_NONBLOCK(netio_l_pipe[1]);
@@ -207,7 +283,10 @@ netio_init(processor_config_t *config)
                 freez(netio_thread);
                 goto err;
         }
-	
+
+	ASSERT_TRUE(netio_stuck_watcher_worker = processor_create_worker("stuck_watcher", netio_run_stuck_watcher, netio_stuck_watcher_list,
+									 netio_stop_stuck_watcher), err);
+	//processor_tasks_add_periodic(netio_run_stuck_watcher, NULL, 10 * 1000);
         return 0;
  err:
         netio_close();
@@ -547,8 +626,14 @@ netio_connto(struct sockaddr *sa, socklen_t size,
         int ret = -1;
         netio_sock_t *e = NULL;
 	addr_t addr;
+	processor_worker_t *w = NULL;
+	int use_stuck = 0;
 	
 	ASSERT_ZERO(ident_addr_sa_to_addr(sa, size, &addr), err);
+#ifdef CONFIG_HIP_ENABLED
+	if (hipapi_addr_is_hit(&addr))
+		use_stuck = 1;
+#endif	
 	switch (sa->sa_family) {
 	case AF_INET6: {
 		LOG_INFO("connecting to %s, port %d\n", addr.addr, addr.port);
@@ -574,11 +659,11 @@ netio_connto(struct sockaddr *sa, socklen_t size,
 		break;
 	}
 	default:
+		LOG_WARN("Uknown address family!\n");
 		break;
 	}
 
         ASSERT_TRUE(ret != -1, err);
-        MAKE_NONBLOCK(ret);
 	MAKE_TCP_NODELAY(ret);
 	ASSERT_ZERO(SET_SOCK_TO(ret, 3), err);
 
@@ -589,10 +674,22 @@ netio_connto(struct sockaddr *sa, socklen_t size,
  
 	/* this might hang, freezing up the system! */
 	ship_wait("netio connect");
-	connect(e->s, e->sa, e->addrlen);
-        netio_sock_add(e);
+	
+	e->last_heard = time(NULL);	
+	if (use_stuck) { // use stuck watcher ..
+		/* create runner for the connection and let it do its thing! */
+		ASSERT_TRUE(w = processor_create_worker("connector", netio_run_connector, e, netio_stop_connector), err);
+		ship_list_add(netio_stuck_watcher_list, w);
+
+		LOG_DEBUG("waiting for connector..\n");
+	} else {
+		MAKE_NONBLOCK(ret);
+		connect(e->s, e->sa, e->addrlen);
+		netio_sock_add(e);
+	}
+
 	ship_complete();
-        return ret;
+        return e->s;
  err:
         if (ret != -1)
                 close(ret);

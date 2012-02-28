@@ -29,6 +29,7 @@
 #define SERVICE_TYPE_RESOURCEFETCH 7
 #define SERVICE_TYPE_BLOOMBUDDIES 8
 #define SERVICE_TYPE_TRUST 9
+#define SERVICE_TYPE_RELAY 10 // replaying & connection establishment
 
 typedef int service_type_t;
 

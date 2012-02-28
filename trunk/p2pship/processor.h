@@ -183,8 +183,10 @@ int processor_to(void *thread_id,
 void processor_run_async(void (*func)(void));
 int processor_tasks_add_periodic(int (*func) (void*), void *data, int period);
 void processor_kill_workers(const char *type);
-int processor_create_worker(const char *type, void (*func)(processor_worker_t*), void *data,
-			    void (*kill_func)(processor_worker_t*));
+processor_worker_t* processor_create_worker(const char *type, void (*func)(processor_worker_t*), void *data,
+					    void (*kill_func)(processor_worker_t*));
+
+void processor_kill_worker(processor_worker_t *w);
 
 int processor_kill_existing_pid();
 int processor_kill_all_existing();

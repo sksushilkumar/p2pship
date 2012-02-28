@@ -254,6 +254,7 @@ typedef struct ship_lock_s {
         pthread_mutex_t *ulock;
         int lc;
         pthread_t owner;
+        pthread_cond_t *cond;
 } ship_lock_t;
 
 /* free & zero */
@@ -495,6 +496,10 @@ test()
         }\
 }
 
+void ship_lock_wait_until(void *obj, int ms);
+void ship_lock_wait(void *obj);
+void ship_lock_signal(void *obj);
+
 #ifdef LOCK_DEBUG
 /* lock-debuggning, new version */
 
@@ -646,6 +651,7 @@ int __NON_INSTRUMENT_FUNCTION__ ship_ht_has_value(ship_ht_t *ht, void *val);
 void ship_ht_keys_add(ship_ht_t *ht, ship_list_t *ret);
 void *ship_ht_get_ptr(ship_ht_t *ht, const void *key);
 void *ship_ht_put_ptr(ship_ht_t *ht, void *key, void *val);
+int ship_ht_get_int_key(const char *key);
 
 /* these are 2-dim hashtables. really innefficiently implemented right
    now (hashtable with hashtable entries) */

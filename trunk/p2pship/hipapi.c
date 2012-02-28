@@ -23,6 +23,7 @@
 #include "ship_debug.h"
 #include "processor.h"
 #include "ident.h"
+#include "conn.h"
 
 #ifdef CONFIG_HIP_ENABLED
 #include "hipapi.h"
@@ -34,12 +35,22 @@ static ship_list_t *rvs_arr = NULL;
 #define RVS_UPDATE_PERIOD 60
 
 static int hipapi_update_rvs_registration();
+static int hipapi_update_hip_config();
 
+static int hipconf(const char *template, ...);
+
+static int 
+hipapi_update_hip_state(void *data)
+{
+	hipapi_update_rvs_registration();
+	hipapi_update_hip_config();
+	return 0;
+}
 
 static void
 hipapi_cb_config_update(processor_config_t *config, char *k, char *v)
 {
-	hipapi_update_rvs_registration();
+	hipapi_update_hip_state(NULL);
 }
 
 /* checks whether the hipd is running, and if not, tries to start
@@ -96,8 +107,10 @@ hipapi_check_hipd()
 				LOG_INFO("hipd exiting\n");
 				_exit(0);
 			}
+			hipapi_update_hip_config();
+
 		} else {
-			LOG_INFO("could not find hipd..\n");
+			LOG_WARN("could not find hipd!\n");
 		}
 	}
 }
@@ -106,7 +119,7 @@ static void
 hipapi_cb_events(char *event, void *data, ship_pack_t *eventdata)
 {
 	if (str_startswith(event, "net_")) {
-		hipapi_update_rvs_registration();
+		hipapi_update_hip_state(NULL);
 	}
 }
 
@@ -124,21 +137,22 @@ hipapi_init(processor_config_t *config)
 		// goto err; // kill (do not!)
 	}
 
-	/* rvs & nat? */
-
-	if (processor_config_is_true(config, P2PSHIP_CONF_PROVIDE_RVS))
-		if (hipapi_init_rvs(1)) {
-			LOG_WARN("Error initializing RVS provisioning\n");
-		}
-
 	ASSERT_TRUE(rvs_arr = ship_list_new(), err);
+
+	/* hipd config */
+	hipapi_update_hip_config();
+
+	/* rvs & nat? */
 	if (hipapi_update_rvs_registration()) {
 		LOG_WARN("Error initializing RVS registration\n");
 	}
-	ASSERT_ZERO(processor_tasks_add_periodic(hipapi_update_rvs_registration, NULL, RVS_UPDATE_PERIOD*1000), err);
+
+	ASSERT_ZERO(processor_tasks_add_periodic(hipapi_update_hip_state, NULL, RVS_UPDATE_PERIOD*1000), err);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_NAT_TRAVERSAL, hipapi_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_RVS, hipapi_cb_config_update);
 	processor_config_set_dynamic_update(config, P2PSHIP_CONF_AUTOSTART, hipapi_cb_config_update);
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_PROVIDE_RVS, hipapi_cb_config_update);
+	processor_config_set_dynamic_update(config, P2PSHIP_CONF_HIP_SHOTGUN, hipapi_cb_config_update);
 
  	ASSERT_ZERO(processor_event_receive("net_*", 0, hipapi_cb_events), err);
 	
@@ -160,33 +174,68 @@ hipapi_close()
 
 }
 
-static int 
-hipapi_update_rvs_registration(void *data)
+static int
+hipapi_update_hip_config()
 {
-	char *str = 0;
-	int ret = -1;
+	char **tokens = NULL; 
+	int len = 0;
+	ship_list_t *ips = NULL;
+	char *str = NULL;
+
+	if (processor_config_is_true(processor_get_config(), P2PSHIP_CONF_PROVIDE_RVS))
+		if (hipapi_init_rvs(1)) {
+			LOG_WARN("Error initializing RVS provisioning\n");
+		} else {
+			char *inifs = NULL;
+			addr_t *addr = NULL;
+			addr_t hit;
+
+			hipapi_gethit(&hit);
+			
+			ASSERT_ZERO(processor_config_get_string(processor_get_config(), P2PSHIP_CONF_RVS_IFACES, &inifs), err);
+			ASSERT_ZERO(ship_tokenize_trim(inifs, strlen(inifs), &tokens, &len, ','), err);
+			ASSERT_ZERO(conn_validate_ifaces(tokens, len), err);
+
+			ASSERT_TRUE(ips = ship_list_new(), err);
+			conn_getips(ips, tokens, len, 0);
+			while ((addr = ship_list_pop(ips))) {
+				if (str) {
+					ASSERT_ZERO(append_str2(&str, ";"), err);
+				}
+				ASSERT_ZERO(append_str2(&str, hit.addr), err);
+				ASSERT_ZERO(append_str2(&str, ","), err);
+				ASSERT_ZERO(append_str2(&str, addr->addr), err);
+			}
+
+			ident_set_global_service_param(SERVICE_TYPE_RELAY, "public_rvs", str);
+		}
+	else
+		ident_remove_global_service_param(SERVICE_TYPE_RELAY, "public_rvs");
+ err:
+	ship_list_empty_free(ips);
+	ship_list_free(ips);
+	freez(str);
+	
+	hipapi_init_shotgun((processor_config_is_true(processor_get_config(), P2PSHIP_CONF_HIP_SHOTGUN)? 1 : 0));
+	ship_tokens_free(tokens, len);
+	return 0;
+}
+
+
+/* adds new rvs registrations from a line of rvs-hits in the format of
+
+   line := <rvs-hit>[;<rvs-hit>]*
+   rvs-hit := <ip> | <hit>,<ip>
+*/
+static int
+hipapi_add_single_rvs_line(const char *line, int *total)
+{
 	char **tokens = 0;
 	int toklen = 0;
 	addr_t *rvs = 0;
 	int c = 0;
-	int natmode;
 	
-	ASSERT_ZERO(processor_config_get_enum(processor_get_config(), P2PSHIP_CONF_NAT_TRAVERSAL, &natmode), err);
-	if (hipapi_set_udp_encap(natmode)) {
-		USER_ERROR("Error activating UDP encapsulation\n");
-		goto err;
-	}
-
-	ship_lock(rvs_arr);
-	/* clear the rvs registrations */
-	while ((rvs = ship_list_pop(rvs_arr))) {
-		hipapi_register_to_rvs(&(rvs[0]), &(rvs[1]), 0);
-		freez(rvs);
-	}
-	
-	/* register to the RVS's we have specified */
-	if ((str = processor_config_string(processor_get_config(), P2PSHIP_CONF_RVS)))
-		ASSERT_ZERO(ship_tokenize(str, strlen(str), &tokens, &toklen, ';'), err);
+	ASSERT_ZERO(ship_tokenize(line, strlen(line), &tokens, &toklen, ';'), err);
 	for (c = 0; c < toklen; c++) {
 		char *loc = strchr(tokens[c], ','), *hit = tokens[c];
 		
@@ -208,64 +257,168 @@ hipapi_update_rvs_registration(void *data)
 			if (hipapi_register_to_rvs(&(rvs[0]), &(rvs[1]), 1)) {
 				LOG_WARN("Error registering to RVS! You might not have the privileges. Continuing as if it succeeded\n");
 			}
+			(*total)++;
 			ship_list_add(rvs_arr, rvs);
 			rvs = 0;
 		} else
 			freez(rvs);
 	}
+	return 0;
+ err:
+	return -1;
+}
+
+static int 
+hipapi_update_rvs_registration()
+{
+	char *str = 0;
+	int ret = -1;
+	char **tokens = 0;
+	int toklen = 0;
+	addr_t *rvs = 0;
+	int natmode;
+	ship_list_t *old_rvs = NULL;
+	ship_list_t *peer_rvs = NULL;
+	int total = 0;
+	
+	ASSERT_ZERO(processor_config_get_enum(processor_get_config(), P2PSHIP_CONF_NAT_TRAVERSAL, &natmode), err);
+	if (hipapi_set_udp_encap(natmode)) {
+		LOG_WARN("Error activating UDP encapsulation\n");
+	}
+
+	ASSERT_TRUE(old_rvs = ship_list_new(), err);
+	ASSERT_TRUE(peer_rvs = ship_list_new(), err);
+	ship_lock(rvs_arr);
+
+	/* store the old ones so we know from which ones we should unregister */
+	while ((rvs = ship_list_pop(rvs_arr))) {
+		ship_list_add(old_rvs, rvs);
+	}
+	
+	/* register to the RVS's we have specified */
+	if ((str = processor_config_string(processor_get_config(), P2PSHIP_CONF_RVS)))
+		hipapi_add_single_rvs_line(str, &total);
+
+	/* get RVS information from known registration packets.. */
+	ident_find_foreign_reg_service_params(SERVICE_TYPE_RELAY, "public_rvs", peer_rvs);
+	while ((str = ship_list_pop(peer_rvs))) {
+		hipapi_add_single_rvs_line(str, &total);
+		freez(str);
+	}
+
+	/* check which ones are still present .. */
+	while ((rvs = ship_list_pop(old_rvs))) {
+		void *ptr = NULL;
+		addr_t *newrvs = 0;
+		int found = 0;
+		
+		while (!found && (newrvs = ship_list_next(rvs_arr, &ptr))) {
+			if (!ident_addr_cmp(&(rvs[0]), &(newrvs[0])) &&
+			    !ident_addr_cmp(&(rvs[1]), &(newrvs[1]))) {
+				LOG_DEBUG("RVS at %s still exists, skipping..\n", rvs[1].addr);
+				found = 1;
+			}
+		}
+			
+		if (!found) {
+			LOG_DEBUG("RVS at %s is old, unregistering\n", rvs[1].addr);
+			hipapi_register_to_rvs(&(rvs[0]), &(rvs[1]), 0);
+			freez(rvs);
+		}
+	}
+
+	LOG_DEBUG("Registered to %d RVSs\n", total);
 	ret = 0;
  err:
 	freez(rvs);
 	ship_tokens_free(tokens, toklen);
 	ship_unlock(rvs_arr);
+	ship_list_empty_free(old_rvs);
+	ship_list_free(old_rvs);
+	ship_list_empty_free(peer_rvs);
+	ship_list_free(peer_rvs);
 	return ret;
 }
 
-//#define HIPCONF_TRACKING
-#ifdef HIPCONF_TRACKING
+
+#define HIPCONF_TRACKING
+
 static int
-hipconf(int len, char **arr, int sendonly)
+hipconf(const char *template, ...)
 {
-	int ret = -1;
+	int p = 0, ret = -1, arrlen = 0;
+	char **arr = 0;	
+	va_list ap;
+
+#ifdef HIPCONF_TRACKING
+	char *buf = NULL;
+#endif
 	
-	LOG_DEBUG(">> sending hipconf: %s %s %s..\n", 
-		  arr[0], (len > 0? arr[1]:""), (len > 1? arr[2]:""));
-	ret = hip_do_hipconf(len, arr, sendonly);
+	arrlen = strlen(template)+2;
+	ASSERT_TRUE(arr = mallocz(arrlen * sizeof(char*)), err);
+	ASSERT_TRUE(arr[0] = strdup("hipconf"), err);
+	ASSERT_TRUE(arr[1] = strdup("daemon"), err);
+	va_start(ap, template);
+	
+	while (p < strlen(template)) {
+		char *str = 0;
+		
+		switch (template[p]) {
+		case 's':
+			ASSERT_TRUE(str = strdup(va_arg(ap, char*)), err);
+			break;
+		case 'i':
+			ASSERT_TRUE(str = mallocz(15), err);
+			sprintf(str, "%d", va_arg(ap, int));
+			break;
+		default:
+			ASSERT_TRUES(0, err, "Invalid arg: %c", template[p]);
+			break;
+		}
+
+		arr[p+2] = str;
+		p++;
+	}
+	va_end(ap);
+
+#ifdef HIPCONF_TRACKING
+	for (p = 0; p < arrlen; p++) {
+		append_str2(&buf, arr[p]);
+		append_str2(&buf, " ");
+	}
+	LOG_INFO(">> sending to hipconf: %s\n", buf);
+#endif
+	ret = hip_do_hipconf(arrlen, arr, 1);
+ err:
+	freez_arr(arr, arrlen);
+#ifdef HIPCONF_TRACKING
 	LOG_DEBUG("<< -- hipconf sent with %d\n", ret);
+	freez(buf);
+#endif
 	return ret;
 }
-#else
-#define hipconf(a, b, c) hip_do_hipconf(a, b, c)
-#endif
+
 
 /* registers to the given RVS */
 int
 hipapi_register_to_rvs(addr_t *rvshit, addr_t *rvsloc, int add)
 {
 	int ret = -1;
-	char *arr[7] = { "hipconf", "add", "server", "rvs", "HIT", "IP", "3600" };
-	int len = 7;
-	
-	char num[32];
-	sprintf(num, "%d", RVS_UPDATE_PERIOD);
-	
-	if (!strlen(rvshit->addr)) {
-		len--;
-		arr[4] = rvsloc->addr;
+
+	if (strlen(rvshit->addr)) {
+		if (add)
+			ret = hipconf("sssssi", "add", "server", "rvs", rvshit->addr, rvsloc->addr, RVS_UPDATE_PERIOD*2);
+		else
+			ret = hipconf("sssss", "del", "server", "rvs", rvshit->addr, rvsloc->addr);
 	} else {
-		arr[4] = rvshit->addr;
-		arr[5] = rvsloc->addr;
+		if (add)
+			ret = hipconf("ssssi", "add", "server", "rvs", rvsloc->addr, RVS_UPDATE_PERIOD*2);
+		else
+			ret = hipconf("ssss", "del", "server", "rvs", rvsloc->addr);
 	}
 	
-	if (!add) {
-		arr[1] = "del";
-		len--;
-	} else
-		arr[len-1] = num;
-	
-	ret = hipconf(len, arr, 1);
 	if (ret) {
-		LOG_WARN("could not %s register to RVS %s at %s\n", arr[1], rvshit->addr, rvsloc->addr);
+		LOG_WARN("could not %s registration to RVS %s at %s\n", (add? "add": "del"), rvshit->addr, rvsloc->addr);
 	} else {
 		LOG_DEBUG("Update registration '%s' to rvs hit '%s', addr '%s'\n",
 			  (add? "add":"del"), rvshit->addr, rvsloc->addr);
@@ -277,23 +430,25 @@ hipapi_register_to_rvs(addr_t *rvshit, addr_t *rvsloc, int add)
 int
 hipapi_init_rvs(int on)
 {
-	char *arr[4] = { "hipconf", "add", "service", "rvs"};
-	if (!on)
-		arr[1] = "del";	
-	return hipconf(4, arr, 1);
+	return hipconf("sss", (on? "add":"del"), "service", "rvs");
+}
+
+/* turn shotgun mode on */
+int
+hipapi_init_shotgun(int on)
+{
+	return hipconf("ss", "shotgun", (on? "on":"off"));
 }
 
 /* turns on udp encapsulation for hip */
 int
 hipapi_set_udp_encap(int mode)
 {
-	char *arr[3] = { "hipconf", "nat", "plain-udp" };
 	char *types[3] = { "none", "plain-udp", "ice-udp" };
-	
-	if (mode > -1 && mode < 3)
-		arr[2] = types[mode];
-	
-	return hipconf(3, arr, 1);
+	ASSERT_TRUE(mode > -1 && mode < 3, err);
+	return hipconf("ss", "nat", types[mode]);
+ err:
+	return -1;
 }
 
 /* Checks whether we have a working link to the given HIT. */
@@ -344,14 +499,25 @@ hipapi_has_linkto(addr_t *remote_hit)
 }
 
 
+static int
+hipapi_map_hit_ip(addr_t *hit, addr_t *loc)
+{
+	addr_t l2;
+	ASSERT_ZERO(ident_addr_str_to_addr_lookup(loc->addr, &l2), err);
+	LOG_INFO("Mapping HIT %s to IP address %s (was: %s)\n", 
+		 hit->addr, l2.addr, loc->addr);
+	return hipconf("ssss", "add", "map", hit->addr, l2.addr);
+ err:
+	return -1;
+}	
+
 /* establishes, or tries, a connection to the given hit on the give
    ips / rvss. currently just maps the hip to the ip */
 int
-hipapi_establish(addr_t *remote_hit, ship_list_t *ips, ship_list_t *rvs)
+hipapi_establish(addr_t *hit, ship_list_t *ips, ship_list_t *rvs)
 {
-	int ret = -1;
 	addr_t *loc = NULL;
-	addr_t l2;
+	void *ptr = NULL;
 
 	/* we should check here also if we have an SA for this HIT. If
 	   so, we should check whether that SA is active (we have
@@ -364,19 +530,35 @@ hipapi_establish(addr_t *remote_hit, ship_list_t *ips, ship_list_t *rvs)
 	   bex go passively. in the future we should actually try the
 	   different combinations and so on.. */
 	
-	/* use the rvs if available */
-	if (!rvs || !(loc = ship_list_first(rvs))) {
-		ASSERT_TRUE(ips && (loc = ship_list_first(ips)), err);
+	if (processor_config_is_true(processor_get_config(), P2PSHIP_CONF_HIP_SHOTGUN)) {
+		hipapi_init_shotgun(1);
+
+		/* map first raw ips.. */
+		while ((loc = ship_list_next(ips, &ptr))) {
+			if (loc->port)
+				continue;
+			ASSERT_ZERO(hipapi_map_hit_ip(hit, loc), err);
+		}
+		
+		ptr = 0;
+		while ((loc = ship_list_next(rvs, &ptr))) {
+			ASSERT_ZERO(hipapi_map_hit_ip(hit, loc), err);
+		}
+	} else {
+		/* use the rvs if available, else first non-transport ip */
+		if (!rvs || !(loc = ship_list_first(rvs))) {
+			while (ips && !loc && (loc = ship_list_next(ips, &ptr))) {
+				if (loc->port)
+					loc = NULL;
+			}
+		}
+		ASSERT_TRUES(loc, err, "No IP address to map HIT to!\n");
+		ASSERT_ZERO(hipapi_map_hit_ip(hit, loc), err);
 	}
-
-	ASSERT_ZERO(ident_addr_str_to_addr_lookup(loc->addr, &l2), err);
-	LOG_INFO("Mapping HIT %s to IP address %s (was: %s)\n", 
-		 remote_hit->addr, l2.addr, loc->addr);
-
-	char *arr[5] = { "hipconf", "add", "map", remote_hit->addr, l2.addr };
-	ret = hipconf(5, arr, 1);
+	sleep(1); // hmm..
+	return 0;
  err:
-	return ret;
+	return -1;
 }
 
 static void 
@@ -541,7 +723,7 @@ static struct processor_module_s processor_module =
 	.init = hipapi_init,
 	.close = hipapi_close,
 	.name = "hipapi",
-	.depends = "netio,netio_ff",
+	.depends = "ident,netio,netio_ff",
 };
 
 /* register func */
@@ -553,8 +735,7 @@ hipapi_register() {
 int 
 hipapi_clear_sas()
 {
-	char *arr[3] = { "hipconf", "rst", "all"};
-	return hipconf(3, arr, 1);
+	return hipconf("ss", "rst", "all");
 }
 
 /* this function creates a mapping from a HIT to a locator so that the

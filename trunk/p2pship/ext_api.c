@@ -196,17 +196,6 @@ extapi_free_http_req(extapi_http_req_t *req)
 }
 
 void 
-extapi_http_conn_cb(int s, void *obj)
-{
-	extapi_http_req_t *req = obj;
-
-	/* write out request .. */
-	netio_send(s, req->request, req->request_len);
-	STATS_LOG("made http request\n");
-}
-
-
-void 
 extapi_http_data_return(extapi_http_req_t *req, const char *data, int odatalen)
 {
 	char *tmp = 0;
@@ -247,9 +236,44 @@ extapi_http_data_return(extapi_http_req_t *req, const char *data, int odatalen)
 	}
 }
 
-void 
+static void 
+extapi_http_conn_cb(int s, void *obj)
+{
+	extapi_http_req_t *req = obj;
+
+	/* write out request .. */
+	if (req->is_connect) {
+		char *msg = 0;
+		int len = 0;
+		req->is_connect = 0;
+		if (!netio_http_create_response(200, "Connection established", "text/plain", "", 0,
+						&msg, &len)) {
+			extapi_http_data_return((extapi_http_req_t *)obj, msg, len);
+			freez(msg);
+		}
+	}
+	netio_send(s, req->request, req->request_len);
+	STATS_LOG("made http request\n");
+}
+
+static void 
 extapi_http_data_cb(int s, void *obj, char *data, int odatalen)
 {
+	extapi_http_req_t *req = obj;
+	if (odatalen < 0) {
+		LOG_WARN("connection terminated or could not connect\n");
+	} else {
+		if (req->is_connect) {
+			char *msg = 0;
+			int len = 0;
+			req->is_connect = 0;
+			if (!netio_http_create_response(200, "Connection established", "text/plain", "", 0,
+							&msg, &len)) {
+				extapi_http_data_return((extapi_http_req_t *)obj, msg, len);
+				freez(msg);
+			}
+		}
+	}
 	extapi_http_data_return((extapi_http_req_t *)obj, data, odatalen);
 }
 
@@ -259,7 +283,7 @@ extapi_get_http_req(const char *id)
 	return ship_ht_get_string(extapi_http_reqs, id);
 }
 
-int 
+static int 
 extapi_data_received_http(char *data, int data_len, ident_t *ident, 
 			  char *source, service_type_t service_type)
 {
@@ -272,7 +296,8 @@ extapi_data_received_http(char *data, int data_len, ident_t *ident,
 	struct sockaddr *sa = 0;
 	socklen_t salen = 0;
 	extapi_http_req_t *req = 0;
-	
+	void *ptr = 0;
+
 	LOG_VDEBUG("Got data for HTTP, port %d, %d bytes from %s to %s\n", port, data_len, source, ident->sip_aor);
 
 	/* extract the tracking id & package */
@@ -280,6 +305,18 @@ extapi_data_received_http(char *data, int data_len, ident_t *ident,
 	ASSERT_TRUE(content = strchr(data, '\n'), err);
 	content[0] = 0;
 	content++;
+
+	// at this point, we should check whether we already have something for this tracking id.
+	// and if so, we should use the same connection / stuff
+	while ((req = ship_ht_next(extapi_http_reqs, &ptr))) {
+		if (!strcmp(req->tracking_id, tracking_id) &&
+		    !strcmp(req->from_aor, source) &&
+		    !strcmp(req->to_aor, ident->sip_aor)) {
+			netio_send(req->s, content, data_len - (content-data));
+			req = 0;
+			goto end;
+		}
+	}
 
 	STATS_LOG("http_receive1;%s;%s;%d;%d;%d;%d\n",
 		  ident->sip_aor, source, service_type, data_len, data_len-(content-data), 0);
@@ -289,7 +326,7 @@ extapi_data_received_http(char *data, int data_len, ident_t *ident,
 	    (addr && !ident_addr_addr_to_sa(addr, &sa, &salen))) {
 		/* parse request */
 		ASSERT_TRUE(conn = netio_http_parse_data(content, data_len - (content-data)), err);
-		
+
 		/* replace hostname & to/from */
 		netio_http_set_header(conn, "X-P2P-From", source);
 		netio_http_set_header(conn, "X-P2P-To", ident->sip_aor);
@@ -304,10 +341,17 @@ extapi_data_received_http(char *data, int data_len, ident_t *ident,
 		//httpproxy_process_req(netio_http_conn_t *conn, void *pkg)
 
 		/* create the request holder */
-		ASSERT_TRUE(req = mallocz(sizeof(extapi_http_req_t)), err); // arr.. these are just passed around
+		ASSERT_TRUE(req = mallocz(sizeof(extapi_http_req_t)), err); // arr.. these are just passed around. are they ever deleted??
 		sprintf(req->id, "%08x%08x", (unsigned int)req, (unsigned int)ship_systemtimemillis());
 		ship_ht_put_string(extapi_http_reqs, req->id, req);
-		ASSERT_ZERO(netio_http_serialize(conn, &req->request, &req->request_len), err);
+
+		// todo: treat CONNECT differently!!
+		if (!strcmp(conn->method, "CONNECT")) {
+			ASSERT_ZERO(netio_http_serialize_payload(conn, &req->request, &req->request_len), err);
+			req->is_connect = 1;
+		} else {
+			ASSERT_ZERO(netio_http_serialize(conn, &req->request, &req->request_len), err);
+		}
 		ASSERT_TRUE(req->tracking_id = strdup(tracking_id), err);
 		ASSERT_TRUE(req->from_aor = strdup(source), err);
 		ASSERT_TRUE(req->to_aor = strdup(ident->sip_aor), err);
@@ -329,6 +373,7 @@ extapi_data_received_http(char *data, int data_len, ident_t *ident,
 			
 			s = netio_man_connto(sa, salen, req, extapi_http_conn_cb, extapi_http_data_cb);
 			ASSERT_TRUE(s != -1, err);
+			req->s = s;
 			req = 0;
 		}
 	}
@@ -345,7 +390,9 @@ extapi_data_received_http(char *data, int data_len, ident_t *ident,
 			  SERVICE_TYPE_HTTPRESPONSE,
 			  tmp, strlen(tmp), NULL, NULL);	
  end:
-	extapi_free_http_req(req);
+	if (req) {
+		extapi_free_http_req(req);
+	}
 	netio_http_conn_close(conn);
 	freez(tmp);
 	freez(sa);
@@ -403,7 +450,11 @@ extapi_data_received_httpresponse(char *data, int data_len, ident_t *ident,
 	netio_http_packet_orderer_put(tracking_id, piece, content, len);
 	if ((oldconn = netio_http_get_conn_by_id(tracking_id))) {
 		while (!netio_http_packet_orderer_pop_next(tracking_id, &piece, &content, &len)) {
-			extapi_return_and_record(oldconn, NULL, content, len);
+			if (piece == 0 && len == 0) {
+				extapi_http_proxy_response(oldconn, 500, "Server error", "Server error. The service cannot be reached.\n");
+			} else {
+				extapi_return_and_record(oldconn, NULL, content, len);
+			}
 			freez(content);
 		}
 
@@ -720,39 +771,18 @@ httpproxy_process_req(netio_http_conn_t *conn, void *pkg)
 	
 	LOG_DEBUG("got req for %s on socket %d\n", conn->url, conn->socket);
 
-	/* hm, if method == CONNECT, what then? highjack the socket,
-	   put it into a forwarder */
-	if (!strcmp(conn->method, "CONNECT")) {
-		struct sockaddr *sa = 0;
-		socklen_t sa_len = 0;
-		int s = -1;
-		char *id = 0;
-		
-		LOG_DEBUG("should establish tunnel to %s\n", conn->url);
-
-		/* conn to the host! */
-		ASSERT_ZERO(ident_addr_str_to_sa(conn->url,
-						 &sa, &sa_len), err);
-		if ((id = strdup(conn->tracking_id)))
-			s = netio_man_connto(sa, sa_len, id,
-					     _httpproxy_tunnel_cb,
-					     _httpproxy_tunnel_data_cb);
-		if (s != -1)
-			ret = 1;
-		else
-			freez(id);
-		freez(sa);
-		goto err;
-	}
-
 	/* parse the url, check protocol == http .. or something else we support */
 	if (!str_startswith(conn->url, "http://") &&
-	    !str_startswith(conn->url, "https://")) {
+	    !str_startswith(conn->url, "https://") &&
+	    strcmp(conn->method, "CONNECT")) {
 		extapi_http_proxy_response(conn, 400, "Bad request", "Bad request. Proxy does not support the requested protocol.");
 		ASSERT_TRUE(ret = 0, err);
 	}
 
-	tmp = strstr(conn->original_url, "://") + 3;
+	if ((tmp = strstr(conn->original_url, "://")))
+		tmp += 3;
+	else
+		tmp = conn->original_url;
 	tmp2 = strchr(tmp, '/');
 	if (tmp2) {
 		ASSERT_TRUE(path = strdup(tmp2), err);
@@ -782,7 +812,33 @@ httpproxy_process_req(netio_http_conn_t *conn, void *pkg)
 		ret = extapi_handle_forward_with_auth(conn, user, port);
 	} else {
 		/* this was a normal http request */
-		ret = extapi_handle_http_forward(conn, user, port);
+		
+		/* hm, if method == CONNECT, what then? highjack the socket,
+		   put it into a forwarder */
+		if (!strcmp(conn->method, "CONNECT")) {
+			struct sockaddr *sa = 0;
+			socklen_t sa_len = 0;
+			int s = -1;
+			char *id = 0;
+			addr_t addr;
+
+			LOG_DEBUG("should establish tunnel to %s\n", conn->url);
+			
+			/* conn to the host! */
+			ASSERT_ZERO(ident_addr_str_to_addr(user, &addr), err);
+			addr.port = port;
+			ASSERT_ZERO(ident_addr_addr_to_sa(&addr, &sa, &sa_len), err);			
+			if ((id = strdup(conn->tracking_id)))
+				s = netio_man_connto(sa, sa_len, id,
+						     _httpproxy_tunnel_cb,
+						     _httpproxy_tunnel_data_cb);
+			if (s != -1)
+				ret = 1;
+			else
+				freez(id);
+			freez(sa);
+		} else
+			ret = extapi_handle_http_forward(conn, user, port);
 	}
  err:
 	freez(user);
@@ -813,8 +869,8 @@ extapi_handle_forward(netio_http_conn_t *conn, char *to, int port, char *from, c
 		  to, from, 0, conn->content_len, len, 0);
 
 	/* add tracking id to buffer */
-	l2 = len + strlen(conn->tracking_id)+1;
-	ASSERT_TRUE(newbuf = mallocz(l2), err);
+	l2 = len + strlen(conn->tracking_id) + 1;
+	ASSERT_TRUE(newbuf = mallocz(l2+1), err);
 	strcpy(newbuf, conn->tracking_id);
 	strcat(newbuf, "\n");
 			
@@ -830,6 +886,12 @@ extapi_handle_forward(netio_http_conn_t *conn, char *to, int port, char *from, c
 				   service_create_id(SERVICE_TYPE_HTTP, port),
 				   newbuf, l2, tmp, extapi_http_sent), 
 		    err);
+	
+	if (!strcmp(conn->method, "CONNECT")) {
+		conn->service_forward_to = strdupz(to);
+		conn->service_forward_from = strdupz(from);
+		conn->service_forward_service = service_create_id(SERVICE_TYPE_HTTP, port);
+	}
 
 	/* create the response queueing mechanism */
 	netio_http_packet_orderer_create(conn->tracking_id);

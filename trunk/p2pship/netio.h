@@ -58,6 +58,7 @@ typedef struct netio_sock_s
         int active;
 	int flush;
 	int remove;
+	time_t last_heard;
 
         struct sockaddr *sa;
         socklen_t addrlen;

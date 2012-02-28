@@ -636,7 +636,7 @@ processor_init(processor_config_t *config)
 
 #ifdef CONFIG_START_GLIB_MAIN_LOOP
 	LOG_INFO("Starting dedicated glib/gtk thread..\n");
-	ASSERT_ZERO(processor_create_worker("gtk", processor_gtk_run, NULL, processor_gtk_kill), err);
+	ASSERT_TRUE(processor_create_worker("gtk", processor_gtk_run, NULL, processor_gtk_kill), err);
 #endif
 
         processor_alive = 1;
@@ -645,7 +645,7 @@ processor_init(processor_config_t *config)
         return -1;
 }
 
-static void
+void
 processor_kill_worker(processor_worker_t *w)
 {
 	if (w && w->thread) {
@@ -657,6 +657,7 @@ processor_kill_worker(processor_worker_t *w)
 			THREAD_JOIN(w->thread);
 		}
 	}
+	ship_list_remove(processor_workers, w);
 	freez(w);
 }
 
@@ -953,7 +954,6 @@ processor_kill_me()
 		void *ptr = 0, *last = 0;
 		while ((w = ship_list_next(processor_workers, &ptr))) {
 			if (pthread_equal(*w->thread, pthread_self())) {
-				ship_list_remove(processor_workers, w);
 				processor_kill_worker(w);
 				ptr = last;
 			}
@@ -962,12 +962,11 @@ processor_kill_me()
         }
 }
 
-int
+processor_worker_t *
 processor_create_worker(const char *type, void (*func)(processor_worker_t*), void *data,
 			void (*kill_func)(processor_worker_t*))
 {
 	processor_worker_t *w = NULL;
-	int ret = -1;
 	
 	ASSERT_TRUE(w = mallocz(sizeof(*w)), err);
 	sprintf(w->name, "%s-%d", type, ship_list_length(processor_workers));
@@ -979,12 +978,11 @@ processor_create_worker(const char *type, void (*func)(processor_worker_t*), voi
 	LOG_DEBUG("trying to create worker [%s]..\n", w->name);
 	ship_list_add(processor_workers, w);
 	ASSERT_ZERO(THREAD_RUN(w->thread, processor_worker_runner, (void*)w), err);
-	w = 0;
-	ret = 0;
+	return w;
  err:
 	ship_list_remove(processor_workers, w);
 	freez(w);
-	return ret;
+	return NULL;
 }
 
 int 
@@ -1007,7 +1005,7 @@ processor_run()
 
         /* if more than 1 thread, create those */
         for (i=0; i < worker_threads-1; i++) {
-		ASSERT_ZERO(processor_create_worker("worker", processor_thread_run, NULL, NULL), err);
+		ASSERT_TRUE(processor_create_worker("worker", processor_thread_run, NULL, NULL), err);
         }
 
 #ifdef CONFIG_PYTHON_ENABLED

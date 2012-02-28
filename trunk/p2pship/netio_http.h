@@ -21,6 +21,7 @@
 
 #include "ident_addr.h"
 #include "ship_utils.h"
+#include "services.h"
 
 /* struct for holding one parameter */
 typedef struct netio_http_param_s {
@@ -80,7 +81,12 @@ typedef struct netio_http_conn_s {
 	/* the connection tracking id */
 	char tracking_id[32];
 
+	/* proxy forwarding */
 	int forward_socket;	
+
+	char *service_forward_to;
+	char *service_forward_from;
+	service_type_t service_forward_service;
 
 	/* whether has been added to the conns tracking */
 	int added;
@@ -156,6 +162,7 @@ void netio_http_respond_multipart(netio_http_conn_t *conn,
 				  char *data, int data_len);
 void netio_http_conn_close(netio_http_conn_t *conn);
 int netio_http_serialize(netio_http_conn_t* conn, char **ret, int *retlen);
+int netio_http_serialize_payload(netio_http_conn_t* conn, char **ret, int *retlen);
 void netio_http_packet_orderer_put(char *tracking_id, int piece, char *content, int len);
 int netio_http_packet_orderer_pop_next(char *tracking_id, int *piece, char **content, int *len);
 void netio_http_respond_html(netio_http_conn_t *conn, 
